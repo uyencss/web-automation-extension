@@ -1,65 +1,177 @@
-# WebMCP Tools — Quick Reference Card
+# WebMCP Browser Automation - Quick Reference
 
-## Page Understanding
-```
-get_page_metadata   { include_headings: bool, include_links: bool }
-query_selector_all  { selector: str, max_results: num, attributes: [str] }
-get_computed_styles { selector: str, properties: [str] }
-extract_table_data  { selector: str, max_rows: num }
-```
+## Golden Rule
 
-## Page Interaction
-```
-click_element       { selector: str, scroll_into_view: bool }
-fill_form_field     { selector: str, value: str }
-submit_form         { form_selector: str, fields: {name: value}, submit_button_selector: str }
-scroll_page         { target: "top"|"bottom"|selector, delta_y: num, behavior: "smooth"|"instant" }
-```
+Page tools from `navigator.modelContext` are not top-level extension commands.
+Always call them through:
 
-## Waiting
-```
-wait_for_element    { selector: str, timeout_ms: num }
+```json
+{
+  "method": "webmcp.invokeTool",
+  "params": {
+    "tabId": 123,
+    "toolName": "query_selector_all",
+    "input": { "selector": "button" }
+  }
+}
 ```
 
-## Escape Hatch
-```
-execute_javascript  { code: str }  →  Use `return` to send values back
+Before invoking a page tool, discover the available descriptors:
+
+```json
+{ "method": "webmcp.listTools", "params": { "tabId": 123 } }
 ```
 
-## Common Selector Patterns
+## HTTP Gateway Call Shape
+
+```bash
+curl -sS http://localhost:7865/api \
+  -H 'Content-Type: application/json' \
+  -d '{"method":"getActiveTab","params":{}}'
+```
+
+## Parse WebMCP Results
+
+Gateway result:
+
+```text
+response.result.result.content[0].text
+```
+
+Parse that text as JSON when it looks like JSON. Check for:
+
+```json
+{ "error": true, "message": "..." }
+```
+
+## Background Extension Commands
+
+```text
+ping                    {}
+getExtensionInfo        {}
+getActiveTab            {}
+listTabs                {}
+newTab                  { url? }
+navigate                { url, tabId? }
+closeTab                { tabId? }
+
+waitForSelector         { selector, timeout?, tabId? }
+getPageContent          { tabId? }
+click                   { selector, tabId? }
+type                    { selector, text, tabId? }
+evaluateJS              { code, tabId? }
+
+executeCDP              { method, params?, tabId? }
+screenshot              { fullPage?, tabId? }
+
+webmcp.listTools        { tabId? }
+webmcp.invokeTool       { toolName, input?, tabId? }
+
+getAccessibilityTree    { interestingOnly?, depth?, tabId? }
+getDOMSnapshot          { computedStyles?, tabId? }
+getElementBounds        { selector, tabId? }
+getInteractiveElements  { tabId? }
+
+dispatchClick           { x, y, button?, clickCount?, tabId? }
+moveMouse               { x, y, steps?, fromX?, fromY?, tabId? }
+pressKey                { key, text?, modifiers?, tabId? }
+typeText                { text, tabId? }
+scroll                  { deltaX?, deltaY?, x?, y?, tabId? }
+hover                   { selector, tabId? }
+selectOption            { selector, value?, index?, text?, tabId? }
+
+getCookies              { tabId? }
+setCookie               { name, value, domain?, path?, tabId? }
+deleteCookies           { name, domain?, url?, tabId? }
+getLocalStorage         { tabId? }
+setLocalStorage         { key, value, tabId? }
+listWindows             {}
+createWindow            { url?, width?, height?, type? }
+setViewport             { width, height, deviceScaleFactor?, mobile?, tabId? }
+resetViewport           { tabId? }
+```
+
+## Page-Registered WebMCP Tools
+
+Call these with `webmcp.invokeTool`.
+
+```text
+get_page_metadata        { include_headings?, include_links? }
+query_selector_all       { selector, frame_selector?, max_results?, attributes? }
+click_element            { selector, frame_selector?, scroll_into_view? }
+fill_form_field          { selector, value }
+extract_table_data       { selector?, frame_selector?, max_rows? }
+wait_for_element         { selector, frame_selector?, timeout_ms? }
+get_computed_styles      { selector, frame_selector?, properties? }
+scroll_page              { target?, delta_y?, container_selector?, behavior? }
+submit_form              { form_selector?, fields?, submit_button_selector? }
+execute_javascript       { code }
+start_network_capture    { url_pattern }
+wait_for_network_response { url_pattern, timeout_ms? }
+stop_network_capture     {}
+```
+
+## Decision Tree
+
+```text
+Need a tab/page?
+  -> newTab, navigate, getActiveTab, listTabs
+
+Need to know what is clickable or typeable?
+  -> getInteractiveElements
+
+Need robust real input?
+  -> dispatchClick, typeText, pressKey, scroll
+
+Need DOM extraction?
+  -> webmcp.invokeTool(query_selector_all)
+
+Need metadata/headings/links?
+  -> webmcp.invokeTool(get_page_metadata)
+
+Need form fill?
+  -> webmcp.invokeTool(query_selector_all)
+  -> webmcp.invokeTool(fill_form_field)
+  -> webmcp.invokeTool(click_element or submit_form)
+
+Need table data?
+  -> webmcp.invokeTool(extract_table_data)
+
+Need network response body?
+  -> webmcp.invokeTool(start_network_capture)
+  -> trigger action
+  -> webmcp.invokeTool(wait_for_network_response)
+  -> webmcp.invokeTool(stop_network_capture)
+
+Need arbitrary page JS?
+  -> evaluateJS, or webmcp.invokeTool(execute_javascript)
+```
+
+## Selector Notes
+
+Use standard CSS selectors only.
+
 ```css
-/* By ID */            #login-btn
-/* By class */         .product-card
-/* By attribute */     [data-testid="submit"]
-/* By name */          input[name="email"]
-/* By type */          input[type="password"]
-/* By text content */  button:has-text("Login")    /* Not standard CSS, use JS */
-/* Nth child */        .item:nth-child(3)
-/* First/Last */       .item:first-child  /  .item:last-child
-/* Descendant */       #form .field input
-/* Direct child */     ul > li
-/* Sibling */          h2 + p
-/* Contains text */    Use query_selector_all + filter by text in results
+#login-btn
+.product-card
+[data-testid="submit"]
+input[name="email"]
+input[type="password"]
+ul > li
+h2 + p
+.item:nth-child(3)
+.item:first-child
 ```
 
-## Decision Tree: Which Tool to Use?
+Do not use Playwright-only selectors such as `button:has-text("Login")`.
+To target text, query broadly and inspect returned `text`, or use
+`execute_javascript`.
 
-```
-Need to understand the page?
-  ├── Page title, meta, structure → get_page_metadata
-  ├── Find specific elements     → query_selector_all
-  ├── Check element styles       → get_computed_styles
-  └── Extract a data table       → extract_table_data
+## Generated Reference
 
-Need to interact with the page?
-  ├── Click a button/link        → click_element
-  ├── Fill one form field        → fill_form_field
-  ├── Fill + submit entire form  → submit_form
-  └── Scroll the page            → scroll_page
+For the source-derived command and page-tool list, use
+`references/generated-tools.md`. Regenerate it from runtime source with:
 
-Need to wait for something?
-  └── Element to appear          → wait_for_element
-
-None of the above work?
-  └── Run custom JavaScript      → execute_javascript
+```bash
+npm run tools:generate
 ```

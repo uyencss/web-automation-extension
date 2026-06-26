@@ -1,376 +1,342 @@
 ---
 name: webmcp-browser-automation
 description: >
-  Automate browser interactions using WebMCP tools registered via navigator.modelContext.
-  Use this skill when automating web browsing tasks such as form filling, data extraction,
-  page navigation, clicking buttons, waiting for dynamic content, and scraping structured
-  data from web pages. Trigger on: 'automate browser', 'scrape page', 'fill form',
-  'click button', 'extract data', 'web automation', 'browser task', 'navigate to',
-  'wait for element', 'submit form', 'scroll page'.
+  Use the local WebMCP Chrome extension to control browser tabs and invoke
+  page-registered tools from navigator.modelContext/register-tools.js. Use this
+  skill when the user asks to use the browser extension, WebMCP, register-tools,
+  @register-tools, browser automation, scraping, data extraction, form filling,
+  clicking, navigation, screenshots, network capture, or operating the browser.
 ---
 
-# WebMCP Browser Automation Skill
+# WebMCP Browser Automation
 
-## Overview
+## Mental Model
 
-This skill teaches you how to automate browser tasks using the **WebMCP Tools Provider** extension. The extension registers tools on every web page via `navigator.modelContext`, which the Codex AI agent can discover and invoke.
+The WebMCP extension exposes two different tool layers. Do not mix them up.
 
-## Architecture
+1. Extension commands are JSON-RPC methods handled by the background service
+   worker. Use them for tabs, navigation, screenshots, accessibility/interactive
+   element discovery, real CDP mouse/keyboard input, storage, cookies, and
+   viewport control.
+2. Page WebMCP tools are registered by
+   `webmcp-extension/dist/content-scripts/register-tools.js` into
+   `navigator.modelContext`. These are page-local tools. You must discover them
+   with `webmcp.listTools` and invoke them with `webmcp.invokeTool`.
 
-```
-You (AI) ──▶ Codex Host App ──▶ Codex Extension ──▶ CDP Runtime.evaluate ──▶ Page JS Context
-                                                                                │
-                                                                    navigator.modelContext
-                                                                    .invokeTool(name, input)
-                                                                                │
-                                                                    WebMCP Tools Provider
-                                                                    (your custom tools)
-```
+Critical rule: a page tool name such as `query_selector_all` or
+`click_element` is not an extension JSON-RPC method. It must be passed as
+`params.toolName` to `webmcp.invokeTool`.
 
-When you call a WebMCP tool, the flow is:
-1. You emit a tool call with `name` and `input`
-2. Codex evaluates `navigator.modelContext.invokeTool(name, input)` in the page
-3. The tool executes and returns a result in MCP format: `{ content: [{ type: "text", text: "..." }] }`
-4. You receive the JSON result
+## First Choice Transport
 
-## Available Tools
+When no native WebMCP/browser tool is already available in the agent runtime,
+use the local HTTP gateway:
 
-### Page Understanding
-
-| Tool | Purpose | Key Inputs |
-|------|---------|------------|
-| `get_page_metadata` | Extract title, meta tags, OG data, headings, links | `include_headings`, `include_links`, `frame_selector` |
-| `query_selector_all` | Find elements by CSS selector with attributes + bounding boxes | `selector`, `max_results`, `attributes`, `frame_selector` |
-| `get_computed_styles` | Read CSS styles and layout info for an element | `selector`, `properties`, `frame_selector` |
-| `extract_table_data` | Extract HTML table data as structured JSON | `selector`, `max_rows`, `frame_selector` |
-
-### Page Interaction
-
-| Tool | Purpose | Key Inputs |
-|------|---------|------------|
-| `click_element` | Click an element by CSS selector | `selector`, `scroll_into_view`, `frame_selector` |
-| `fill_form_field` | Set an input/textarea/select/contenteditable value | `selector`, `value`, `frame_selector` |
-| `submit_form` | Fill multiple fields and submit a form | `form_selector`, `fields`, `submit_button_selector`, `frame_selector` |
-| `scroll_page` | Scroll to position, element, or by delta | `target`, `delta_y`, `behavior`, `frame_selector` |
-
-### Waiting & Timing
-
-| Tool | Purpose | Key Inputs |
-|------|---------|------------|
-| `wait_for_element` | Wait for a CSS selector to appear in the DOM | `selector`, `timeout_ms`, `frame_selector` |
-
-### Escape Hatch
-
-| Tool | Purpose | Key Inputs |
-|------|---------|------------|
-| `execute_javascript` | Run arbitrary JS in the page context | `code`, `frame_selector` |
-
-### Network & API Analysis
-
-| Tool | Purpose | Key Inputs |
-|------|---------|------------|
-| `start_network_capture` | Start recording network requests matching a pattern | `url_pattern` |
-| `wait_for_network_response` | Wait for and return the response body of a network request | `url_pattern`, `timeout_ms` |
-| `stop_network_capture` | Stop recording and clear network buffer | (none) |
-
-## Automation Patterns
-
-### Pattern 1: Navigate + Wait + Extract
-
-Use this when you need to visit a page and extract data after it loads.
-
-```
-Step 1: Navigate to URL (use Codex's built-in navigation)
-Step 2: wait_for_element → selector: "main content selector"
-Step 3: get_page_metadata → include_headings: true
-Step 4: extract_table_data (if page has tables)
-   OR   query_selector_all → selector: ".data-items"
+```bash
+cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
+npm run gateway
 ```
 
-### Pattern 2: Form Automation
+The Chrome extension connects to `ws://localhost:7865`; scripts and agents call:
 
-Use this when you need to fill out and submit a form.
-
-```
-Step 1: Navigate to form page
-Step 2: wait_for_element → selector: "form"
-Step 3: get_page_metadata → understand the page structure
-Step 4: query_selector_all → selector: "form input, form select, form textarea"
-        (discover all form fields, their names, types, and current values)
-Step 5: fill_form_field → for each field
-Step 6: submit_form → submit_button_selector: "button[type=submit]"
-Step 7: wait_for_element → wait for success/result page
+```bash
+curl -sS http://localhost:7865/api \
+  -H 'Content-Type: application/json' \
+  -d '{"method":"ping","params":{}}'
 ```
 
-### Pattern 3: Multi-Page Scraping
+Request shape:
 
-Use this when you need to extract data across multiple pages.
-
-```
-Step 1: Navigate to listing page
-Step 2: wait_for_element → selector: ".item-list"
-Step 3: query_selector_all → selector: ".item-link" (get all links)
-Step 4: For each link:
-   4a: Navigate to item page
-   4b: wait_for_element → selector: ".item-detail"
-   4c: get_page_metadata + query_selector_all to extract details
-Step 5: Compile results
+```json
+{ "method": "getActiveTab", "params": {} }
 ```
 
-### Pattern 4: Interactive UI Automation
+Response shape:
 
-Use this for complex UI flows (dropdowns, modals, dynamic content).
-
-```
-Step 1: click_element → trigger dropdown/modal
-Step 2: wait_for_element → wait for dropdown/modal to appear
-Step 3: query_selector_all → find options within dropdown
-Step 4: click_element → select desired option
-Step 5: wait_for_element → wait for UI to update
-Step 6: Verify state with get_page_metadata or query_selector_all
+```json
+{ "result": { "tabId": 123, "url": "https://example.com" } }
 ```
 
-### Pattern 5: Scroll + Load More
+If you are connected directly over WebSocket, send the same method and params
+inside JSON-RPC 2.0:
 
-Use this for infinite scroll or "load more" pages.
-
-```
-Step 1: query_selector_all → get current items count
-Step 2: scroll_page → target: "bottom"
-Step 3: wait_for_element → wait for new content or loading indicator to disappear
-Step 4: query_selector_all → check if new items loaded
-Step 5: Repeat 2-4 until desired count reached
+```json
+{ "jsonrpc": "2.0", "id": 1, "method": "getActiveTab", "params": {} }
 ```
 
-### Pattern 6: Network Interception
+If the environment exposes Codex's native WebMCP capability instead, the naming
+is different:
 
-Use this when you need to extract hidden API responses or wait for a background XHR/Fetch request to finish (e.g., waiting for an AI streaming response to complete).
-
-```
-Step 1: start_network_capture → url_pattern: "api/v1/data"
-Step 2: click_element → trigger the action that causes the network request
-Step 3: wait_for_network_response → wait for the API response and get its body
-Step 4: stop_network_capture → clean up
+```text
+webmcp_list_tools({ browser_id, tab_id })
+webmcp_invoke_tool({ browser_id, tab_id, tool_name, input, timeout_ms? })
 ```
 
-## Best Practices
+Gateway/direct extension calls use `webmcp.listTools`, `webmcp.invokeTool`, and
+`toolName`. Codex native calls use `webmcp_list_tools`,
+`webmcp_invoke_tool`, and `tool_name`.
 
-### 1. Always Understand the Page First
+## Mandatory Run Loop
 
-Before interacting, call `get_page_metadata` and `query_selector_all` to understand:
-- What elements exist on the page
-- What CSS selectors to use
-- Whether the page has loaded fully
+For every browser automation task:
 
-### 2. Use Specific Selectors
+1. Health check: call `ping`. If it fails, start the gateway and reload the
+   unpacked extension from `webmcp-extension/dist`.
+2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`.
+3. Wait for readiness: `navigate` waits for page load; otherwise use
+   `waitForSelector` or the page tool `wait_for_element`.
+4. Discover page tools: call `webmcp.listTools` for the target tab before
+   invoking page tools. Read each tool's `name`, `description`, and
+   `input_schema`.
+5. Pick the smallest reliable action:
+   - Page structure/data: use page WebMCP tools.
+   - Real browser input: use `getInteractiveElements` plus `dispatchClick`,
+     `typeText`, `pressKey`, or `scroll`.
+   - Last-resort DOM/API logic: use `evaluateJS` or page tool
+     `execute_javascript`.
+6. Invoke one action, then verify the postcondition with a wait, a query, a
+   screenshot, or `getInteractiveElements`.
+7. Parse WebMCP results before reasoning from them.
 
-Prefer specific selectors over generic ones:
-- ✅ `button[data-testid="submit"]`
-- ✅ `#login-form input[name="email"]`
-- ✅ `.product-card:first-child .add-to-cart`
-- ❌ `button` (too broad)
-- ❌ `div > div > div > span` (too brittle)
+## Calling Page WebMCP Tools
 
-### 3. Always Wait After Navigation
+List tools:
 
-After any action that triggers navigation or dynamic content:
+```json
+{
+  "method": "webmcp.listTools",
+  "params": { "tabId": 123 }
+}
 ```
-click_element → wait_for_element (for the expected result)
-submit_form → wait_for_element (for success message or next page)
-scroll_page → wait_for_element (for newly loaded content)
+
+Invoke one page tool:
+
+```json
+{
+  "method": "webmcp.invokeTool",
+  "params": {
+    "tabId": 123,
+    "toolName": "query_selector_all",
+    "input": {
+      "selector": "button, a, input",
+      "max_results": 20,
+      "attributes": ["id", "class", "name", "type", "aria-label", "href"]
+    }
+  }
+}
 ```
 
-### 4. Handle Errors Gracefully
+Typical nested result from the HTTP gateway:
 
-All tools return error objects when something goes wrong:
+```json
+{
+  "result": {
+    "tabId": 123,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"count\":1,\"elements\":[...]}"
+        }
+      ]
+    }
+  }
+}
+```
+
+Parse `response.result.result.content[0].text` as JSON when possible. Errors
+are usually returned the same way:
+
 ```json
 { "error": true, "message": "No element found for selector: ..." }
 ```
 
-When you get an error:
-1. Try a different selector (use `query_selector_all` to discover available elements)
-2. Check if content has loaded (use `wait_for_element`)
-3. Try scrolling the element into view first
+Do not treat a successful JSON-RPC response as proof the page action worked;
+inspect the parsed WebMCP payload.
 
-### 5. Use `execute_javascript` as Last Resort
+## Extension Commands
 
-The `execute_javascript` tool can run any JS in the page. Use it when:
-- No other tool fits the task
-- You need to access page-specific APIs (e.g., `window.__NEXT_DATA__`)
-- You need complex DOM manipulation
-- You need to read cookies, localStorage, or sessionStorage
+These are background commands registered in
+`webmcp-extension/dist/bg/handlers/index.js`.
 
-Example:
+| Command | Use for | Params |
+|---|---|---|
+| `ping` | Health check | `{}` |
+| `getExtensionInfo` | Extension version and debugger attachment info | `{}` |
+| `getActiveTab` | Resolve current target tab | `{}` |
+| `listTabs` | Find tabs by URL/title | `{}` |
+| `newTab` | Open a new active tab | `{ url? }` |
+| `navigate` | Navigate active or selected tab | `{ url, tabId? }` |
+| `closeTab` | Close a tab | `{ tabId? }` |
+| `waitForSelector` | Wait for a CSS selector in page JS | `{ selector, timeout?, tabId? }` |
+| `getPageContent` | Read title/text/html snapshot | `{ tabId? }` |
+| `click` | JS selector click | `{ selector, tabId? }` |
+| `type` | JS selector value set | `{ selector, text, tabId? }` |
+| `evaluateJS` | Execute page JavaScript | `{ code, tabId? }` |
+| `executeCDP` | Send raw CDP command | `{ method, params?, tabId? }` |
+| `screenshot` | Capture PNG base64 | `{ fullPage?, tabId? }` |
+| `webmcp.listTools` | List `navigator.modelContext` tools | `{ tabId? }` |
+| `webmcp.invokeTool` | Invoke a page-registered tool | `{ toolName, input?, tabId? }` |
+| `getAccessibilityTree` | Read accessible page structure | `{ interestingOnly?, depth?, tabId? }` |
+| `getDOMSnapshot` | Capture DOM/layout snapshot | `{ computedStyles?, tabId? }` |
+| `getElementBounds` | Get selector bounds | `{ selector, tabId? }` |
+| `getInteractiveElements` | List clickable/focusable elements with centers | `{ tabId? }` |
+| `dispatchClick` | Real CDP click at coordinates | `{ x, y, button?, clickCount?, tabId? }` |
+| `moveMouse` | Real CDP mouse move | `{ x, y, steps?, fromX?, fromY?, tabId? }` |
+| `pressKey` | Real CDP key press | `{ key, text?, modifiers?, tabId? }` |
+| `typeText` | Real CDP text insertion into focused element | `{ text, tabId? }` |
+| `scroll` | Real CDP mouse-wheel scroll | `{ deltaX?, deltaY?, x?, y?, tabId? }` |
+| `hover` | Real CDP hover by selector | `{ selector, tabId? }` |
+| `selectOption` | Select an HTML `<select>` option | `{ selector, value?, index?, text?, tabId? }` |
+| `getCookies` | Read cookies for current page | `{ tabId? }` |
+| `setCookie` | Set a cookie | `{ name, value, domain?, path?, tabId? }` |
+| `deleteCookies` | Delete a cookie | `{ name, domain?, url?, tabId? }` |
+| `getLocalStorage` | Read localStorage | `{ tabId? }` |
+| `setLocalStorage` | Write localStorage | `{ key, value, tabId? }` |
+| `listWindows` | List browser windows | `{}` |
+| `createWindow` | Create browser window | `{ url?, width?, height?, type? }` |
+| `setViewport` | Override viewport | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` |
+| `resetViewport` | Clear viewport override | `{ tabId? }` |
+
+Use `selectOption` for native `<select>` elements when CDP/background control is
+preferred. Use page tool `fill_form_field` when staying in the WebMCP page-tool
+layer is simpler.
+
+## Page-Registered Tools
+
+These tools are registered by `register-tools.js` and should be called only via
+`webmcp.invokeTool`.
+
+| Tool | Use for | Required input |
+|---|---|---|
+| `get_page_metadata` | Title, URL, canonical, meta, Open Graph, optional headings/links | none |
+| `query_selector_all` | DOM discovery by CSS selector, text, attributes, bounds | `selector` |
+| `click_element` | DOM click by CSS selector | `selector` |
+| `fill_form_field` | Set input/textarea/select/contenteditable value | `selector`, `value` |
+| `extract_table_data` | Convert an HTML table to JSON rows | none |
+| `wait_for_element` | Wait for selector using MutationObserver | `selector` |
+| `get_computed_styles` | Inspect styles and bounds | `selector` |
+| `scroll_page` | Scroll document/container to top, bottom, selector, or delta | none |
+| `submit_form` | Fill fields and submit a form | none |
+| `execute_javascript` | Run page JS as an escape hatch | `code` |
+| `start_network_capture` | Start background network capture for URL substring | `url_pattern` |
+| `wait_for_network_response` | Wait for captured response body | `url_pattern` |
+| `stop_network_capture` | Stop capture and clean up | none |
+
+`frame_selector` forwarding is implemented for `query_selector_all`,
+`click_element`, `extract_table_data`, `wait_for_element`, and
+`get_computed_styles`. Prefer top-level selectors for other tools unless you
+confirm iframe support in `register-tools.js`.
+
+Use standard CSS selectors only. Playwright-only selectors such as
+`:has-text("Login")` are invalid here. To click by visible text, first call
+`query_selector_all` and inspect text, or use `execute_javascript`.
+
+## Tool Selection
+
+| Need | Best action |
+|---|---|
+| Open or change page | `newTab` or `navigate` |
+| Know what can be clicked/typed | `getInteractiveElements` |
+| Extract visible repeated DOM data | `webmcp.invokeTool` -> `query_selector_all` |
+| Extract page title/meta/headings/links | `webmcp.invokeTool` -> `get_page_metadata` |
+| Fill ordinary form field | `webmcp.invokeTool` -> `fill_form_field` |
+| Submit form | `webmcp.invokeTool` -> `submit_form`, then wait |
+| Anti-bot/framework requires real input | `getInteractiveElements`, `dispatchClick`, `typeText`, `pressKey` |
+| Infinite scroll | `scroll` or `scroll_page`, then query count again |
+| Table extraction | `webmcp.invokeTool` -> `extract_table_data` |
+| Need XHR/fetch body | `start_network_capture`, trigger action, `wait_for_network_response`, `stop_network_capture` |
+| Need app state/local globals | `evaluateJS` or `execute_javascript` |
+| Need visual verification | `screenshot` |
+
+## Common Workflows
+
+### Navigate, discover, extract
+
+```json
+{ "method": "newTab", "params": { "url": "https://example.com" } }
+```
+
+```json
+{ "method": "webmcp.listTools", "params": { "tabId": 123 } }
+```
+
 ```json
 {
-  "code": "return JSON.parse(document.querySelector('#__NEXT_DATA__').textContent)"
+  "method": "webmcp.invokeTool",
+  "params": {
+    "tabId": 123,
+    "toolName": "query_selector_all",
+    "input": {
+      "selector": "main a, main button, main article",
+      "max_results": 50,
+      "attributes": ["href", "role", "aria-label", "data-testid"]
+    }
+  }
 }
 ```
 
-### 6. Respect Rate Limits
+### Real click and type
 
-- Add `wait_for_element` between rapid interactions
-- Don't spam `click_element` without waiting for results
-- Use `timeout_ms` parameter to set appropriate wait times
+1. Call `getInteractiveElements`.
+2. Choose an element by text/name/placeholder and use its `bounds.centerX` and
+   `bounds.centerY`.
+3. Call `dispatchClick` with those coordinates.
+4. Call `typeText`.
+5. Call `pressKey` with `Enter` if needed.
+6. Verify with `waitForSelector`, `getInteractiveElements`, or `screenshot`.
 
-## Tool Input/Output Reference
+### Form fill with page tools
 
-### get_page_metadata
+1. `webmcp.invokeTool` -> `wait_for_element` with `selector: "form"`.
+2. `webmcp.invokeTool` -> `query_selector_all` with
+   `selector: "form input, form select, form textarea, form button"`.
+3. `webmcp.invokeTool` -> `fill_form_field` for each field.
+4. `webmcp.invokeTool` -> `click_element` or `submit_form`.
+5. Wait for the expected success selector or navigation.
 
-**Input:**
-```json
-{
-  "include_headings": true,
-  "include_links": true
-}
-```
+### Network capture
 
-**Output:**
-```json
-{
-  "title": "Page Title",
-  "url": "https://example.com",
-  "canonical": "https://example.com",
-  "description": "Meta description",
-  "og": { "title": "...", "description": "...", "image": "..." },
-  "lang": "en",
-  "headings": [{ "level": 1, "text": "Main Title" }],
-  "links": [{ "text": "Link Text", "href": "https://..." }]
-}
-```
+1. `webmcp.invokeTool` -> `start_network_capture` with a URL substring such as
+   `"graphql"` or `"/api/search"`.
+2. Trigger the page action with a click/type/form submit.
+3. `webmcp.invokeTool` -> `wait_for_network_response`.
+4. `webmcp.invokeTool` -> `stop_network_capture`.
 
-### query_selector_all
+## Safety And Reliability
 
-**Input:**
-```json
-{
-  "selector": "button.primary",
-  "max_results": 10,
-  "attributes": ["id", "class", "data-testid", "aria-label"]
-}
-```
+- Ask before submitting irreversible forms, purchases, deletions, or sending
+  private messages.
+- Do not read cookies, localStorage, tokens, or secrets unless the user asks for
+  that specific task.
+- Prefer `getInteractiveElements` plus CDP input when JS clicks or synthetic
+  events fail.
+- Always wait after navigation, form submits, route changes, modal opens, and
+  infinite scroll actions.
+- Keep selectors resilient: prefer stable IDs, names, roles, labels,
+  `data-testid`, `aria-label`, and meaningful containers.
+- Avoid brittle absolute DOM paths like `body > div > div > div:nth-child(4)`.
+- When a selector fails, discover again instead of repeating the same failing
+  call.
 
-**Output:**
-```json
-{
-  "count": 3,
-  "elements": [{
-    "index": 0,
-    "tag": "button",
-    "text": "Submit",
-    "attributes": { "id": "submit-btn", "class": "primary" },
-    "visible": true,
-    "bounds": { "x": 100, "y": 200, "width": 120, "height": 40 }
-  }]
-}
-```
+## Troubleshooting
 
-### click_element
+| Symptom | Fix |
+|---|---|
+| `Chrome extension is not connected to the gateway` | Start `node server/gateway_server.js`, then reload the unpacked extension. |
+| `Method not found` | You called a page tool as a background command. Use `webmcp.invokeTool` with `toolName`, or choose one of the extension commands above. |
+| `navigator.modelContext not found` | Use a normal web page, wait for load, navigate/reload the tab, and confirm `register-tools.js` is injected. Chrome internal pages cannot use it. |
+| Empty `webmcp.listTools` result | Reload extension and page; make sure the unpacked extension points at `webmcp-extension/dist`. |
+| `No element found` | Wait, scroll, call `query_selector_all` with broader selectors, or use `getInteractiveElements`. |
+| `Another debugger is already attached` | Only one debugger client can attach to a tab. Close conflicting automation extensions or use another tab. |
+| Network capture says not started | Call `start_network_capture` before triggering the request, on the same tab. |
 
-**Input:**
-```json
-{ "selector": "#submit-btn", "scroll_into_view": true }
-```
+## Source Of Truth
 
-**Output:**
-```json
-{ "success": true, "tag": "button", "text": "Submit" }
-```
-
-### fill_form_field
-
-**Input:**
-```json
-{ "selector": "input[name='email']", "value": "user@example.com" }
-```
-
-**Output:**
-```json
-{ "success": true, "tag": "input", "fieldName": "email" }
-```
-
-### submit_form
-
-**Input:**
-```json
-{
-  "form_selector": "#login-form",
-  "fields": {
-    "email": "user@example.com",
-    "password": "secretpass"
-  },
-  "submit_button_selector": "button[type=submit]"
-}
-```
-
-**Output:**
-```json
-{ "success": true, "action": "https://example.com/login", "method": "POST" }
-```
-
-### wait_for_element
-
-**Input:**
-```json
-{ "selector": ".success-message", "timeout_ms": 5000 }
-```
-
-**Output (found):**
-```json
-{ "found": true, "elapsed_ms": 1200, "tag": "div", "text": "Login successful!" }
-```
-
-**Output (timeout):**
-```json
-{ "error": true, "message": "Timeout (5000ms) waiting for: .success-message" }
-```
-
-### scroll_page
-
-**Input:**
-```json
-{ "target": "bottom" }
-```
-or
-```json
-{ "delta_y": 500 }
-```
-or
-```json
-{ "target": "#section-3" }
-```
-
-**Output:**
-```json
-{ "success": true, "scrollY": 1200, "pageHeight": 5000, "viewportHeight": 800 }
-```
-
-### extract_table_data
-
-**Input:**
-```json
-{ "selector": "table.data-table", "max_rows": 50 }
-```
-
-**Output:**
-```json
-{
-  "rowCount": 25,
-  "headers": ["Name", "Price", "Stock"],
-  "data": [
-    { "Name": "Widget A", "Price": "$9.99", "Stock": "In Stock" }
-  ]
-}
-```
-
-### execute_javascript
-
-**Input:**
-```json
-{ "code": "return document.title + ' - ' + location.href" }
-```
-
-**Output:**
-```json
-{ "success": true, "result": "Page Title - https://example.com" }
-```
+- Page tool definitions: `webmcp-extension/dist/content-scripts/register-tools.js`
+- Extension background command registry:
+  `webmcp-extension/dist/bg/handlers/index.js`
+- HTTP gateway for agents/scripts: `server/gateway_server.js`
+- Generated source-derived command and page-tool reference:
+  `references/generated-tools.md`
+- Quick reference: `references/tool-reference-card.md`

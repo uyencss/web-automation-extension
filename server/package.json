@@ -1,10 +1,13 @@
 {
-  "name": "server",
+  "name": "webmcp-automation-gateway",
   "version": "1.0.0",
-  "description": "",
-  "main": "websocket_server.js",
+  "description": "HTTP and WebSocket gateway for the WebMCP browser automation extension.",
+  "main": "gateway_server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node gateway_server.js",
+    "gateway": "node gateway_server.js",
+    "health": "node ../scripts/webmcp-call.js ping",
+    "call": "node ../scripts/webmcp-call.js"
   },
   "keywords": [],
   "author": "",

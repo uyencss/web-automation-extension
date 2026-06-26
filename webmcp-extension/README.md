@@ -1,6 +1,6 @@
 # WebMCP Extension v2.1.0
 
-Chrome extension cho **AI-driven browser automation** qua WebSocket. Cung cấp **34 commands** để AI model có thể điều khiển browser hoàn toàn: nhìn cấu trúc trang, click/type tại tọa độ, quản lý cookies/storage, screenshot...
+Chrome extension cho **AI-driven browser automation** qua WebSocket. Cung cấp **36 commands** để AI model có thể điều khiển browser hoàn toàn: nhìn cấu trúc trang, click/type tại tọa độ, quản lý cookies/storage, screenshot...
 
 ## Architecture
 
@@ -9,7 +9,7 @@ Chrome extension cho **AI-driven browser automation** qua WebSocket. Cung cấp 
 │  Your AI Program        │ ◀═══════════════════════▶  │  Chrome Extension       │
 │  (Python / Node.js)     │    ws://localhost:7865      │  (background.js)        │
 │                         │    JSON-RPC 2.0             │                         │
-│  Runs WebSocket Server  │                             │  Connects as WS client  │
+│  Runs Gateway Server    │                             │  Connects as WS client  │
 │  + AI Model integration │  ── Commands ─────────────▶ │  → chrome.debugger      │
 │                         │  ◀── Results ──────────────│  → chrome.tabs          │
 │                         │  ◀── Events ───────────────│  → chrome.downloads     │
@@ -27,42 +27,36 @@ Chrome extension cho **AI-driven browser automation** qua WebSocket. Cung cấp 
 3. Click **Load unpacked** → chọn thư mục `dist/`
 4. Extension icon xuất hiện trên toolbar
 
-### Step 2: Start WebSocket Server
+### Step 2: Start Gateway Server
 
-**Node.js:**
 ```bash
-cd server
-npm install       # Lần đầu
-node websocket_server.js
-```
-
-**Python:**
-```bash
-cd server
-pip install websockets   # Lần đầu
-python websocket_server.py
+cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
+npm run setup      # Lần đầu
+npm run gateway
 ```
 
 Output:
 ```
-============================================================
-  WebMCP Tools Provider — WebSocket Server
-  Listening on ws://localhost:7865
-============================================================
+======================================================================
+  WebMCP Automation Gateway Server is running!
+  - Extension WebSocket Endpoint: ws://localhost:7865
+  - Health Endpoint: GET http://localhost:7865/health
+  - HTTP API Endpoint for Agents/Scripts: POST http://localhost:7865/api
+======================================================================
 ```
 
 ### Step 3: Extension tự kết nối
 
-Extension tự connect trong 3 giây. Server sẽ chạy auto-test:
+Extension tự connect trong 3 giây. Gateway sẽ ghi log:
 ```
 ✓ Extension connected
 ✓ Extension ready: WebMCP Tools Provider v2.1.0
-    34 capabilities registered
+    36 capabilities registered
 ```
 
 ---
 
-## Tất cả Commands (34)
+## Tất cả Commands (36)
 
 Gửi dưới dạng JSON-RPC 2.0 qua WebSocket. Nếu bỏ `tabId`, command sẽ target tab đang active.
 
@@ -257,7 +251,7 @@ send("getAccessibilityTree")
 
 ---
 
-## 10 Built-in WebMCP Tools
+## 13 Page-Registered WebMCP Tools
 
 Tự động inject vào mỗi trang qua `navigator.modelContext`:
 
@@ -273,30 +267,34 @@ Tự động inject vào mỗi trang qua `navigator.modelContext`:
 | 8 | `scroll_page` | Cuộn trang (top/bottom/element/delta) |
 | 9 | `submit_form` | Fill nhiều fields + submit form |
 | 10 | `execute_javascript` | Chạy JS tùy ý trong page context |
+| 11 | `start_network_capture` | Bắt đầu capture network request theo URL pattern |
+| 12 | `wait_for_network_response` | Chờ và lấy response body đã capture |
+| 13 | `stop_network_capture` | Dừng capture và dọn tài nguyên |
 
 ---
 
 ## Project Structure
 
 ```
-webmcp-extension/
-├── dist/                              # ← Load thư mục này vào Chrome
-│   ├── manifest.json                  # Manifest V3 (permissions: debugger, tabs, downloads...)
-│   ├── background.js                  # WebSocket client + 34 command handlers
-│   ├── content-scripts/
-│   │   └── register-tools.js          # Inject 10 WebMCP tools vào mỗi trang
-│   └── icons/
-├── server/                            # WebSocket server examples
-│   ├── websocket_server.js            # Node.js server (with auto-test demo)
-│   ├── websocket_server.py            # Python server alternative
-│   └── package.json
-├── docs/                              # Documentation
-│   ├── codex-extension-analysis.md    # Phân tích Codex extension v1.1.5
-│   ├── compatibility-audit.md         # So sánh với Codex
-│   └── implementation-plan.md         # Chi tiết implementation
-├── .agents/skills/                    # AI skills cho Gemini/Antigravity
-│   └── webmcp-browser-automation/
-└── README.md                          # File này
+web-automation-extension/
+├── README.md                          # Kit quickstart
+├── package.json                       # npm run gateway/health/call/tools:generate
+├── server/
+│   └── gateway_server.js              # HTTP + WebSocket gateway
+├── webmcp-extension/
+│   ├── README.md                      # File này
+│   └── dist/                          # ← Load thư mục này vào Chrome
+│       ├── manifest.json              # Manifest V3
+│       ├── background.js              # WebSocket client + 36 command handlers
+│       ├── content-scripts/
+│       │   ├── bridge.js              # Isolated-world bridge
+│       │   └── register-tools.js      # Inject 13 WebMCP tools vào mỗi trang
+│       └── icons/
+├── .agents/skills/
+│   └── webmcp-browser-automation/     # Agent skill + generated reference
+├── examples/                          # Gateway examples
+├── workflows/                         # JSON workflow examples
+└── docs/                              # Architecture and compatibility notes
 ```
 
 ---
@@ -342,7 +340,7 @@ asyncio.run(main())
 
 | Vấn đề | Giải pháp |
 |---------|-----------|
-| `ERR_CONNECTION_REFUSED` | Start WebSocket server trước. Extension auto-reconnect mỗi 3s. |
+| `ERR_CONNECTION_REFUSED` | Start gateway server trước. Extension auto-reconnect mỗi 3s. |
 | `Another debugger is already attached` | Đóng extension khác (Codex) hoặc dùng tab khác. |
 | `navigator.modelContext not found` | Trang chưa load. Dùng `waitForSelector` trước. Hoặc reload extension. |
 | WebMCP tools không xuất hiện | Extension chưa load hoặc trang là `chrome://` URL. |
@@ -351,6 +349,8 @@ asyncio.run(main())
 
 ## Documentation
 
-- [Codex Extension Analysis](docs/codex-extension-analysis.md) — Cách Codex extension hoạt động
-- [Implementation Plan](docs/implementation-plan.md) — Chi tiết thiết kế và tất cả commands
-- [Compatibility Audit](docs/compatibility-audit.md) — So sánh với Codex v1.1.5
+- [Root Kit Quickstart](../README.md) — Entrypoint cho extension + gateway + skill
+- [Generated Tool Reference](../.agents/skills/webmcp-browser-automation/references/generated-tools.md) — Source-derived commands/tools
+- [Codex Extension Analysis](../docs/codex-extension-analysis.md) — Cách Codex extension hoạt động
+- [Implementation Plan](../docs/implementation-plan.md) — Chi tiết thiết kế và tất cả commands
+- [Compatibility Audit](../docs/compatibility-audit.md) — So sánh với Codex v1.1.5

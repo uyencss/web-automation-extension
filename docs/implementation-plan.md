@@ -2,7 +2,7 @@
 
 ## Tổng quan
 
-Extension cung cấp **AI-driven browser automation** qua WebSocket. AI program chạy WebSocket server, extension kết nối vào và nhận lệnh JSON-RPC 2.0 để điều khiển browser.
+Extension cung cấp **AI-driven browser automation** qua WebSocket. Gateway server nhận lệnh HTTP từ agent/scripts, chuyển tiếp JSON-RPC 2.0 qua WebSocket tới extension để điều khiển browser.
 
 ## Kiến trúc
 
@@ -11,7 +11,7 @@ Extension cung cấp **AI-driven browser automation** qua WebSocket. AI program 
 │  Your AI Program        │ ◀═══════════════════════▶  │  Chrome Extension       │
 │  (Python / Node.js)     │    ws://localhost:7865      │  (background.js)        │
 │                         │    JSON-RPC 2.0             │                         │
-│  Runs WebSocket Server  │                             │  Connects as WS client  │
+│  Runs Gateway Server    │                             │  Connects as WS client  │
 │  + AI Model integration │                             │                         │
 │                         │  ── Commands ─────────────▶ │  → chrome.debugger      │
 │                         │  ◀── Results ──────────────│  → chrome.tabs          │
@@ -28,13 +28,13 @@ Extension cung cấp **AI-driven browser automation** qua WebSocket. AI program 
 | Transport | WebSocket |
 | URL | `ws://localhost:7865` (configurable) |
 | Protocol | JSON-RPC 2.0 |
-| Direction | Extension is WS **client**, your program is WS **server** |
+| Direction | Extension is WS **client**, gateway is WS **server** |
 | Reconnect | Auto-reconnect every 3 seconds |
 | Keep-alive | Heartbeat every 20 seconds |
 
 ---
 
-## Tất cả Commands (34 total)
+## Tất cả Commands (36 total)
 
 ### 1. Tab Management (5 commands)
 
@@ -140,6 +140,15 @@ Click/type thật qua CDP — không bị block bởi anti-bot, hoạt động t
 
 ---
 
+### 8. Utility (2 commands)
+
+| Method | Params | Response |
+|--------|--------|----------|
+| `ping` | `{}` | `{ pong, timestamp }` |
+| `getExtensionInfo` | `{}` | `{ name, version, manifestVersion, attachedDebuggerTabs, websocketUrl }` |
+
+---
+
 ## Events (Extension → Server)
 
 Extension tự động gửi notifications khi có sự kiện:
@@ -179,18 +188,18 @@ Quy trình AI tự động hoá browser:
 ## File Structure
 
 ```
-webmcp-extension/
-├── dist/                              # Extension files (load vào Chrome)
-│   ├── manifest.json                  # Manifest V3
-│   ├── background.js                  # WebSocket client + 34 command handlers
-│   ├── content-scripts/
-│   │   └── register-tools.js          # 10 WebMCP tools (navigator.modelContext)
-│   ├── icons/
-│   └── docs/
-├── server/                            # WebSocket server examples
-│   ├── websocket_server.js            # Node.js (with auto-test)
-│   ├── websocket_server.py            # Python alternative
-│   └── package.json
+web-automation-extension/
+├── README.md                          # Kit quickstart
+├── package.json                       # npm run gateway/health/call/tools:generate
+├── server/
+│   └── gateway_server.js              # HTTP + WebSocket gateway
+├── webmcp-extension/
+│   └── dist/                          # Extension files (load vào Chrome)
+│       ├── manifest.json              # Manifest V3
+│       ├── background.js              # WebSocket client + 36 command handlers
+│       └── content-scripts/
+│           ├── bridge.js              # Isolated-world bridge
+│           └── register-tools.js      # 13 WebMCP tools (navigator.modelContext)
 ├── docs/                              # Documentation
 │   ├── codex-extension-analysis.md
 │   ├── compatibility-audit.md
@@ -215,7 +224,7 @@ webmcp-extension/
 
 ## Verification
 
-Tất cả 34 commands đã được test thành công:
-- ✅ 8 basic tests (ping, tabs, navigate, content, JS eval, WebMCP, screenshot)
-- ✅ 18 Phase 1-3 tests (accessibility tree, interactive elements, DOM snapshot, element bounds, mouse move, hover, click, keyboard, scroll, cookies, localStorage, windows, viewport)
-- ✅ Total: **26/26 tests passed**
+Current registry consistency:
+- `npm run tools:generate` rebuilds the source-derived reference from runtime files.
+- `npm run tools:check` confirms the generated reference is current and every announced capability has a handler.
+- Generated reference lives at `.agents/skills/webmcp-browser-automation/references/generated-tools.md`.

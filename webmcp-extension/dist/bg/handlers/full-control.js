@@ -1,5 +1,6 @@
 import { resolveTabId } from '../utils.js';
 import { evaluateInTab, sendCDPCommand } from '../cdp-bridge.js';
+import { attachedTabs } from '../state.js';
 
 export const fullControlHandlers = {
   async getCookies(params) {
@@ -99,5 +100,16 @@ export const fullControlHandlers = {
 
   async ping() {
     return { pong: true, timestamp: Date.now() };
+  },
+
+  async getExtensionInfo() {
+    const manifest = chrome.runtime.getManifest();
+    return {
+      name: manifest.name,
+      version: manifest.version,
+      manifestVersion: manifest.manifest_version,
+      attachedDebuggerTabs: Array.from(attachedTabs),
+      websocketUrl: 'ws://localhost:7865',
+    };
   }
 };

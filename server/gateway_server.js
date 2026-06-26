@@ -1,23 +1,44 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 
-const PORT = 7865;
+const PORT = Number(process.env.WEBMCP_GATEWAY_PORT || process.env.PORT || 7865);
+const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
 
 // ── State ────────────────────────────────────────────────────
 let extensionWs = null;
 let nextId = 1;
 const pendingHttpRequests = new Map();
 
+function isExtensionConnected() {
+  return extensionWs && extensionWs.readyState === 1;
+}
+
+function writeJson(res, statusCode, payload) {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
 // ── HTTP Server ──────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   // CORS Headers to allow scripts/agents to query from anywhere
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(200);
     return res.end();
+  }
+
+  if (req.method === 'GET' && req.url === '/health') {
+    return writeJson(res, 200, {
+      ok: true,
+      extensionConnected: Boolean(isExtensionConnected()),
+      port: PORT,
+      wsUrl: `ws://localhost:${PORT}`,
+      apiUrl: `http://localhost:${PORT}/api`,
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
   }
 
   if (req.method === 'POST' && req.url === '/api') {
@@ -31,19 +52,16 @@ const server = http.createServer((req, res) => {
       try {
         requestPayload = JSON.parse(body);
       } catch (err) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Invalid JSON request payload' }));
+        return writeJson(res, 400, { error: 'Invalid JSON request payload' });
       }
 
       const { method, params } = requestPayload;
       if (!method) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Missing "method" in request' }));
+        return writeJson(res, 400, { error: 'Missing "method" in request' });
       }
 
-      if (!extensionWs || extensionWs.readyState !== 1) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Chrome extension is not connected to the gateway' }));
+      if (!isExtensionConnected()) {
+        return writeJson(res, 503, { error: 'Chrome extension is not connected to the gateway' });
       }
 
       // Assign a unique JSON-RPC ID
@@ -60,10 +78,13 @@ const server = http.createServer((req, res) => {
         const pending = pendingHttpRequests.get(rpcId);
         if (pending) {
           pendingHttpRequests.delete(rpcId);
-          pending.res.writeHead(504, { 'Content-Type': 'application/json' });
-          pending.res.end(JSON.stringify({ error: `Command '${method}' timed out after 60s` }));
+          writeJson(
+            pending.res,
+            504,
+            { error: `Command '${method}' timed out after ${COMMAND_TIMEOUT_MS}ms` }
+          );
         }
-      }, 60000);
+      }, COMMAND_TIMEOUT_MS);
 
       // Store the pending HTTP response
       pendingHttpRequests.set(rpcId, { res, timeoutTimer, method });
@@ -73,8 +94,7 @@ const server = http.createServer((req, res) => {
       console.log(`[Gateway] Forwarded command to Extension: ID=${rpcId} | Method=${method}`);
     });
   } else {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not Found. Exposes POST /api for automation.' }));
+    writeJson(res, 404, { error: 'Not Found. Exposes GET /health and POST /api for automation.' });
   }
 });
 
@@ -102,12 +122,10 @@ wss.on('connection', (ws, req) => {
 
         if ('error' in msg) {
           console.log(`[Gateway] Error response received for ID=${msg.id}:`, msg.error);
-          pending.res.writeHead(500, { 'Content-Type': 'application/json' });
-          pending.res.end(JSON.stringify({ error: msg.error?.message || 'Execution error' }));
+          writeJson(pending.res, 500, { error: msg.error?.message || 'Execution error' });
         } else {
           console.log(`[Gateway] Success response received for ID=${msg.id}`);
-          pending.res.writeHead(200, { 'Content-Type': 'application/json' });
-          pending.res.end(JSON.stringify({ result: msg.result }));
+          writeJson(pending.res, 200, { result: msg.result });
         }
       }
       return;
@@ -133,8 +151,7 @@ wss.on('connection', (ws, req) => {
     // Fail all currently pending HTTP requests
     for (const [rpcId, pending] of pendingHttpRequests) {
       clearTimeout(pending.timeoutTimer);
-      pending.res.writeHead(502, { 'Content-Type': 'application/json' });
-      pending.res.end(JSON.stringify({ error: 'Chrome extension disconnected during command execution' }));
+      writeJson(pending.res, 502, { error: 'Chrome extension disconnected during command execution' });
     }
     pendingHttpRequests.clear();
   });
@@ -145,7 +162,9 @@ server.listen(PORT, () => {
   console.log('='.repeat(70));
   console.log(`  WebMCP Automation Gateway Server is running!`);
   console.log(`  - Extension WebSocket Endpoint: ws://localhost:${PORT}`);
+  console.log(`  - Health Endpoint: GET http://localhost:${PORT}/health`);
   console.log(`  - HTTP API Endpoint for Agents/Scripts: POST http://localhost:${PORT}/api`);
+  console.log(`  - Command Timeout: ${COMMAND_TIMEOUT_MS}ms`);
   console.log('='.repeat(70));
   console.log('Load/reload the Extension in Chrome to connect.');
 });

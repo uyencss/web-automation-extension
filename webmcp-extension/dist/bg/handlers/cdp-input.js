@@ -135,5 +135,66 @@ export const cdpInputHandlers = {
     });
 
     return { tabId, selector };
+  },
+
+  async selectOption(params) {
+    const { selector, value, index, text } = params;
+    if (!selector) throw new Error('Missing required param: selector');
+    if (value === undefined && index === undefined && text === undefined) {
+      throw new Error('Missing one of required params: value, index, text');
+    }
+    const tabId = await resolveTabId(params);
+    const payload = { selector, value, index, text };
+
+    const result = await evaluateInTab(tabId, `
+      (() => {
+        const input = ${JSON.stringify(payload)};
+        const el = document.querySelector(input.selector);
+        if (!el) return { success: false, error: 'Element not found: ' + input.selector };
+        if (!(el instanceof HTMLSelectElement)) {
+          return { success: false, error: 'Element is not a <select>: ' + input.selector };
+        }
+
+        const options = Array.from(el.options);
+        let option = null;
+
+        if (input.value !== undefined) {
+          option = options.find((item) => item.value === String(input.value));
+        }
+        if (!option && input.text !== undefined) {
+          const wantedText = String(input.text).trim();
+          option = options.find((item) => item.text.trim() === wantedText);
+        }
+        if (!option && input.index !== undefined) {
+          option = options[Number(input.index)] || null;
+        }
+        if (!option) {
+          return {
+            success: false,
+            error: 'No matching option found',
+            availableOptions: options.slice(0, 25).map((item, optionIndex) => ({
+              index: optionIndex,
+              value: item.value,
+              text: item.text.trim(),
+            })),
+          };
+        }
+
+        el.value = option.value;
+        option.selected = true;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+
+        return {
+          success: true,
+          value: el.value,
+          text: option.text.trim(),
+          index: option.index,
+          selector: input.selector,
+        };
+      })()
+    `);
+
+    return { tabId, ...result };
   }
 };

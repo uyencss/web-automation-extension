@@ -46,6 +46,8 @@ export function connectWebSocket() {
         'getCookies', 'setCookie', 'deleteCookies',
         'getLocalStorage', 'setLocalStorage',
         'listWindows', 'createWindow', 'setViewport', 'resetViewport',
+        // Utility
+        'ping', 'getExtensionInfo',
       ],
     });
   };
