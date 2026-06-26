@@ -79,14 +79,14 @@ npm run call -- webmcp.invokeTool \
 
 ## Scripts
 
-| Command | Purpose |
-|---|---|
-| `npm run setup` | Install gateway dependencies under `server/`. |
-| `npm run gateway` | Start the HTTP/WebSocket gateway. |
-| `npm run health` | Send `ping` through the gateway to confirm extension connectivity. |
-| `npm run call -- <method> [jsonParams]` | Call one extension command through `POST /api`. |
-| `npm run tools:generate` | Rebuild the generated skill reference from runtime source files. |
-| `npm run tools:check` | Fail if the generated reference is stale or capability announcements lack handlers. |
+| Command                                 | Purpose                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `npm run setup`                         | Install gateway dependencies under `server/`.                                       |
+| `npm run gateway`                       | Start the HTTP/WebSocket gateway.                                                   |
+| `npm run health`                        | Send `ping` through the gateway to confirm extension connectivity.                  |
+| `npm run call -- <method> [jsonParams]` | Call one extension command through `POST /api`.                                     |
+| `npm run tools:generate`                | Rebuild the generated skill reference from runtime source files.                    |
+| `npm run tools:check`                   | Fail if the generated reference is stale or capability announcements lack handlers. |
 
 ## References
 
@@ -101,10 +101,10 @@ npm run call -- webmcp.invokeTool \
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---|---|
-| `Chrome extension is not connected to the gateway` | Start `npm run gateway`, then reload the unpacked extension. |
-| `Method not found` | You may be calling a page tool as a top-level command. Use `webmcp.invokeTool`. |
-| `navigator.modelContext not found` | Use a normal web page, wait for load, and reload the extension/page. Chrome internal pages are not supported. |
-| `Another debugger is already attached` | Only one debugger client can attach to a tab. Use another tab or detach the conflicting extension. |
-| Generated reference is stale | Run `npm run tools:generate`. |
+| Symptom                                            | Fix                                                                                                           |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Chrome extension is not connected to the gateway` | Start `npm run gateway`, then reload the unpacked extension.                                                  |
+| `Method not found`                                 | You may be calling a page tool as a top-level command. Use `webmcp.invokeTool`.                               |
+| `navigator.modelContext not found`                 | Use a normal web page, wait for load, and reload the extension/page. Chrome internal pages are not supported. |
+| `Another debugger is already attached`             | Only one debugger client can attach to a tab. Use another tab or detach the conflicting extension.            |
+| Generated reference is stale                       | Run `npm run tools:generate`.                                                                                 |

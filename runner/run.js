@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const ROOT = path.resolve(__dirname, '..');
 const { WorkflowRunner } = require('./workflow-runner');
 const { normalizeWorkflow } = require('./workflow-normalizer');
 const { validateWorkflow } = require('./workflow-validator');
@@ -132,7 +133,19 @@ function parseArgs(args) {
 }
 
 function loadWorkflow(workflowPath) {
-  const workflowFile = path.resolve(workflowPath);
+  let workflowFile = path.resolve(workflowPath);
+  if (!fs.existsSync(workflowFile)) {
+    // Fallback: if path starts with workflows/ or is relative to it, check inside .examples/
+    const isWorkflowsPrefix = workflowPath.startsWith('workflows/') || workflowPath.startsWith('./workflows/');
+    if (isWorkflowsPrefix) {
+      const normalizedPath = workflowPath.startsWith('./') ? workflowPath.slice(2) : workflowPath;
+      const fallbackPath = path.join(ROOT, '.examples', normalizedPath);
+      if (fs.existsSync(fallbackPath)) {
+        workflowFile = fallbackPath;
+      }
+    }
+  }
+
   if (!fs.existsSync(workflowFile)) {
     throw new Error(`Workflow file not found: ${workflowFile}`);
   }
