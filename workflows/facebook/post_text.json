@@ -1,0 +1,77 @@
+{
+  "id": "facebook-post-text",
+  "name": "Post Text on Facebook",
+  "version": "1.0",
+  "description": "Opens Facebook, creates a new text post, and publishes it.",
+  "settings": {
+    "defaultTimeout": 15000,
+    "defaultRetryPolicy": { "maxAttempts": 2, "backoffMs": 2000 }
+  },
+  "variables": {
+    "TARGET_URL": "https://www.facebook.com",
+    "POST_TEXT": "Hello World from WebMCP Browser Automation! 🚀 #Tech #Automation"
+  },
+  "steps": [
+    {
+      "id": "open-facebook",
+      "command": "newTab",
+      "params": { "url": "{{TARGET_URL}}" },
+      "wait": { "type": "delay", "ms": 5000 }
+    },
+    {
+      "id": "dismiss-popup",
+      "command": "evaluateJS",
+      "params": {
+        "code": "const btn = Array.from(document.querySelectorAll('div[role=\"button\"], button')).find(e => { const txt = e.textContent.trim().toLowerCase(); return txt === 'not now' || txt === 'để sau' || txt === 'lúc khác'; }); if (btn) { btn.click(); return { dismissed: btn.textContent.trim() }; } return { dismissed: false };"
+      },
+      "critical": false,
+      "wait": { "type": "delay", "ms": 2000 }
+    },
+    {
+      "id": "click-create-post",
+      "strategy": "ai-vision",
+      "instruction": "Find and click the 'What's on your mind' or 'Bạn đang nghĩ gì' text input area",
+      "fallback": {
+        "command": "evaluateJS",
+        "params": {
+          "code": "const el = Array.from(document.querySelectorAll('div[role=\"button\"]')).find(e => e.textContent.toLowerCase().includes(\"what's on your mind\") || e.textContent.toLowerCase().includes(\"đang nghĩ gì\")); if (el) { el.click(); return { success: true }; } return { success: false };"
+        }
+      },
+      "wait": { "type": "delay", "ms": 3000 }
+    },
+    {
+      "id": "type-post-content",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { const el = document.querySelector('div[role=\"textbox\"]'); if (!el) return resolve({ success: false, error: 'Textbox not found' }); el.focus(); const range = document.createRange(); const sel = window.getSelection(); range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range); document.execCommand('delete', false, null); document.execCommand('insertText', false, '{{POST_TEXT}}'); el.dispatchEvent(new Event('input', { bubbles: true })); setTimeout(() => { const listbox = document.querySelector('[role=\"listbox\"]'); if (listbox) { el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', which: 27, bubbles: true })); } setTimeout(() => { el.blur(); resolve({ success: true }); }, 200); }, 300); });"
+      },
+      "wait": { "type": "delay", "ms": 2000 }
+    },
+    {
+      "id": "dismiss-popup-2",
+      "command": "evaluateJS",
+      "params": {
+        "code": "const btn = Array.from(document.querySelectorAll('div[role=\"button\"], button')).find(e => { const txt = e.textContent.trim().toLowerCase(); return txt === 'not now' || txt === 'để sau' || txt === 'lúc khác'; }); if (btn) { btn.click(); return { dismissed: btn.textContent.trim() }; } return { dismissed: false };"
+      },
+      "critical": false
+    },
+    {
+      "id": "click-post-button",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { let attempts = 0; const check = () => { const el = Array.from(document.querySelectorAll('div[role=\"button\"]')).find(e => ['Post', 'Đăng', 'Next', 'Tiếp'].includes(e.textContent.trim())); if (el && el.getAttribute('aria-disabled') !== 'true') { el.click(); return resolve({ success: true, clicked: el.textContent.trim() }); } attempts++; if (attempts >= 20) return resolve({ success: false, error: 'Button not found/enabled after 20s' }); setTimeout(check, 1000); }; check(); });"
+      },
+      "captureAs": "PRIMARY_CLICK_RESULT",
+      "retryPolicy": { "maxAttempts": 3, "backoffMs": 2000 }
+    },
+    {
+      "id": "handle-second-step",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { setTimeout(() => { const el = Array.from(document.querySelectorAll('div[role=\"button\"]')).find(e => ['Post', 'Đăng', 'Share', 'Chia sẻ'].includes(e.textContent.trim())); if (el && el.getAttribute('aria-disabled') !== 'true') { el.click(); return resolve({ success: true }); } resolve({ success: false, error: 'No final button found (may not be needed)' }); }, 5000); });"
+      },
+      "critical": false,
+      "wait": { "type": "delay", "ms": 5000 }
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "facebook-post-gradient",
+  "name": "Post with Gradient Background on Facebook",
+  "version": "1.0",
+  "description": "Opens Facebook, selects a gradient background, types a short text, and publishes it.",
+  "settings": {
+    "defaultTimeout": 15000,
+    "defaultRetryPolicy": { "maxAttempts": 2, "backoffMs": 2000 }
+  },
+  "variables": {
+    "TARGET_URL": "https://www.facebook.com",
+    "POST_TEXT": "Wishing everyone a productive and beautiful day! ☀️✨"
+  },
+  "steps": [
+    {
+      "id": "open-facebook",
+      "command": "newTab",
+      "params": { "url": "{{TARGET_URL}}" },
+      "wait": { "type": "delay", "ms": 5000 }
+    },
+    {
+      "id": "dismiss-popup",
+      "command": "evaluateJS",
+      "params": {
+        "code": "const btn = Array.from(document.querySelectorAll('div[role=\"button\"], button')).find(e => { const txt = e.textContent.trim().toLowerCase(); return txt === 'not now' || txt === 'để sau' || txt === 'lúc khác'; }); if (btn) { btn.click(); return { dismissed: btn.textContent.trim() }; } return { dismissed: false };"
+      },
+      "critical": false,
+      "wait": { "type": "delay", "ms": 2000 }
+    },
+    {
+      "id": "click-create-post",
+      "strategy": "ai-vision",
+      "instruction": "Find and click the 'What's on your mind' or 'Bạn đang nghĩ gì' text input area",
+      "fallback": {
+        "command": "evaluateJS",
+        "params": {
+          "code": "const el = Array.from(document.querySelectorAll('div[role=\"button\"]')).find(e => e.textContent.toLowerCase().includes(\"what's on your mind\") || e.textContent.toLowerCase().includes(\"đang nghĩ gì\")); if (el) { el.click(); return { success: true }; } return { success: false };"
+        }
+      },
+      "wait": { "type": "delay", "ms": 3000 }
+    },
+    {
+      "id": "select-gradient-bg",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { const getCircles = () => Array.from(document.querySelectorAll('div[role=\"dialog\"] div')).filter(el => { const s = el.getAttribute('style') || ''; return (s.includes('background') || s.includes('gradient')) && el.getBoundingClientRect().width > 0; }); let circles = getCircles(); if (circles.length > 0) { const grad = circles.filter(el => el.getAttribute('style').includes('linear-gradient')); if (grad.length > 0) { const t = grad[0]; (t.closest('[role=\"button\"]') || t).click(); return resolve({ success: true, method: 'direct' }); } } const bgBtn = document.querySelector('div[role=\"button\"][aria-label=\"Show Background Options\"], div[role=\"button\"][aria-label=\"Hiển thị các tùy chọn nền\"]'); if (bgBtn) bgBtn.click(); else { const img = document.querySelector('div[role=\"dialog\"] img[src*=\"Aa\"]'); if (img) { const b = img.closest('div[role=\"button\"]'); if (b) b.click(); } } setTimeout(() => { circles = getCircles(); const grad = circles.filter(el => el.getAttribute('style').includes('linear-gradient')); if (grad.length > 0) { (grad[0].closest('[role=\"button\"]') || grad[0]).click(); return resolve({ success: true, method: 'after-expand' }); } const color = circles.filter(el => el.getAttribute('style').includes('background-color')); if (color.length > 0) { (color[0].closest('[role=\"button\"]') || color[0]).click(); return resolve({ success: true, method: 'color-fallback' }); } resolve({ success: false, error: 'No gradient options found' }); }, 1000); });"
+      },
+      "retryPolicy": { "maxAttempts": 3, "backoffMs": 2000 },
+      "wait": { "type": "delay", "ms": 2000 }
+    },
+    {
+      "id": "type-post-content",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { const el = document.querySelector('div[role=\"textbox\"]'); if (!el) return resolve({ success: false, error: 'Textbox not found' }); el.focus(); const range = document.createRange(); const sel = window.getSelection(); range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range); document.execCommand('delete', false, null); document.execCommand('insertText', false, '{{POST_TEXT}}'); el.dispatchEvent(new Event('input', { bubbles: true })); setTimeout(() => { const listbox = document.querySelector('[role=\"listbox\"]'); if (listbox) { el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, code: 'Escape', which: 27, bubbles: true })); } setTimeout(() => { el.blur(); resolve({ success: true }); }, 200); }, 300); });"
+      },
+      "wait": { "type": "delay", "ms": 2000 }
+    },
+    {
+      "id": "dismiss-popup-2",
+      "command": "evaluateJS",
+      "params": {
+        "code": "const btn = Array.from(document.querySelectorAll('div[role=\"button\"], button')).find(e => { const txt = e.textContent.trim().toLowerCase(); return txt === 'not now' || txt === 'để sau' || txt === 'lúc khác'; }); if (btn) { btn.click(); return { dismissed: btn.textContent.trim() }; } return { dismissed: false };"
+      },
+      "critical": false
+    },
+    {
+      "id": "click-post-button",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { let attempts = 0; const check = () => { const el = Array.from(document.querySelectorAll('div[role=\"button\"]')).find(e => ['Post', 'Đăng', 'Next', 'Tiếp'].includes(e.textContent.trim())); if (el && el.getAttribute('aria-disabled') !== 'true') { el.click(); return resolve({ success: true, clicked: el.textContent.trim() }); } attempts++; if (attempts >= 20) return resolve({ success: false, error: 'Button not found/enabled after 20s' }); setTimeout(check, 1000); }; check(); });"
+      },
+      "captureAs": "PRIMARY_CLICK_RESULT",
+      "retryPolicy": { "maxAttempts": 3, "backoffMs": 2000 }
+    },
+    {
+      "id": "handle-second-step",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { setTimeout(() => { const listbox = document.querySelector('[role=\"listbox\"]'); const activeEl = document.activeElement; if (listbox || (activeEl && activeEl.getAttribute('role') === 'textbox')) { const target = activeEl || document.querySelector('div[role=\"textbox\"]'); if (target) { target.focus(); target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true })); setTimeout(() => { target.blur(); resolve({ dismissed: true }); }, 300); return; } } resolve({ dismissed: false }); }, 2000); });"
+      },
+      "critical": false,
+      "wait": { "type": "delay", "ms": 1000 }
+    },
+    {
+      "id": "click-final-post",
+      "command": "evaluateJS",
+      "params": {
+        "code": "const el = Array.from(document.querySelectorAll('div[role=\"button\"]')).find(e => ['Post', 'Đăng', 'Share', 'Chia sẻ'].includes(e.textContent.trim())); if (el && el.getAttribute('aria-disabled') !== 'true') { el.click(); return { success: true }; } return { success: false, error: 'Final button not found (may not be needed)' };"
+      },
+      "critical": false,
+      "wait": { "type": "delay", "ms": 5000 }
+    }
+  ]
+}
