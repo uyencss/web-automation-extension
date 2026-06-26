@@ -39,31 +39,39 @@ When you call a WebMCP tool, the flow is:
 
 | Tool | Purpose | Key Inputs |
 |------|---------|------------|
-| `get_page_metadata` | Extract title, meta tags, OG data, headings, links | `include_headings`, `include_links` |
-| `query_selector_all` | Find elements by CSS selector with attributes + bounding boxes | `selector`, `max_results`, `attributes` |
-| `get_computed_styles` | Read CSS styles and layout info for an element | `selector`, `properties` |
-| `extract_table_data` | Extract HTML table data as structured JSON | `selector`, `max_rows` |
+| `get_page_metadata` | Extract title, meta tags, OG data, headings, links | `include_headings`, `include_links`, `frame_selector` |
+| `query_selector_all` | Find elements by CSS selector with attributes + bounding boxes | `selector`, `max_results`, `attributes`, `frame_selector` |
+| `get_computed_styles` | Read CSS styles and layout info for an element | `selector`, `properties`, `frame_selector` |
+| `extract_table_data` | Extract HTML table data as structured JSON | `selector`, `max_rows`, `frame_selector` |
 
 ### Page Interaction
 
 | Tool | Purpose | Key Inputs |
 |------|---------|------------|
-| `click_element` | Click an element by CSS selector | `selector`, `scroll_into_view` |
-| `fill_form_field` | Set an input/textarea/select value (React/Vue compatible) | `selector`, `value` |
-| `submit_form` | Fill multiple fields and submit a form | `form_selector`, `fields`, `submit_button_selector` |
-| `scroll_page` | Scroll to position, element, or by delta | `target`, `delta_y`, `behavior` |
+| `click_element` | Click an element by CSS selector | `selector`, `scroll_into_view`, `frame_selector` |
+| `fill_form_field` | Set an input/textarea/select/contenteditable value | `selector`, `value`, `frame_selector` |
+| `submit_form` | Fill multiple fields and submit a form | `form_selector`, `fields`, `submit_button_selector`, `frame_selector` |
+| `scroll_page` | Scroll to position, element, or by delta | `target`, `delta_y`, `behavior`, `frame_selector` |
 
 ### Waiting & Timing
 
 | Tool | Purpose | Key Inputs |
 |------|---------|------------|
-| `wait_for_element` | Wait for a CSS selector to appear in the DOM | `selector`, `timeout_ms` |
+| `wait_for_element` | Wait for a CSS selector to appear in the DOM | `selector`, `timeout_ms`, `frame_selector` |
 
 ### Escape Hatch
 
 | Tool | Purpose | Key Inputs |
 |------|---------|------------|
-| `execute_javascript` | Run arbitrary JS in the page context | `code` |
+| `execute_javascript` | Run arbitrary JS in the page context | `code`, `frame_selector` |
+
+### Network & API Analysis
+
+| Tool | Purpose | Key Inputs |
+|------|---------|------------|
+| `start_network_capture` | Start recording network requests matching a pattern | `url_pattern` |
+| `wait_for_network_response` | Wait for and return the response body of a network request | `url_pattern`, `timeout_ms` |
+| `stop_network_capture` | Stop recording and clear network buffer | (none) |
 
 ## Automation Patterns
 
@@ -132,6 +140,17 @@ Step 2: scroll_page → target: "bottom"
 Step 3: wait_for_element → wait for new content or loading indicator to disappear
 Step 4: query_selector_all → check if new items loaded
 Step 5: Repeat 2-4 until desired count reached
+```
+
+### Pattern 6: Network Interception
+
+Use this when you need to extract hidden API responses or wait for a background XHR/Fetch request to finish (e.g., waiting for an AI streaming response to complete).
+
+```
+Step 1: start_network_capture → url_pattern: "api/v1/data"
+Step 2: click_element → trigger the action that causes the network request
+Step 3: wait_for_network_response → wait for the API response and get its body
+Step 4: stop_network_capture → clean up
 ```
 
 ## Best Practices

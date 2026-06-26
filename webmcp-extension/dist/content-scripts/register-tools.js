@@ -128,6 +128,65 @@
   }
 
   // ────────────────────────────────────────────────────────────
+  // §2.5 — Bridge Communication (Background & Iframe)
+  // ────────────────────────────────────────────────────────────
+
+  let _reqId = 0;
+  async function invokeBackground(method, params) {
+    const id = ++_reqId;
+    return new Promise((resolve) => {
+      const handler = (event) => {
+        if (event.source !== window || event.data?.type !== 'WEBMCP_BG_RESPONSE' || event.data?.id !== id) return;
+        window.removeEventListener('message', handler);
+        resolve(event.data.response);
+      };
+      window.addEventListener('message', handler);
+      window.postMessage({ type: 'WEBMCP_BG_REQUEST', payload: { type: 'WEBMCP_BG_REQUEST', method, params }, id }, '*');
+    });
+  }
+
+  async function invokeIframe(frameSelector, cmd, params) {
+    const frame = document.querySelector(frameSelector);
+    if (!frame) return mcpError(`Iframe not found: ${frameSelector}`);
+    const id = ++_reqId;
+    return new Promise((resolve) => {
+      const handler = (event) => {
+        if (event.data?.type === 'WEBMCP_IFRAME_RES' && event.data.id === id) {
+          window.removeEventListener('message', handler);
+          resolve(event.data.result);
+        }
+      };
+      window.addEventListener('message', handler);
+      frame.contentWindow.postMessage({ type: 'WEBMCP_IFRAME_CMD', cmd, params, id }, '*');
+      setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve(mcpError(`Timeout communicating with iframe: ${frameSelector}. Note: cross-origin iframes must have register-tools.js injected via all_frames: true.`));
+      }, 5000);
+    });
+  }
+
+  // Iframe command receiver (runs inside the iframe)
+  if (window !== window.top) {
+    window.addEventListener('message', async (event) => {
+      if (event.data?.type === 'WEBMCP_IFRAME_CMD') {
+        const { cmd, params, id } = event.data;
+        let result;
+        try {
+          // We can reuse the tools registry to execute inside iframe!
+          if (navigator.modelContext && navigator.modelContext.tools) {
+            result = await navigator.modelContext.invokeTool(cmd, params);
+          } else {
+            result = mcpError('navigator.modelContext not available in iframe');
+          }
+        } catch (err) {
+          result = mcpError(err.message);
+        }
+        event.source.postMessage({ type: 'WEBMCP_IFRAME_RES', id, result }, event.origin);
+      }
+    });
+  }
+
+  // ────────────────────────────────────────────────────────────
   // §3 — Tool definitions
   // ────────────────────────────────────────────────────────────
 
@@ -207,6 +266,10 @@
           type: 'string',
           description: 'CSS selector to query.',
         },
+        frame_selector: {
+          type: 'string',
+          description: 'Optional CSS selector for an iframe containing the element.',
+        },
         max_results: {
           type: 'number',
           description: 'Maximum number of elements to return. Default 50.',
@@ -222,6 +285,9 @@
       required: ['selector'],
     },
     async execute(input) {
+      if (input.frame_selector) {
+        return invokeIframe(input.frame_selector, 'query_selector_all', { ...input, frame_selector: undefined });
+      }
       const defaultAttrs = ['id', 'class', 'href', 'src', 'type', 'role', 'aria-label', 'name', 'value', 'placeholder'];
       const attrList = input.attributes || defaultAttrs;
       const max = input.max_results || 50;
@@ -271,6 +337,10 @@
           type: 'string',
           description: 'CSS selector for the element to click.',
         },
+        frame_selector: {
+          type: 'string',
+          description: 'Optional CSS selector for an iframe containing the element.',
+        },
         scroll_into_view: {
           type: 'boolean',
           description: 'Whether to scroll the element into view before clicking. Default true.',
@@ -279,6 +349,9 @@
       required: ['selector'],
     },
     async execute(input) {
+      if (input.frame_selector) {
+        return invokeIframe(input.frame_selector, 'click_element', { ...input, frame_selector: undefined });
+      }
       const el = document.querySelector(input.selector);
       if (!el) return mcpError(`No element found for selector: ${input.selector}`);
 
@@ -311,6 +384,10 @@
           type: 'string',
           description: 'CSS selector for the form field.',
         },
+        frame_selector: {
+          type: 'string',
+          description: 'Optional CSS selector for an iframe containing the element.',
+        },
         value: {
           type: 'string',
           description: 'The value to set.',
@@ -329,6 +406,10 @@
         // For <select>, set .value and dispatch change
         el.value = input.value;
         el.dispatchEvent(new Event('change', { bubbles: true }));
+      } else if (el.isContentEditable) {
+        // For contenteditable elements
+        el.textContent = input.value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
       } else {
         // For <input>/<textarea>, use the native setter to bypass
         // React/Vue controlled component wrappers
@@ -370,6 +451,10 @@
           type: 'string',
           description: 'CSS selector for the <table>. Defaults to the first table on the page.',
         },
+        frame_selector: {
+          type: 'string',
+          description: 'Optional CSS selector for an iframe containing the element.',
+        },
         max_rows: {
           type: 'number',
           description: 'Maximum rows to extract. Default 100.',
@@ -377,6 +462,9 @@
       },
     },
     async execute(input) {
+      if (input.frame_selector) {
+        return invokeIframe(input.frame_selector, 'extract_table_data', { ...input, frame_selector: undefined });
+      }
       const table = document.querySelector(input?.selector || 'table');
       if (!table) return mcpError('No table found on the page.');
 
@@ -417,6 +505,10 @@
           type: 'string',
           description: 'CSS selector to wait for.',
         },
+        frame_selector: {
+          type: 'string',
+          description: 'Optional CSS selector for an iframe containing the element.',
+        },
         timeout_ms: {
           type: 'number',
           description: 'Maximum wait time in milliseconds. Default 10000.',
@@ -425,6 +517,9 @@
       required: ['selector'],
     },
     async execute(input) {
+      if (input.frame_selector) {
+        return invokeIframe(input.frame_selector, 'wait_for_element', { ...input, frame_selector: undefined });
+      }
       const timeout = input.timeout_ms || 10000;
       const start = Date.now();
 
@@ -485,6 +580,10 @@
           type: 'string',
           description: 'CSS selector for the element.',
         },
+        frame_selector: {
+          type: 'string',
+          description: 'Optional CSS selector for an iframe containing the element.',
+        },
         properties: {
           type: 'array',
           items: { type: 'string' },
@@ -497,6 +596,9 @@
       required: ['selector'],
     },
     async execute(input) {
+      if (input.frame_selector) {
+        return invokeIframe(input.frame_selector, 'get_computed_styles', { ...input, frame_selector: undefined });
+      }
       const el = document.querySelector(input.selector);
       if (!el) return mcpError(`No element found: ${input.selector}`);
 
@@ -712,6 +814,67 @@
         return mcpError(`Execution error: ${err.message}`);
       }
     },
+  });
+
+  // ─── Tool 11: start_network_capture ───────────────────────
+  navigator.modelContext.registerTool({
+    name: 'start_network_capture',
+    title: 'Start Network Capture',
+    description: 'Start capturing network requests matching a specific URL pattern. Must be called before wait_for_network_response.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url_pattern: { type: 'string', description: 'URL pattern to match (e.g. "api/graphql" or "*chat*").' },
+      },
+      required: ['url_pattern'],
+    },
+    async execute(input) {
+      try {
+        const res = await invokeBackground('start_network_capture', input);
+        return mcpResult(res);
+      } catch (err) {
+        return mcpError(err.message);
+      }
+    }
+  });
+
+  // ─── Tool 12: wait_for_network_response ───────────────────
+  navigator.modelContext.registerTool({
+    name: 'wait_for_network_response',
+    title: 'Wait For Network Response',
+    description: 'Wait for a network response that matches the previously started capture pattern. Returns the response body.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url_pattern: { type: 'string', description: 'URL pattern to wait for.' },
+        timeout_ms: { type: 'number', description: 'Timeout in ms (default 10000)' },
+      },
+      required: ['url_pattern'],
+    },
+    async execute(input) {
+      try {
+        const res = await invokeBackground('wait_for_network_response', input);
+        return mcpResult(res);
+      } catch (err) {
+        return mcpError(err.message);
+      }
+    }
+  });
+
+  // ─── Tool 13: stop_network_capture ────────────────────────
+  navigator.modelContext.registerTool({
+    name: 'stop_network_capture',
+    title: 'Stop Network Capture',
+    description: 'Stop capturing network requests and clean up resources.',
+    inputSchema: { type: 'object', properties: {} },
+    async execute(input) {
+      try {
+        const res = await invokeBackground('stop_network_capture', input);
+        return mcpResult(res);
+      } catch (err) {
+        return mcpError(err.message);
+      }
+    }
   });
 
   // ────────────────────────────────────────────────────────────
