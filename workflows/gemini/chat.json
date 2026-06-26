@@ -1,0 +1,60 @@
+{
+  "id": "gemini-chat",
+  "name": "Gemini Chat Interaction",
+  "version": "1.0",
+  "description": "Opens Gemini, asks a question, and extracts the generated response as Markdown.",
+  "settings": {
+    "defaultTimeout": 60000,
+    "defaultRetryPolicy": { "maxAttempts": 1, "backoffMs": 1000 }
+  },
+  "variables": {
+    "TARGET_URL": "https://gemini.google.com/app",
+    "PROMPT": "Viết một hàm Python ngắn để tính giai thừa. Hãy sử dụng code block nhé."
+  },
+  "steps": [
+    {
+      "id": "open-gemini",
+      "command": "newTab",
+      "params": { "url": "{{TARGET_URL}}" },
+      "wait": { "type": "delay", "ms": 5000 }
+    },
+    {
+      "id": "type-prompt",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { const el = document.querySelector('rich-textarea p') || document.querySelector('div[role=\"textbox\"]'); if (!el) return resolve({ success: false, error: 'Textbox not found' }); el.focus(); const range = document.createRange(); const sel = window.getSelection(); range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range); document.execCommand('delete', false, null); document.execCommand('insertText', false, `{{PROMPT}}`); el.dispatchEvent(new Event('input', { bubbles: true })); setTimeout(() => { resolve({ success: true }); }, 500); });"
+      },
+      "wait": { "type": "delay", "ms": 1000 }
+    },
+    {
+      "id": "get-pre-count",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return document.querySelectorAll('message-content').length;"
+      },
+      "captureAs": "PRE_COUNT"
+    },
+    {
+      "id": "click-send",
+      "command": "evaluateJS",
+      "params": {
+        "code": "const btn = document.querySelector('button[aria-label*=\"Send message\"], button[aria-label*=\"Gửi\"], button.send-button'); if (btn && !btn.disabled) { btn.click(); return { success: true, method: 'click' }; } const el = document.querySelector('rich-textarea p') || document.querySelector('div[role=\"textbox\"]'); if (el) { el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })); return { success: true, method: 'enter_key' }; } return { success: false, error: 'Send button and textbox not found' };"
+      }
+    },
+    {
+      "id": "wait-for-new-message-container",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { let preCount = parseInt('{{PRE_COUNT}}') || 0; let attempts = 0; const check = () => { const curCount = document.querySelectorAll('message-content').length; if (curCount > preCount) return resolve({ success: true, found: true }); attempts++; if (attempts >= 20) return resolve({ success: false, error: 'New message container not found after 10s' }); setTimeout(check, 500); }; check(); });"
+      }
+    },
+    {
+      "id": "poll-for-completion-and-extract-markdown",
+      "command": "evaluateJS",
+      "params": {
+        "code": "return new Promise((resolve) => { function extractMarkdown(node) { let md = ''; for (let child of node.childNodes) { if (child.nodeType === Node.TEXT_NODE) { md += child.textContent; } else if (child.nodeType === Node.ELEMENT_NODE) { const tag = child.tagName; if (tag === 'PRE') { const header = child.parentElement ? child.parentElement.querySelector('.code-block-header') : null; let lang = ''; if (header) { lang = header.innerText.split('\\n')[0].trim(); } md += '\\n\\n```' + lang + '\\n' + child.textContent.trim() + '\\n```\\n\\n'; } else if (tag === 'P') { md += extractMarkdown(child) + '\\n\\n'; } else if (tag === 'UL' || tag === 'OL') { md += extractMarkdown(child) + '\\n'; } else if (tag === 'LI') { md += '- ' + extractMarkdown(child).trim() + '\\n'; } else if (tag === 'B' || tag === 'STRONG') { md += '**' + extractMarkdown(child) + '**'; } else if (tag === 'I' || tag === 'EM') { md += '*' + extractMarkdown(child) + '*'; } else if (tag === 'CODE') { md += '`' + child.textContent + '`'; } else { if (child.classList && child.classList.contains('code-block-header')) continue; md += extractMarkdown(child); } } } return md; } let attempts = 0; let lastText = ''; let sameCount = 0; const check = () => { attempts++; const responses = Array.from(document.querySelectorAll('message-content')); const currentText = responses.length > 0 ? extractMarkdown(responses[responses.length - 1]).replace(/\\n{3,}/g, '\\n\\n').trim() : ''; if (currentText && currentText.trim().length > 0) { if (currentText === lastText) { sameCount++; if (sameCount >= 5) { return resolve({ success: true, markdown: currentText }); } } else { sameCount = 0; lastText = currentText; } } if (attempts >= 60) return resolve({ success: false, error: 'Timeout waiting for response generation' }); setTimeout(check, 500); }; check(); });"
+      },
+      "captureAs": "GEMINI_RESPONSE"
+    }
+  ]
+}
