@@ -73,12 +73,35 @@ npm run call -- webmcp.invokeTool \
 ## MCP Server
 
 The MCP server lets MCP clients call the same browser commands without writing
-gateway HTTP requests by hand. Keep the gateway running, then configure the MCP
-client to spawn the stdio adapter:
+gateway HTTP requests by hand.
+
+Install dependencies once. This installs both the gateway dependency and
+`@modelcontextprotocol/sdk` under `server/`:
+
+```bash
+cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
+npm run setup
+```
+
+Run the gateway in one terminal and keep it open:
 
 ```bash
 npm run gateway
 ```
+
+Load or reload the unpacked extension from
+`/Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/webmcp-extension/dist`.
+The gateway must show the extension is connected before MCP tool calls can
+control Chrome.
+
+Most MCP clients spawn the stdio server for you. Use this command in the client
+configuration:
+
+```bash
+node /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs
+```
+
+For clients that support JSON config, use:
 
 ```json
 {
@@ -93,11 +116,26 @@ npm run gateway
 }
 ```
 
-For a local smoke test:
+Claude Code can install it directly:
+
+```bash
+claude mcp add webmcp-browser -- node /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs
+```
+
+To run the MCP server manually from this repo:
+
+```bash
+npm run mcp
+```
+
+For a local smoke test with MCP Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector node server/mcp_server.mjs
 ```
+
+Open the Inspector UI, choose Tools, and call `ping`. A successful result means
+the MCP server, gateway, and extension are wired together.
 
 See `docs/mcp-server/mcp-server-setup.md` for Claude Code, Cursor, and Claude
 Desktop configuration examples.
