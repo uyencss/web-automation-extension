@@ -24,7 +24,7 @@ Chrome Extension (background.js) → CDP / navigator.modelContext
 ```
 
 Lý do tách process thay vì nhồi MCP vào gateway:
-- Gateway không phải sửa gì → không rủi ro hồi quy cho runner/scripts đang chạy.
+- Gateway không phải sửa gì → không rủi ro hồi quy cho scripts/CLI đang chạy.
 - Extension kết nối tới gateway như **WS client**, nên gateway **bắt buộc** là WS server.
   MCP server chỉ cần là **HTTP client** của gateway — quan hệ sạch, một chiều.
 - Có thể chạy/không chạy MCP server độc lập với gateway.
@@ -32,7 +32,7 @@ Lý do tách process thay vì nhồi MCP vào gateway:
 ## 2. Thiết kế tool
 
 - **Nguồn sự thật:** tái dùng `COMMAND_DEFINITIONS` trong
-  [runner/command-catalog.js](../runner/command-catalog.js) để **tự sinh** danh sách tool
+  `catalog/command-catalog.js` để **tự sinh** danh sách tool
   + JSON Schema từ `requiredParams`/`optionalParams`. Không hard-code 36 tool bằng tay.
 - **Đặt tên:** MCP tool name không nên chứa dấu chấm. Map:
   - `webmcp.listTools`  → tool `webmcp_list_tools`
@@ -74,7 +74,7 @@ import {
 const GATEWAY = process.env.WEBMCP_GATEWAY_URL || 'http://localhost:7865';
 
 // --- 4.1 Build tool list from catalog ---------------------------------
-// import { COMMAND_DEFINITIONS } from '../runner/command-catalog.js' (chuyển sang export)
+// import { COMMAND_DEFINITIONS } from '../catalog/command-catalog.js'
 // hoặc copy bảng tối thiểu. Mỗi tool:
 //   { name, description, inputSchema, _method } (_method = JSON-RPC method gốc)
 const NUMERIC = new Set(['x','y','fromX','fromY','steps','width','height',
@@ -168,7 +168,7 @@ console.error(`[mcp] webmcp MCP server ready, gateway=${GATEWAY}`);
 ```
 
 Điểm cần làm khi code thật:
-1. Đổi `runner/command-catalog.js` để **export** `COMMAND_DEFINITIONS`/`COMMAND_GROUPS`
+1. Đổi `catalog/command-catalog.js` để **export** `COMMAND_DEFINITIONS`/`COMMAND_GROUPS`
    (hiện đang là `const` nội bộ) — hoặc tạo một bản copy tối thiểu trong `mcp-tool-catalog.mjs`.
    File runner là CommonJS, MCP là ESM → nếu import trực tiếp, cân nhắc dùng
    `module.exports` + dynamic `import()` hoặc copy bảng. Cách an toàn nhất cho MVP: **copy**

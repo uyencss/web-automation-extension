@@ -42,5 +42,8 @@ docs/local/
 docs/private/
 docs/drafts/
 
+# Archived optional workflow runner
+.archive/runner/
+
 # Local Claude Code config (per-machine, not shared)
 .claude/

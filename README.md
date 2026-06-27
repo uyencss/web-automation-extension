@@ -17,7 +17,7 @@ The kit has three layers:
 3. MCP server adapter: `server/mcp_server.mjs`
    - Stdio MCP server for Claude Desktop, Cursor, Claude Code, Cline, and
      other MCP clients.
-   - Generates MCP tools from `runner/command-catalog.js`.
+   - Generates MCP tools from `catalog/command-catalog.js`.
    - Proxies each tool call to the gateway HTTP API.
 4. Package CLI: `bin/webmcp.mjs`
    - Exposes `webmcp mcp`, `webmcp gateway start`, `webmcp health`, and
@@ -29,7 +29,7 @@ The kit has three layers:
      page tools through `webmcp.invokeTool`, parse nested MCP results, and verify
      each browser action.
 
-`runner/command-catalog.js` is used by the MCP adapter to generate tool schemas.
+`catalog/command-catalog.js` is used by the MCP adapter to generate tool schemas.
 
 ## Quick Start
 

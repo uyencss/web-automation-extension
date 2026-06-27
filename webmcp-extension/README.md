@@ -327,7 +327,7 @@ web-automation-extension/
 │       └── icons/
 ├── skills/
 │   └── webmcp-browser-automation/     # Agent skill source (installed globally)
-├── runner/                            # Command catalog (source for MCP tools)
+├── catalog/                           # Command catalog (source for MCP tools)
 ├── scripts/                           # Installer + tooling helpers
 ├── .examples/                         # Gateway examples + JSON workflows (git-ignored)
 └── docs/                              # Architecture and setup notes

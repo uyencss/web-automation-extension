@@ -1,8 +1,8 @@
 # Deep Comparison: WebMCP Runner vs Auto-Lib + Workflow-Runners-Lib
 
 > **Date**: 2026-06-26  
-> **Status**: Analysis Complete, Implementation Approved  
-> **Context**: Comparing `web-automation-extension/runner/` with `flow-auto-browser-extension` packages:
+> **Status**: Historical analysis for archived optional runner  
+> **Context**: Comparing `.archive/runner/` with `flow-auto-browser-extension` packages:
 > - `@gyga-browser/auto-lib` (~3000 LOC)
 > - `@gyga-browser/workflow-runners` (~2500 LOC)
 

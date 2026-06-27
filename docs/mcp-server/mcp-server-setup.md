@@ -210,5 +210,5 @@ Nếu đang local dev và muốn MCP tự spawn gateway khi gateway chưa chạy
 MCP server **không thay thế** gì cả — nó là lớp thứ 3 thêm vào:
 
 - Script/agent chạy shell vẫn dùng được `curl http://localhost:7865/api` như cũ.
-- Runner (`runner/run.js`) vẫn chạy độc lập.
+- Workflow runner JSON đã được archive khỏi surface chính; dùng MCP/gateway cho AI agent flow.
 - MCP server chỉ thêm đường cho các MCP client cắm thẳng, không cần biết WebSocket.

@@ -1,11 +1,13 @@
 # Implementation Plan: WebMCP Command Workflow Runner V2
 
 > **Date**: 2026-06-26
-> **Status**: Implemented - Runner V2 core
-> **Scope**: `web-automation-extension/runner/`
+> **Status**: Archived - optional workflow runner experiment
+> **Scope**: `.archive/runner/`
 > **Primary goal**: upgrade the runner so it can reliably execute WebMCP command workflows defined in JSON.
 
-Implementation now lives in `runner/` as a small set of focused CommonJS modules:
+This document is historical. The main product surface is now skills + MCP + gateway + extension, and the workflow JSON runner has been moved to `.archive/runner/`.
+
+Implementation lived in `runner/` as a small set of focused CommonJS modules:
 
 - `workflow-runner.js` owns execution, events, guards, routing, retry, timeout, cancellation, and tab tracking.
 - `workflow-context.js`, `workflow-normalizer.js`, and `workflow-validator.js` own structured context, defaults, schema checks, template references, and route checks.
@@ -42,8 +44,8 @@ Out of scope:
 
 Current files:
 
-- `runner/workflow-runner.js`
-- `runner/run.js`
+- `.archive/runner/workflow-runner.js`
+- `.archive/runner/run.js`
 
 Current behavior:
 
@@ -257,7 +259,7 @@ Runner options:
 Recommended files:
 
 ```text
-runner/
+.archive/runner/
   run.js
   workflow-runner.js
   transport.js
@@ -516,7 +518,7 @@ The CLI should keep readable logs by subscribing to events. Add `--json-events` 
 Update `run.js` options:
 
 ```bash
-node runner/run.js .examples/workflows/gemini/chat.json \
+node .archive/runner/run.js .examples/workflows/gemini/chat.json \
   --var PROMPT="Hello" \
   --timeout 60000 \
   --gateway-url http://localhost:7865/api \
@@ -612,7 +614,7 @@ Use mocked transport tests before browser integration.
 Recommended fixtures:
 
 ```text
-runner/fixtures/
+.archive/runner/fixtures/
   command-basic-workflow.json
   command-routing-workflow.json
   command-guard-workflow.json
@@ -641,8 +643,8 @@ Minimum checks:
 Integration checks with gateway and extension running:
 
 ```bash
-node runner/run.js .examples/workflows/gemini/chat.json --dry-run
-node runner/run.js .examples/workflows/gemini/chat.json --var PROMPT="Test prompt"
+node .archive/runner/run.js .examples/workflows/gemini/chat.json --dry-run
+node .archive/runner/run.js .examples/workflows/gemini/chat.json --var PROMPT="Test prompt"
 ```
 
 Verify:

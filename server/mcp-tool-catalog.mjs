@@ -5,7 +5,7 @@ const require = createRequire(import.meta.url);
 const {
   COMMAND_DEFINITIONS,
   UNSUPPORTED_COMMANDS,
-} = require('../runner/command-catalog.js');
+} = require('../catalog/command-catalog.js');
 
 const NUMERIC_PARAMS = new Set([
   'clickCount',
