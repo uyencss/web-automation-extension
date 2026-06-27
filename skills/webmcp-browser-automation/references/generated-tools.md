@@ -47,7 +47,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `webmcp.invokeTool` | `{ toolName, input?, tabId? }` | `webmcp.js` |
 | `webmcp.listTools` | `{ tabId? }` | `webmcp.js` |
 
-## Page-Registered WebMCP Tools (13)
+## Page-Registered WebMCP Tools (14)
 
 Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirmed they exist on the target tab.
 
@@ -63,9 +63,10 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 | `scroll_page` | - | `target`, `delta_y`, `container_selector`, `behavior` | Scroll the page or a specific container. Can scroll to a position, by a delta, or to a specific element. |
 | `submit_form` | - | `form_selector`, `fields`, `submit_button_selector` | Submit a form element. Optionally fill multiple fields before submitting. Can submit by clicking a submit button or calling form.submit(). |
 | `execute_javascript` | `code` | `code` | Execute arbitrary JavaScript code in the page context and return the result. The code has full access to the page DOM and all page APIs. Use this as a fallback when no other tool fits. |
-| `start_network_capture` | `url_pattern` | `url_pattern` | Start capturing network requests matching a specific URL pattern. Must be called before wait_for_network_response. |
-| `wait_for_network_response` | `url_pattern` | `url_pattern`, `timeout_ms` | Wait for a network response that matches the previously started capture pattern. Returns the response body. |
-| `stop_network_capture` | - | - | Stop capturing network requests and clean up resources. |
+| `start_network_capture` | `url_pattern` | `url_pattern` | Start capturing network requests whose URL contains a pattern. Call multiple times to capture several patterns at once on the same tab. Captures method, status, headers, timing, and response bodies for ALL matching requests. Must be called before wait_for_network_response or get_captured_requests. |
+| `wait_for_network_response` | `url_pattern` | `url_pattern`, `timeout_ms`, `include_body` | Wait (event-driven, no polling) for the next captured response matching a pattern and return its metadata + body. Each call consumes the oldest unconsumed match, so calling repeatedly walks through successive responses. Use get_captured_requests to see everything captured so far without consuming. |
+| `get_captured_requests` | - | `url_pattern`, `include_bodies`, `include_headers`, `limit` | List all network requests captured so far (across all active patterns), without consuming them. Returns metadata for each; optionally response bodies and headers. Ideal when a page fires many requests matching the same pattern. |
+| `stop_network_capture` | - | `url_pattern` | Stop capturing and clean up. Pass a url_pattern to remove only that one pattern (if others remain active); omit it to stop all capture on the tab. |
 
 ## Capability Announcement Check
 

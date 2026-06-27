@@ -178,6 +178,58 @@ console.error(`[mcp] webmcp-browser MCP server ready, gateway=${GATEWAY}`);
 3. `webmcp_invoke_tool`: nhắc trong description rằng kết quả thật nằm ở
    `result.result.content[0].text` (giống ghi chú trong SKILL.md).
 
+## 4b. Gateway-first — đảm bảo AI luôn biết phải chạy gateway trước
+
+MCP server **vô dụng nếu gateway chưa chạy / extension chưa connect**. Dùng 4 lớp để AI
+không bao giờ "quên":
+
+1. **Tự khởi động gateway (tùy chọn, mặc định bật).** Khi MCP server start, gọi
+   `GET /health`; nếu không kết nối được thì `spawn` gateway như child process detached:
+   ```js
+   import { spawn } from 'node:child_process';
+   async function ensureGateway() {
+     try { await fetch(`${GATEWAY}/health`); return; } catch {}
+     if (process.env.WEBMCP_AUTOSTART_GATEWAY === '0') return;
+     const child = spawn('node', [join(__dirname, 'gateway_server.js')],
+       { detached: true, stdio: 'ignore' });
+     child.unref();
+     // poll /health vài giây cho tới khi sẵn sàng
+   }
+   ```
+   Lưu ý: việc này chỉ bật được gateway, **không** mở Chrome/extension hộ — phần đó vẫn cần user.
+
+2. **Tool `browser_status` / `ensure_ready`.** Trả trạng thái rõ ràng để AI tự gọi đầu tiên:
+   ```jsonc
+   // gọi GET /health rồi map ra:
+   { "gatewayRunning": true, "extensionConnected": false,
+     "hint": "Mở Chrome đã load webmcp-extension/dist; extension tự connect trong ~3s." }
+   ```
+
+3. **Mọi tool lỗi đều trả message hành động được**, không phải lỗi kỹ thuật trần:
+   ```js
+   async function callGateway(method, params) {
+     let res;
+     try {
+       res = await fetch(`${GATEWAY}/api`, { method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ method, params: params || {} }) });
+     } catch {
+       throw new Error('Gateway chưa chạy. Chạy `npm run gateway` rồi thử lại.');
+     }
+     const json = await res.json();
+     if (res.status === 503)                    // extension chưa connect
+       throw new Error('Extension chưa kết nối. Mở Chrome đã load webmcp-extension/dist (auto-connect ~3s).');
+     if (!res.ok) throw new Error(json.error || `Gateway HTTP ${res.status}`);
+     return json.result;
+   }
+   ```
+
+4. **Description của server + SKILL.md nói rõ thứ tự.** Server instructions (field
+   `instructions` khi khởi tạo `Server`) ghi: *"Trước khi dùng bất kỳ tool nào, gọi
+   `browser_status`. Nếu gateway/extension chưa sẵn sàng, dừng và yêu cầu user chạy
+   `npm run gateway` + mở Chrome."* SKILL.md đã có bước health-check ở Run Loop — giữ và
+   trỏ về tool `ping`/`browser_status`.
+
 ## 5. Phụ thuộc & scripts
 
 `server/package.json`:
@@ -194,7 +246,27 @@ console.error(`[mcp] webmcp-browser MCP server ready, gateway=${GATEWAY}`);
 }
 ```
 
-Root `package.json`:
+Root `package.json` — lệnh chung cài deps (gồm MCP SDK) + skill + MCP cho từng runtime.
+Mỗi `install:*` chạy `setup` trước rồi tới installer `scripts/install-agent.mjs`:
+
+```jsonc
+"scripts": {
+  "install:agent":       "npm run setup && node scripts/install-agent.mjs",
+  "install:claude":      "npm run setup && node scripts/install-agent.mjs claude",
+  "install:codex":       "npm run setup && node scripts/install-agent.mjs codex",
+  "install:copilot":     "npm run setup && node scripts/install-agent.mjs copilot",
+  "install:antigravity": "npm run setup && node scripts/install-agent.mjs antigravity",
+  "install:cursor":      "npm run setup && node scripts/install-agent.mjs cursor"
+}
+```
+
+Installer cho mỗi runtime: copy skill từ `skills/<name>` vào skill-dir global của runtime
+(Claude Code `~/.claude/skills/`; Codex `~/.codex/skills/`; Copilot/Antigravity/Cursor
+không file-skill → dùng SKILL.md), tự ghi MCP config global chỗ an toàn (`claude mcp add -s user`,
+append `~/.codex/config.toml`, ghi `~/.cursor/mcp.json` nếu chưa có), in snippet cho config
+dùng chung (VS Code user settings), và luôn in reminder phải chạy gateway trước.
+
+Phần dưới là cấu hình script gốc của `server/package.json`:
 ```jsonc
 "scripts": {
   "mcp": "npm --prefix server run mcp"
@@ -232,9 +304,10 @@ Inspector mở UI web → tab **Tools** → thấy danh sách tool → bấm `pi
 
 - **stdout là kênh MCP** — mọi log phải đi `console.error`, nếu in ra stdout sẽ làm hỏng
   giao thức (client báo "invalid JSON").
-- MCP server **không tự khởi động gateway**. MVP: nếu `/api` lỗi, trả message gợi ý
-  "chạy `npm run gateway` và reload extension". (Tùy chọn nâng cao: cho MCP server spawn
-  gateway như child process.)
+- MCP server **tự khởi động gateway** lúc startup nếu chưa có process nào nghe ở port
+  cấu hình (spawn detached, sống độc lập qua các lần MCP restart) và tái dùng gateway
+  sẵn có. Đặt `WEBMCP_NO_AUTOSTART=1` để tắt và tự chạy `npm run gateway`. Nếu `/api`
+  vẫn lỗi, message gợi ý phân biệt "gateway chưa tới được" với "extension chưa connect".
 - Event từ extension (`tabUpdated`...) **không** chuyển qua MCP trong MVP — tool là
   request/response. Nếu cần, bổ sung sau bằng MCP notifications/resources.
 - Một extension = một connection (giới hạn hiện có của gateway) vẫn còn; MCP server

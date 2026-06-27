@@ -37,3 +37,6 @@ vnexpress_result.json
 # Local examples and workflows
 .examples/
 
+# Local Claude Code config (per-machine, not shared)
+.claude/
+

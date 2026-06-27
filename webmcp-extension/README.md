@@ -29,6 +29,9 @@ Chrome extension cho **AI-driven browser automation** qua WebSocket. Cung cấp 
 
 ### Step 2: Start Gateway Server
 
+Chỉ cần khi gọi gateway trực tiếp bằng script/curl. Nếu dùng qua MCP server thì
+bỏ qua bước này — `server/mcp_server.mjs` tự khởi động gateway.
+
 ```bash
 cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
 npm run setup      # Lần đầu
@@ -282,7 +285,7 @@ send("getAccessibilityTree")
 
 ---
 
-## 13 Page-Registered WebMCP Tools
+## 14 Page-Registered WebMCP Tools
 
 Tự động inject vào mỗi trang qua `navigator.modelContext`:
 
@@ -298,9 +301,10 @@ Tự động inject vào mỗi trang qua `navigator.modelContext`:
 | 8   | `scroll_page`               | Cuộn trang (top/bottom/element/delta)            |
 | 9   | `submit_form`               | Fill nhiều fields + submit form                  |
 | 10  | `execute_javascript`        | Chạy JS tùy ý trong page context                 |
-| 11  | `start_network_capture`     | Bắt đầu capture network request theo URL pattern |
-| 12  | `wait_for_network_response` | Chờ và lấy response body đã capture              |
-| 13  | `stop_network_capture`      | Dừng capture và dọn tài nguyên                   |
+| 11  | `start_network_capture`     | Capture network theo URL pattern (gọi nhiều lần = nhiều pattern) |
+| 12  | `wait_for_network_response` | Chờ (event-driven) response kế tiếp + body; consume từng cái |
+| 13  | `get_captured_requests`     | Liệt kê mọi request đã capture, không consume (bodies/headers tùy chọn) |
+| 14  | `stop_network_capture`      | Dừng capture (1 pattern hoặc tất cả) và dọn tài nguyên |
 
 ---
 
@@ -321,11 +325,12 @@ web-automation-extension/
 │       │   ├── bridge.js              # Isolated-world bridge
 │       │   └── register-tools.js      # Inject 13 WebMCP tools vào mỗi trang
 │       └── icons/
-├── .agents/skills/
-│   └── webmcp-browser-automation/     # Agent skill + generated reference
-├── examples/                          # Gateway examples
-├── workflows/                         # JSON workflow examples
-└── docs/                              # Architecture and compatibility notes
+├── skills/
+│   └── webmcp-browser-automation/     # Agent skill source (installed globally)
+├── runner/                            # Command catalog (source for MCP tools)
+├── scripts/                           # Installer + tooling helpers
+├── .examples/                         # Gateway examples + JSON workflows (git-ignored)
+└── docs/                              # Architecture and setup notes
 ```
 
 ---
@@ -381,7 +386,7 @@ asyncio.run(main())
 ## Documentation
 
 - [Root Kit Quickstart](../README.md) — Entrypoint cho extension + gateway + skill
-- [Generated Tool Reference](../.agents/skills/webmcp-browser-automation/references/generated-tools.md) — Source-derived commands/tools
-- [Codex Extension Analysis](../docs/codex-extension-analysis.md) — Cách Codex extension hoạt động
-- [Implementation Plan](../docs/implementation-plan.md) — Chi tiết thiết kế và tất cả commands
-- [Compatibility Audit](../docs/compatibility-audit.md) — So sánh với Codex v1.1.5
+- [Generated Tool Reference](../skills/webmcp-browser-automation/references/generated-tools.md) — Source-derived commands/tools
+- [Codex Extension Analysis](../docs/extension/codex-extension-analysis.md) — Cách Codex extension hoạt động
+- [Implementation Plan](../docs/extension/implementation-plan.md) — Chi tiết thiết kế và tất cả commands
+- [Compatibility Audit](../docs/extension/compatibility-audit.md) — So sánh với Codex v1.1.5

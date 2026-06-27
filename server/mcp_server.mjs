@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -11,12 +15,75 @@ import { buildMcpTools } from './mcp-tool-catalog.mjs';
 
 const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
 const gatewayUrl = normalizeGatewayUrl(process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL);
+const serverDir = dirname(fileURLToPath(import.meta.url));
+// Opt out of auto-starting the gateway with WEBMCP_NO_AUTOSTART=1.
+const autoStartGateway = process.env.WEBMCP_NO_AUTOSTART !== '1';
 const tools = buildMcpTools();
 const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 
 function normalizeGatewayUrl(rawUrl) {
   const trimmed = rawUrl.replace(/\/+$/, '');
   return trimmed.endsWith('/api') ? trimmed.slice(0, -4) : trimmed;
+}
+
+function isLocalGateway(url) {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+async function fetchHealth(timeoutMs = 1500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${gatewayUrl}/health`, { signal: controller.signal });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Make sure the gateway process is up. Idempotent: if it is already listening
+// (started by hand or by another MCP instance) we reuse it; otherwise we spawn
+// it detached so it outlives this stdio MCP server across restarts.
+async function ensureGateway() {
+  let health = await fetchHealth();
+  if (health) return health;
+
+  if (!autoStartGateway || !isLocalGateway(gatewayUrl)) {
+    console.error(`[mcp] gateway not reachable at ${gatewayUrl} and auto-start is off.`);
+    return null;
+  }
+
+  const port = new URL(gatewayUrl).port || '7865';
+  console.error(`[mcp] gateway not running, starting it on port ${port}...`);
+
+  const child = spawn(process.execPath, [join(serverDir, 'gateway_server.js')], {
+    cwd: serverDir,
+    env: { ...process.env, WEBMCP_GATEWAY_PORT: port },
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.on('error', (err) => console.error(`[mcp] failed to spawn gateway: ${err.message}`));
+  child.unref();
+
+  // Poll /health until ready. A rival process may have won the port (EADDRINUSE);
+  // that is fine as long as *some* gateway answers.
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 300));
+    health = await fetchHealth();
+    if (health) return health;
+  }
+
+  console.error('[mcp] gateway did not become ready within 10s.');
+  return null;
 }
 
 function publicTool(tool) {
@@ -121,6 +188,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+const health = await ensureGateway();
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`[mcp] webmcp-browser ready, gateway=${gatewayUrl}`);
+
+if (!health) {
+  console.error(`[mcp] webmcp-browser ready, but gateway is NOT reachable at ${gatewayUrl}. Run "npm run gateway".`);
+} else if (!health.extensionConnected) {
+  console.error(`[mcp] webmcp-browser ready, gateway=${gatewayUrl}, but the Chrome extension is not connected. Load/reload the unpacked extension from webmcp-extension/dist.`);
+} else {
+  console.error(`[mcp] webmcp-browser ready, gateway=${gatewayUrl}, extension connected.`);
+}

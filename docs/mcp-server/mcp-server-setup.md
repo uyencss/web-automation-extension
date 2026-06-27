@@ -18,7 +18,23 @@
 - **[3]** thường **do MCP client tự spawn** — bạn KHÔNG chạy tay. Bạn chỉ cần khai báo
   lệnh chạy nó trong file config của client.
 
-## 1. Chuẩn bị một lần
+## 1. Chuẩn bị một lần — cài bằng MỘT lệnh theo runtime
+
+Mỗi lệnh dưới đây tự `npm run setup` (cài deps gồm MCP SDK) **rồi** cài skill + ghi/in
+cấu hình MCP cho đúng runtime. Cuối cùng luôn in reminder phải chạy gateway trước.
+
+```bash
+cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
+
+npm run install:claude        # Claude Code  — copy skill -> ~/.claude/skills + `claude mcp add -s user`
+npm run install:codex         # Codex        — copy skill -> ~/.codex/skills + thêm MCP vào ~/.codex/config.toml
+npm run install:copilot       # GitHub Copilot (VS Code) — in snippet MCP global để dán
+npm run install:antigravity   # Antigravity  — in snippet MCP để dán
+npm run install:cursor        # Cursor       — ghi ~/.cursor/mcp.json (global)
+npm run install:agent         # (không target) in cấu hình cho TẤT CẢ runtime
+```
+
+Hoặc chỉ cài deps thủ công, tự cấu hình client sau:
 
 ```bash
 cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
@@ -117,8 +133,10 @@ Nếu gateway chạy port khác:
 
 ## 5. Luồng dùng end-to-end
 
-1. `npm run gateway` (terminal để mở).
-2. Mở client (Claude Desktop/Cursor/Claude Code) — nó tự spawn MCP server.
+1. Mở client (Claude Desktop/Cursor/Claude Code) — nó tự spawn MCP server, và
+   MCP server tự khởi động gateway nếu chưa chạy (đặt `WEBMCP_NO_AUTOSTART=1` để
+   tự chạy `npm run gateway`; vẫn cần khi gọi script/curl trực tiếp).
+2. Load/reload unpacked extension trong Chrome (bước thủ công duy nhất).
 3. Ra lệnh tự nhiên, ví dụ: "mở google.com, tìm 'webmcp', chụp màn hình."
    Client sẽ tự gọi `navigate` → `getInteractiveElements` → `dispatchClick` →
    `typeText` → `pressKey` → `screenshot`.
@@ -128,7 +146,7 @@ Nếu gateway chạy port khác:
 | Triệu chứng | Nguyên nhân & cách xử lý |
 |---|---|
 | Client báo server "failed"/"disconnected" | Sai đường dẫn file, hoặc Node không có trong PATH của client. Dùng đường dẫn tuyệt đối; thử `command: "/usr/local/bin/node"`. |
-| Tool gọi được nhưng lỗi `extension is not connected` | Chưa chạy `npm run gateway`, hoặc extension chưa load/connect. Reload extension. |
+| Tool gọi được nhưng lỗi `extension is not connected` | Gateway đã chạy (auto-start) nhưng extension chưa load/connect trong Chrome. Reload unpacked extension. |
 | `invalid JSON` / server crash khi handshake | Có `console.log` in ra **stdout**. Mọi log phải dùng `console.error`. |
 | Không thấy tool nào | MCP server chạy nhưng `tools/list` rỗng → kiểm tra việc sinh tool từ catalog. Test lại bằng Inspector (mục 3). |
 | `screenshot` trả chuỗi base64 khổng lồ | MVP nhồi vào text. Nâng cấp: trả `{ type: "image" }` (xem plan mục 4). |

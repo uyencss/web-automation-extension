@@ -65,8 +65,10 @@ inside JSON-RPC 2.0:
 ```
 
 If an MCP client is available, use `server/mcp_server.mjs` as a stdio MCP
-adapter. Keep `npm run gateway` running; the MCP server does not start the
-gateway by itself. MCP tool names replace dots with underscores, so
+adapter. On startup it auto-starts the gateway if one is not already listening
+on the configured port (detached, so it survives MCP restarts); reuse an
+existing gateway when present. Set `WEBMCP_NO_AUTOSTART=1` to opt out and manage
+`npm run gateway` yourself. MCP tool names replace dots with underscores, so
 `webmcp.listTools` becomes `webmcp_list_tools` and `webmcp.invokeTool` becomes
 `webmcp_invoke_tool`. The adapter also exposes `browser_raw_command` for raw
 gateway calls.
@@ -87,8 +89,10 @@ Gateway/direct extension calls use `webmcp.listTools`, `webmcp.invokeTool`, and
 
 For every browser automation task:
 
-1. Health check: call `ping`. If it fails, start the gateway and reload the
-   unpacked extension from `webmcp-extension/dist`.
+1. Health check: call `ping`. The MCP server auto-starts the gateway, so a
+   failure here usually means the unpacked extension is not loaded/connected:
+   reload it from `webmcp-extension/dist`. (If you call the gateway directly via
+   scripts/curl instead of through the MCP server, start `npm run gateway`.)
 2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`.
 3. Wait for readiness: `navigate` waits for page load; otherwise use
    `waitForSelector` or the page tool `wait_for_element`.
@@ -226,9 +230,10 @@ These tools are registered by `register-tools.js` and should be called only via
 | `scroll_page` | Scroll document/container to top, bottom, selector, or delta | none |
 | `submit_form` | Fill fields and submit a form | none |
 | `execute_javascript` | Run page JS as an escape hatch | `code` |
-| `start_network_capture` | Start background network capture for URL substring | `url_pattern` |
-| `wait_for_network_response` | Wait for captured response body | `url_pattern` |
-| `stop_network_capture` | Stop capture and clean up | none |
+| `start_network_capture` | Start capture for a URL substring. Call repeatedly to capture multiple patterns at once. | `url_pattern` |
+| `wait_for_network_response` | Wait (event-driven) for the next match; consumes it so repeat calls walk successive responses | `url_pattern` |
+| `get_captured_requests` | List everything captured so far without consuming; bodies/headers optional | none |
+| `stop_network_capture` | Stop capture (optionally one pattern) and clean up | none |
 
 `frame_selector` forwarding is implemented for `query_selector_all`,
 `click_element`, `extract_table_data`, `wait_for_element`, and
@@ -305,10 +310,23 @@ Use standard CSS selectors only. Playwright-only selectors such as
 ### Network capture
 
 1. `webmcp.invokeTool` -> `start_network_capture` with a URL substring such as
-   `"graphql"` or `"/api/search"`.
-2. Trigger the page action with a click/type/form submit.
-3. `webmcp.invokeTool` -> `wait_for_network_response`.
+   `"graphql"` or `"/api/search"`. Call it again with other substrings to watch
+   several endpoints at once.
+2. Trigger the page action with a click/type/form submit. Note: synthetic CDP
+   typing may not fire a site's input listeners; if the request never appears,
+   trigger it directly (e.g. `execute_javascript` -> `fetch(...)`) or use a real
+   click on the submit control.
+3. Read the result one of two ways:
+   - `wait_for_network_response` — blocks until the next match arrives and
+     consumes it; call again to get the following response.
+   - `get_captured_requests` — pull the full list at once (set
+     `include_bodies: true` for bodies); does not consume.
 4. `webmcp.invokeTool` -> `stop_network_capture`.
+
+Captured records include `method`, `status`, `mimeType`, `durationMs`,
+`fromCache`, and (for `wait_for_network_response` / `include_bodies`) `body` plus
+`base64Encoded`. Failed requests are returned with `failed: true` and
+`errorText` instead of hanging.
 
 ## Safety And Reliability
 
@@ -330,7 +348,7 @@ Use standard CSS selectors only. Playwright-only selectors such as
 
 | Symptom | Fix |
 |---|---|
-| `Chrome extension is not connected to the gateway` | Start `node server/gateway_server.js`, then reload the unpacked extension. |
+| `Chrome extension is not connected to the gateway` | Gateway is up (MCP auto-starts it) but no extension is attached: reload the unpacked extension. For direct script/curl usage, start `node server/gateway_server.js`. |
 | `Method not found` | You called a page tool as a background command. Use `webmcp.invokeTool` with `toolName`, or choose one of the extension commands above. |
 | `navigator.modelContext not found` | Use a normal web page, wait for load, navigate/reload the tab, and confirm `register-tools.js` is injected. Chrome internal pages cannot use it. |
 | Empty `webmcp.listTools` result | Reload extension and page; make sure the unpacked extension points at `webmcp-extension/dist`. |

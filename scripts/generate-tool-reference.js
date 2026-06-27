@@ -13,7 +13,7 @@ const HANDLERS_DIR = path.join(ROOT, 'webmcp-extension/dist/bg/handlers');
 const WS_CLIENT_PATH = path.join(ROOT, 'webmcp-extension/dist/bg/ws-client.js');
 const OUTPUT_PATH = path.join(
   ROOT,
-  '.agents/skills/webmcp-browser-automation/references/generated-tools.md'
+  'skills/webmcp-browser-automation/references/generated-tools.md'
 );
 
 const COMMAND_PARAM_HINTS = {
