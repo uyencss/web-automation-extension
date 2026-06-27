@@ -3,7 +3,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "1.0.2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uyencss/web-automation-extension.git"
+  },
+  "version": "1.0.3",
   "description": "Reusable WebMCP Chrome extension, gateway, and agent skill kit for browser automation.",
   "bin": {
     "webmcp": "./bin/webmcp.mjs"
