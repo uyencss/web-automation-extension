@@ -516,7 +516,7 @@ The CLI should keep readable logs by subscribing to events. Add `--json-events` 
 Update `run.js` options:
 
 ```bash
-node runner/run.js workflows/gemini/chat.json \
+node runner/run.js .examples/workflows/gemini/chat.json \
   --var PROMPT="Hello" \
   --timeout 60000 \
   --gateway-url http://localhost:7865/api \
@@ -625,9 +625,9 @@ runner/fixtures/
 Minimum checks:
 
 - Existing workflows pass dry-run:
-  - `workflows/facebook/post_text.json`
-  - `workflows/facebook/post_with_gradient.json`
-  - `workflows/gemini/chat.json`
+  - `.examples/workflows/facebook/post_text.json`
+  - `.examples/workflows/facebook/post_with_gradient.json`
+  - `.examples/workflows/gemini/chat.json`
 - Existing workflows remain executable without schema changes.
 - `{{steps.step-id.result.foo}}` interpolation works.
 - `captureAs` preserves structured results.
@@ -641,8 +641,8 @@ Minimum checks:
 Integration checks with gateway and extension running:
 
 ```bash
-node runner/run.js workflows/gemini/chat.json --dry-run
-node runner/run.js workflows/gemini/chat.json --var PROMPT="Test prompt"
+node runner/run.js .examples/workflows/gemini/chat.json --dry-run
+node runner/run.js .examples/workflows/gemini/chat.json --var PROMPT="Test prompt"
 ```
 
 Verify:

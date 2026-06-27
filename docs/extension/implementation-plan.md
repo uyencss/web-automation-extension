@@ -204,7 +204,7 @@ web-automation-extension/
 │   ├── codex-extension-analysis.md
 │   ├── compatibility-audit.md
 │   └── implementation-plan.md
-├── .agents/skills/                    # AI skills for Gemini/Antigravity
+├── skills/                            # Agent skill source (installed globally)
 │   └── webmcp-browser-automation/
 └── README.md
 ```
@@ -227,4 +227,4 @@ web-automation-extension/
 Current registry consistency:
 - `npm run tools:generate` rebuilds the source-derived reference from runtime files.
 - `npm run tools:check` confirms the generated reference is current and every announced capability has a handler.
-- Generated reference lives at `.agents/skills/webmcp-browser-automation/references/generated-tools.md`.
+- Generated reference lives at `skills/webmcp-browser-automation/references/generated-tools.md`.
