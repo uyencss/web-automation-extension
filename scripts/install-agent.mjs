@@ -6,7 +6,7 @@
  * không phải vào dự án này), gồm 2 phần:
  *   1) Skill  — copy thư mục skill từ skills/<name> vào skill-dir global của
  *               runtime (~/.claude/skills, ~/.codex/skills) nếu runtime hỗ trợ.
- *   2) MCP    — đăng ký server/mcp_server.mjs vào config global của runtime.
+ *   2) MCP    — đăng ký MCP server vào config global của runtime.
  *
  * Triết lý an toàn: chỉ TỰ GHI vào những chỗ chắc chắn không phá hỏng cấu hình
  * có sẵn (copy skill vào skill-dir global, gọi `claude mcp add -s user`,
@@ -30,7 +30,7 @@ const SKILL_NAME = 'webmcp-browser-automation';
 const SKILL_SRC = join(ROOT, 'skills', SKILL_NAME);
 const SERVER_NAME = 'webmcp';
 const PACKAGE_NAME = process.env.WEBMCP_NPM_PACKAGE || '@gyga-browser/webmcp-browser-automation-kit';
-const INSTALL_MODE = (process.env.WEBMCP_INSTALL_MODE || 'local').toLowerCase();
+const INSTALL_MODE = (process.env.WEBMCP_INSTALL_MODE || 'npx').toLowerCase();
 
 const log = (...a) => console.log(...a);
 const ok = (m) => log(`  ✓ ${m}`);
@@ -183,11 +183,27 @@ const TARGETS = {
     }, null, 2));
   },
 
-  // Antigravity: MCP khai báo dạng mcpServers (kiểm tra lại đường dẫn settings của bản bạn dùng).
+  // Antigravity: MCP configuration in ~/.gemini/config/mcp_config.json and global skills under ~/.gemini/config/skills/.
   antigravity() {
     head('Antigravity');
-    note('Antigravity không có file-skill; dùng SKILL.md làm hướng dẫn.');
-    printMcpJson('MCP settings của Antigravity (Settings → MCP → Edit config)', '(client config)');
+    copySkill(join(homedir(), '.gemini', 'config', 'skills', SKILL_NAME));
+
+    const configFile = join(homedir(), '.gemini', 'config', 'mcp_config.json');
+    const { command, args } = getMcpCommandConfig();
+    let config = {};
+    if (existsSync(configFile)) {
+      try {
+        config = JSON.parse(readFileSync(configFile, 'utf8'));
+      } catch (e) {
+        note(`Không thể parse ${configFile}, sẽ ghi đè.`);
+      }
+    }
+    config.mcpServers ??= {};
+    config.mcpServers[SERVER_NAME] = { command, args };
+
+    mkdirSync(dirname(configFile), { recursive: true });
+    writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
+    ok(`MCP "${SERVER_NAME}" đã được cập nhật vào ${configFile}`);
   },
 
   // Cursor: MCP global ở ~/.cursor/mcp.json (áp dụng cho mọi project).
@@ -209,7 +225,7 @@ function reminder() {
   log('  1) Chạy gateway: `webmcp gateway start` hoặc `npm run gateway`');
   log('  2) Mở Chrome đã load extension (webmcp-extension/dist) -> tự connect');
   log('  3) Mở AI client -> nó spawn MCP server và MCP kết nối gateway đang chạy');
-  log('  Để sinh config dùng package release: WEBMCP_INSTALL_MODE=npx npm run install:<target>');
+  log('  Mặc định dùng package release. Để trỏ local checkout: WEBMCP_INSTALL_MODE=local npm run install:<target>');
   log(`${'-'.repeat(64)}`);
 }
 

@@ -196,36 +196,38 @@ client will download the package with `npx`, start the MCP adapter, and proxy
 tool calls to the gateway you already started.
 
 If you also want the bundled agent skill copied into a local AI runtime, use a
-local checkout and run the installer in `npx` mode. This copies
-`skills/webmcp-browser-automation` into providers that support file-based
-skills, while writing MCP config that still points at the published package:
+local checkout and run the installer. The installer defaults to the published
+package for MCP (`npx -y @gyga-browser/webmcp-browser-automation-kit mcp`) while
+copying `skills/webmcp-browser-automation` into providers that support
+file-based skills:
 
 ```bash
 cd /path/to/web-automation-extension
-WEBMCP_INSTALL_MODE=npx npm run install:codex
-WEBMCP_INSTALL_MODE=npx npm run install:claude
+npm run install:codex
+npm run install:claude
 ```
 
 Other supported installer targets:
 
 ```bash
-WEBMCP_INSTALL_MODE=npx npm run install:cursor
-WEBMCP_INSTALL_MODE=npx npm run install:copilot
-WEBMCP_INSTALL_MODE=npx npm run install:antigravity
+npm run install:cursor
+npm run install:copilot
+npm run install:antigravity
 ```
 
 To print or apply all supported targets:
 
 ```bash
-WEBMCP_INSTALL_MODE=npx npm run install:agent
+npm run install:agent
 ```
 
-For local development, omit `WEBMCP_INSTALL_MODE=npx`; the installer then writes
-config that points at your checkout's absolute `server/mcp_server.mjs` path:
+For local development, set `WEBMCP_INSTALL_MODE=local`; the installer then
+writes config that points at your checkout's absolute `server/mcp_server.mjs`
+path:
 
 ```bash
 cd /path/to/web-automation-extension
-npm run install:codex
+WEBMCP_INSTALL_MODE=local npm run install:codex
 ```
 
 For Claude Code it copies the skill to `~/.claude/skills` and runs
