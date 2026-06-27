@@ -37,6 +37,12 @@ cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
 npm run gateway
 ```
 
+After the package is published to npm, the portable equivalent is:
+
+```bash
+npx -y webmcp-browser-automation-kit gateway start
+```
+
 The Chrome extension connects to `ws://localhost:7865`; scripts and agents call:
 
 ```bash
@@ -64,14 +70,14 @@ inside JSON-RPC 2.0:
 { "jsonrpc": "2.0", "id": 1, "method": "getActiveTab", "params": {} }
 ```
 
-If an MCP client is available, use `server/mcp_server.mjs` as a stdio MCP
-adapter. On startup it auto-starts the gateway if one is not already listening
-on the configured port (detached, so it survives MCP restarts); reuse an
-existing gateway when present. Set `WEBMCP_NO_AUTOSTART=1` to opt out and manage
-`npm run gateway` yourself. MCP tool names replace dots with underscores, so
-`webmcp.listTools` becomes `webmcp_list_tools` and `webmcp.invokeTool` becomes
-`webmcp_invoke_tool`. The adapter also exposes `browser_raw_command` for raw
-gateway calls.
+If an MCP client is available, use `server/mcp_server.mjs` or
+`webmcp mcp` as a stdio MCP adapter. Best-practice installs keep the
+gateway lifecycle explicit: start the gateway first, then let MCP connect to it.
+For local development only, set `WEBMCP_GATEWAY_AUTOSTART=1` if MCP should spawn
+the gateway when no local gateway is listening. MCP tool names replace dots with
+underscores, so `webmcp.listTools` becomes `webmcp_list_tools` and
+`webmcp.invokeTool` becomes `webmcp_invoke_tool`. The adapter also exposes
+`browser_raw_command` for raw gateway calls.
 
 If the environment exposes Codex's native WebMCP capability instead, the naming
 is different:
@@ -89,10 +95,10 @@ Gateway/direct extension calls use `webmcp.listTools`, `webmcp.invokeTool`, and
 
 For every browser automation task:
 
-1. Health check: call `ping`. The MCP server auto-starts the gateway, so a
-   failure here usually means the unpacked extension is not loaded/connected:
-   reload it from `webmcp-extension/dist`. (If you call the gateway directly via
-   scripts/curl instead of through the MCP server, start `npm run gateway`.)
+1. Health check: call `ping`. If the gateway is unreachable, start
+   `npm run gateway` or `webmcp gateway start`. If the gateway is up but
+   the extension is not connected, reload the unpacked extension from
+   `webmcp-extension/dist`.
 2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`.
 3. Wait for readiness: `navigate` waits for page load; otherwise use
    `waitForSelector` or the page tool `wait_for_element`.
@@ -348,7 +354,8 @@ Captured records include `method`, `status`, `mimeType`, `durationMs`,
 
 | Symptom | Fix |
 |---|---|
-| `Chrome extension is not connected to the gateway` | Gateway is up (MCP auto-starts it) but no extension is attached: reload the unpacked extension. For direct script/curl usage, start `node server/gateway_server.js`. |
+| Gateway is not reachable | Start `npm run gateway`, `webmcp gateway start`, or use `WEBMCP_GATEWAY_AUTOSTART=1` for local dev autostart. |
+| `Chrome extension is not connected to the gateway` | Gateway is up but no extension is attached: reload the unpacked extension. |
 | `Method not found` | You called a page tool as a background command. Use `webmcp.invokeTool` with `toolName`, or choose one of the extension commands above. |
 | `navigator.modelContext not found` | Use a normal web page, wait for load, navigate/reload the tab, and confirm `register-tools.js` is injected. Chrome internal pages cannot use it. |
 | Empty `webmcp.listTools` result | Reload extension and page; make sure the unpacked extension points at `webmcp-extension/dist`. |

@@ -19,13 +19,17 @@ The kit has three layers:
      other MCP clients.
    - Generates MCP tools from `runner/command-catalog.js`.
    - Proxies each tool call to the gateway HTTP API.
-4. Agent skill: `skills/webmcp-browser-automation`
+4. Package CLI: `bin/webmcp.mjs`
+   - Exposes `webmcp mcp`, `webmcp gateway start`, `webmcp health`, and
+     `webmcp call`.
+   - Supports npm/npx-style MCP configs without absolute repo paths after the
+     package is published.
+5. Agent skill: `skills/webmcp-browser-automation`
    - Tells agents to health-check, choose a tab, call `webmcp.listTools`, invoke
      page tools through `webmcp.invokeTool`, parse nested MCP results, and verify
      each browser action.
 
-`runner/` is not required for the kit quickstart and is intentionally left out
-of these setup commands.
+`runner/command-catalog.js` is used by the MCP adapter to generate tool schemas.
 
 ## Quick Start
 
@@ -73,7 +77,8 @@ npm run call -- webmcp.invokeTool \
 ## MCP Server
 
 The MCP server lets MCP clients call the same browser commands without writing
-gateway HTTP requests by hand.
+gateway HTTP requests by hand. Best-practice installs keep the gateway lifecycle
+explicit: start the gateway once, then let one or more MCP clients connect to it.
 
 Install dependencies once. This installs both the gateway dependency and
 `@modelcontextprotocol/sdk` under `server/`:
@@ -83,20 +88,23 @@ cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
 npm run setup
 ```
 
-You do not need to start the gateway by hand for the MCP flow: on startup
-`server/mcp_server.mjs` auto-starts the gateway if one is not already listening
-on the configured port (a detached process that survives MCP restarts), and
-reuses an existing gateway when present. Set `WEBMCP_NO_AUTOSTART=1` to opt out
-and run `npm run gateway` yourself (still needed for direct script/curl usage
-that does not go through the MCP server).
+Start the gateway before using the MCP server:
+
+```bash
+npm run gateway
+```
+
+For local development only, set `WEBMCP_GATEWAY_AUTOSTART=1` if you want
+`server/mcp_server.mjs` to spawn `server/gateway_server.js` when no local
+gateway is listening. `WEBMCP_NO_AUTOSTART=1` still forces autostart off.
 
 Load or reload the unpacked extension from
 `/Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/webmcp-extension/dist`.
 The gateway must show the extension is connected before MCP tool calls can
 control Chrome. This Chrome-side load is the only manual step for the MCP flow.
 
-Most MCP clients spawn the stdio server for you. Use this command in the client
-configuration:
+Most MCP clients spawn the stdio server for you. For local development, use this
+command in the client configuration:
 
 ```bash
 node /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs
@@ -117,10 +125,29 @@ For clients that support JSON config, use:
 }
 ```
 
+After publishing this package to npm, prefer the portable `npx -y` form:
+
+```json
+{
+  "mcpServers": {
+    "webmcp-browser": {
+      "command": "npx",
+      "args": ["-y", "webmcp-browser-automation-kit", "mcp"]
+    }
+  }
+}
+```
+
 Claude Code can install it directly:
 
 ```bash
 claude mcp add webmcp-browser -- node /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs
+```
+
+After npm publish:
+
+```bash
+claude mcp add webmcp-browser -- npx -y webmcp-browser-automation-kit mcp
 ```
 
 To run the MCP server manually from this repo:
@@ -167,11 +194,49 @@ npm run install:agent
 ```
 
 The installer always runs `npm run setup` first, then registers
-`server/mcp_server.mjs` globally for the chosen client. For Claude Code it copies
-the skill to `~/.claude/skills` and runs `claude mcp add -s user`; for Codex it
-copies the skill to `~/.codex/skills` and appends `[mcp_servers.webmcp-browser]`
-to `~/.codex/config.toml` if absent. Clients without file-based skills (Copilot,
-Antigravity, Cursor) get only the global MCP configuration written or printed.
+the MCP server globally for the chosen client. By default it uses the local
+absolute path to `server/mcp_server.mjs`, which is best while developing this
+checkout. After publishing the package to npm, run with
+`WEBMCP_INSTALL_MODE=npx` to generate `npx -y webmcp-browser-automation-kit mcp`
+configs instead:
+
+```bash
+WEBMCP_INSTALL_MODE=npx npm run install:codex
+```
+
+For Claude Code it copies the skill to `~/.claude/skills` and runs
+`claude mcp add -s user`; for Codex it copies the skill to `~/.codex/skills` and
+appends `[mcp_servers.webmcp-browser]` to `~/.codex/config.toml` if absent.
+Clients without file-based skills (Copilot, Antigravity, Cursor) get only the
+global MCP configuration written or printed.
+
+## Package Commands
+
+These commands are available locally with `npm run cli -- ...`, after global
+install as `webmcp ...`, and through MCP configs with
+`npx -y webmcp-browser-automation-kit ...`:
+
+```bash
+webmcp mcp
+webmcp gateway start
+webmcp gateway health --json
+webmcp call ping
+webmcp extension-path
+```
+
+While developing this checkout, expose the `webmcp` command on your PATH with:
+
+```bash
+npm run link:local
+webmcp -h
+```
+
+Without linking or publishing, use the npm script wrapper:
+
+```bash
+npm run cli -- -h
+npm run cli -- health --json
+```
 
 ## Agent Usage Contract
 
@@ -192,6 +257,9 @@ Antigravity, Cursor) get only the global MCP configuration written or printed.
 | `npm run setup`                         | Install gateway dependencies under `server/`.                                       |
 | `npm run gateway`                       | Start the HTTP/WebSocket gateway.                                                   |
 | `npm run mcp`                           | Start the stdio MCP adapter for clients that launch it manually.                    |
+| `npm run cli -- <command>`              | Run the package CLI from this checkout.                                             |
+| `npm run link:local`                    | Link this checkout globally so `webmcp ...` works from any shell.                   |
+| `npm run pack:dry-run`                  | Show the files that would be published to npm.                                      |
 | `npm run install:agent`                 | Run the multi-client installer helper.                                              |
 | `npm run install:claude`                | Copy skill to `~/.claude/skills` and register MCP server (user scope).              |
 | `npm run install:codex`                 | Copy skill to `~/.codex/skills` and add MCP to `~/.codex/config.toml`.              |
@@ -214,7 +282,8 @@ Antigravity, Cursor) get only the global MCP configuration written or printed.
 
 | Symptom                                            | Fix                                                                                                           |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `Chrome extension is not connected to the gateway` | Gateway is up but no extension is attached: load/reload the unpacked extension. (Via MCP the gateway auto-starts; for direct script/curl usage run `npm run gateway`.) |
+| Gateway is not reachable from MCP                   | Start `npm run gateway` or `webmcp gateway start`. For dev autostart set `WEBMCP_GATEWAY_AUTOSTART=1`. |
+| `Chrome extension is not connected to the gateway` | Gateway is up but no extension is attached: load/reload the unpacked extension. |
 | `Method not found`                                 | You may be calling a page tool as a top-level command. Use `webmcp.invokeTool`.                               |
 | `navigator.modelContext not found`                 | Use a normal web page, wait for load, and reload the extension/page. Chrome internal pages are not supported. |
 | `Another debugger is already attached`             | Only one debugger client can attach to a tab. Use another tab or detach the conflicting extension.            |

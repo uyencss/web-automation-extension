@@ -1,12 +1,30 @@
 {
-  "name": "webmcp-browser-automation-kit",
+  "name": "@gyga-browser/webmcp-browser-automation-kit",
+  "publishConfig": {
+    "access": "public"
+  },
   "version": "1.0.0",
-  "private": true,
   "description": "Reusable WebMCP Chrome extension, gateway, and agent skill kit for browser automation.",
+  "bin": {
+    "webmcp": "./bin/webmcp.mjs"
+  },
+  "files": [
+    "bin/",
+    "server/gateway_server.js",
+    "server/mcp_server.mjs",
+    "server/mcp-tool-catalog.mjs",
+    "runner/command-catalog.js",
+    "webmcp-extension/dist/",
+    "skills/webmcp-browser-automation/",
+    "README.md"
+  ],
   "scripts": {
     "setup": "npm --prefix server install",
-    "gateway": "npm --prefix server run gateway",
-    "mcp": "npm --prefix server run mcp",
+    "gateway": "node bin/webmcp.mjs gateway start",
+    "mcp": "node bin/webmcp.mjs mcp",
+    "cli": "node bin/webmcp.mjs",
+    "link:local": "npm link",
+    "pack:dry-run": "npm pack --dry-run",
     "install:agent": "npm run setup && node scripts/install-agent.mjs",
     "install:claude": "npm run setup && node scripts/install-agent.mjs claude",
     "install:codex": "npm run setup && node scripts/install-agent.mjs codex",
@@ -17,6 +35,10 @@
     "call": "node scripts/webmcp-call.js",
     "tools:generate": "node scripts/generate-tool-reference.js",
     "tools:check": "node scripts/generate-tool-reference.js --check"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.21.0"
   },
   "engines": {
     "node": ">=18"

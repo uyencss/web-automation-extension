@@ -16,8 +16,10 @@ import { buildMcpTools } from './mcp-tool-catalog.mjs';
 const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
 const gatewayUrl = normalizeGatewayUrl(process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL);
 const serverDir = dirname(fileURLToPath(import.meta.url));
-// Opt out of auto-starting the gateway with WEBMCP_NO_AUTOSTART=1.
-const autoStartGateway = process.env.WEBMCP_NO_AUTOSTART !== '1';
+// Best-practice MCP installs keep the gateway lifecycle explicit. Enable
+// dev-mode autostart with WEBMCP_GATEWAY_AUTOSTART=1 when desired.
+const autoStartGateway = process.env.WEBMCP_GATEWAY_AUTOSTART === '1' &&
+  process.env.WEBMCP_NO_AUTOSTART !== '1';
 const tools = buildMcpTools();
 const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 
@@ -57,7 +59,7 @@ async function ensureGateway() {
   if (health) return health;
 
   if (!autoStartGateway || !isLocalGateway(gatewayUrl)) {
-    console.error(`[mcp] gateway not reachable at ${gatewayUrl} and auto-start is off.`);
+    console.error(`[mcp] gateway not reachable at ${gatewayUrl}. Start it with "webmcp gateway start" or set WEBMCP_GATEWAY_AUTOSTART=1 for dev-mode autostart.`);
     return null;
   }
 
@@ -115,7 +117,7 @@ async function callGateway(method, params) {
   const payload = await readGatewayJson(response);
   if (!response.ok || payload.error) {
     const detail = payload.error || `Gateway HTTP ${response.status}`;
-    throw new Error(`${detail}. Make sure npm run gateway is running and the Chrome extension is connected.`);
+    throw new Error(`${detail}. Make sure webmcp gateway start is running and the Chrome extension is connected.`);
   }
 
   return payload.result;
@@ -193,7 +195,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 
 if (!health) {
-  console.error(`[mcp] webmcp-browser ready, but gateway is NOT reachable at ${gatewayUrl}. Run "npm run gateway".`);
+  console.error(`[mcp] webmcp-browser ready, but gateway is NOT reachable at ${gatewayUrl}. Run "webmcp gateway start" or "npm run gateway".`);
 } else if (!health.extensionConnected) {
   console.error(`[mcp] webmcp-browser ready, gateway=${gatewayUrl}, but the Chrome extension is not connected. Load/reload the unpacked extension from webmcp-extension/dist.`);
 } else {
