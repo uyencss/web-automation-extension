@@ -73,7 +73,7 @@ chrome.downloads.onChanged.addListener((delta) => {
 // ────────────────────────────────────────────────────────────
 // Bridge Messages Forwarding (From register-tools.js)
 // ────────────────────────────────────────────────────────────
-import { startNetworkCapture, stopNetworkCapture, waitForNetworkResponse } from './handlers/network-intercept.js';
+import { startNetworkCapture, stopNetworkCapture, waitForNetworkResponse, getCapturedRequests } from './handlers/network-intercept.js';
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'WEBMCP_BG_REQUEST') {
@@ -91,10 +91,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             result = await startNetworkCapture(tabId, request.params);
             break;
           case 'stop_network_capture':
-            result = await stopNetworkCapture(tabId);
+            result = await stopNetworkCapture(tabId, request.params);
             break;
           case 'wait_for_network_response':
             result = await waitForNetworkResponse(tabId, request.params);
+            break;
+          case 'get_captured_requests':
+            result = await getCapturedRequests(tabId, request.params);
             break;
           default:
             result = { error: 'Unknown bg request method: ' + request.method };

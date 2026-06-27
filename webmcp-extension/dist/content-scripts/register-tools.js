@@ -820,11 +820,11 @@
   navigator.modelContext.registerTool({
     name: 'start_network_capture',
     title: 'Start Network Capture',
-    description: 'Start capturing network requests matching a specific URL pattern. Must be called before wait_for_network_response.',
+    description: 'Start capturing network requests whose URL contains a pattern. Call multiple times to capture several patterns at once on the same tab. Captures method, status, headers, timing, and response bodies for ALL matching requests. Must be called before wait_for_network_response or get_captured_requests.',
     inputSchema: {
       type: 'object',
       properties: {
-        url_pattern: { type: 'string', description: 'URL pattern to match (e.g. "api/graphql" or "*chat*").' },
+        url_pattern: { type: 'string', description: 'Substring to match in request URLs (e.g. "api/graphql" or "/complete/search").' },
       },
       required: ['url_pattern'],
     },
@@ -842,12 +842,13 @@
   navigator.modelContext.registerTool({
     name: 'wait_for_network_response',
     title: 'Wait For Network Response',
-    description: 'Wait for a network response that matches the previously started capture pattern. Returns the response body.',
+    description: 'Wait (event-driven, no polling) for the next captured response matching a pattern and return its metadata + body. Each call consumes the oldest unconsumed match, so calling repeatedly walks through successive responses. Use get_captured_requests to see everything captured so far without consuming.',
     inputSchema: {
       type: 'object',
       properties: {
-        url_pattern: { type: 'string', description: 'URL pattern to wait for.' },
-        timeout_ms: { type: 'number', description: 'Timeout in ms (default 10000)' },
+        url_pattern: { type: 'string', description: 'URL substring to wait for.' },
+        timeout_ms: { type: 'number', description: 'Timeout in ms (default 10000).' },
+        include_body: { type: 'boolean', description: 'Include the response body (default true).' },
       },
       required: ['url_pattern'],
     },
@@ -861,12 +862,41 @@
     }
   });
 
-  // ─── Tool 13: stop_network_capture ────────────────────────
+  // ─── Tool 13: get_captured_requests ───────────────────────
+  navigator.modelContext.registerTool({
+    name: 'get_captured_requests',
+    title: 'Get Captured Requests',
+    description: 'List all network requests captured so far (across all active patterns), without consuming them. Returns metadata for each; optionally response bodies and headers. Ideal when a page fires many requests matching the same pattern.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url_pattern: { type: 'string', description: 'Optional: only return requests whose URL contains this substring.' },
+        include_bodies: { type: 'boolean', description: 'Include response bodies (default false; can be large).' },
+        include_headers: { type: 'boolean', description: 'Include request/response headers (default false).' },
+        limit: { type: 'number', description: 'Max requests to return (default 100).' },
+      },
+    },
+    async execute(input) {
+      try {
+        const res = await invokeBackground('get_captured_requests', input);
+        return mcpResult(res);
+      } catch (err) {
+        return mcpError(err.message);
+      }
+    }
+  });
+
+  // ─── Tool 14: stop_network_capture ────────────────────────
   navigator.modelContext.registerTool({
     name: 'stop_network_capture',
     title: 'Stop Network Capture',
-    description: 'Stop capturing network requests and clean up resources.',
-    inputSchema: { type: 'object', properties: {} },
+    description: 'Stop capturing and clean up. Pass a url_pattern to remove only that one pattern (if others remain active); omit it to stop all capture on the tab.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url_pattern: { type: 'string', description: 'Optional: remove only this pattern instead of stopping everything.' },
+      },
+    },
     async execute(input) {
       try {
         const res = await invokeBackground('stop_network_capture', input);
