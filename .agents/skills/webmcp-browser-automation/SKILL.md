@@ -64,6 +64,13 @@ inside JSON-RPC 2.0:
 { "jsonrpc": "2.0", "id": 1, "method": "getActiveTab", "params": {} }
 ```
 
+If an MCP client is available, use `server/mcp_server.mjs` as a stdio MCP
+adapter. Keep `npm run gateway` running; the MCP server does not start the
+gateway by itself. MCP tool names replace dots with underscores, so
+`webmcp.listTools` becomes `webmcp_list_tools` and `webmcp.invokeTool` becomes
+`webmcp_invoke_tool`. The adapter also exposes `browser_raw_command` for raw
+gateway calls.
+
 If the environment exposes Codex's native WebMCP capability instead, the naming
 is different:
 

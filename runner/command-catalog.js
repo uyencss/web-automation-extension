@@ -123,6 +123,7 @@ function validateCommandParams(commandName, params = {}) {
 }
 
 module.exports = {
+  COMMAND_DEFINITIONS,
   COMMAND_GROUPS,
   UNSUPPORTED_COMMANDS,
   getCommand,

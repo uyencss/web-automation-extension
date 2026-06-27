@@ -6,6 +6,7 @@
   "scripts": {
     "setup": "npm --prefix server install",
     "gateway": "npm --prefix server run gateway",
+    "mcp": "npm --prefix server run mcp",
     "health": "node scripts/webmcp-call.js ping",
     "call": "node scripts/webmcp-call.js",
     "tools:generate": "node scripts/generate-tool-reference.js",

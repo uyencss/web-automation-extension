@@ -14,7 +14,12 @@ The kit has three layers:
    - WebSocket endpoint for the extension at `ws://localhost:7865`.
    - HTTP endpoint for agents/scripts at `POST http://localhost:7865/api`.
    - Health endpoint at `GET http://localhost:7865/health`.
-3. Agent skill: `.agents/skills/webmcp-browser-automation`
+3. MCP server adapter: `server/mcp_server.mjs`
+   - Stdio MCP server for Claude Desktop, Cursor, Claude Code, Cline, and
+     other MCP clients.
+   - Generates MCP tools from `runner/command-catalog.js`.
+   - Proxies each tool call to the gateway HTTP API.
+4. Agent skill: `.agents/skills/webmcp-browser-automation`
    - Tells agents to health-check, choose a tab, call `webmcp.listTools`, invoke
      page tools through `webmcp.invokeTool`, parse nested MCP results, and verify
      each browser action.
@@ -65,6 +70,38 @@ npm run call -- webmcp.invokeTool \
   '{"tabId":123,"toolName":"get_page_metadata","input":{"include_headings":true}}'
 ```
 
+## MCP Server
+
+The MCP server lets MCP clients call the same browser commands without writing
+gateway HTTP requests by hand. Keep the gateway running, then configure the MCP
+client to spawn the stdio adapter:
+
+```bash
+npm run gateway
+```
+
+```json
+{
+  "mcpServers": {
+    "webmcp-browser": {
+      "command": "node",
+      "args": [
+        "/Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs"
+      ]
+    }
+  }
+}
+```
+
+For a local smoke test:
+
+```bash
+npx @modelcontextprotocol/inspector node server/mcp_server.mjs
+```
+
+See `docs/mcp-server/mcp-server-setup.md` for Claude Code, Cursor, and Claude
+Desktop configuration examples.
+
 ## Agent Usage Contract
 
 - Call `ping` first. If it fails, start `npm run gateway` and reload the
@@ -83,6 +120,7 @@ npm run call -- webmcp.invokeTool \
 | --------------------------------------- | ----------------------------------------------------------------------------------- |
 | `npm run setup`                         | Install gateway dependencies under `server/`.                                       |
 | `npm run gateway`                       | Start the HTTP/WebSocket gateway.                                                   |
+| `npm run mcp`                           | Start the stdio MCP adapter for clients that launch it manually.                    |
 | `npm run health`                        | Send `ping` through the gateway to confirm extension connectivity.                  |
 | `npm run call -- <method> [jsonParams]` | Call one extension command through `POST /api`.                                     |
 | `npm run tools:generate`                | Rebuild the generated skill reference from runtime source files.                    |

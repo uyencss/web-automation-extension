@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node gateway_server.js",
     "gateway": "node gateway_server.js",
+    "mcp": "node mcp_server.mjs",
     "health": "node ../scripts/webmcp-call.js ping",
     "call": "node ../scripts/webmcp-call.js"
   },
@@ -14,6 +15,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ws": "^8.21.0"
   }
 }
