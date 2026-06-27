@@ -20,6 +20,27 @@
 
 ## 1. Chuẩn bị một lần — cài bằng MỘT lệnh theo runtime
 
+Nếu bạn chỉ muốn dùng package release từ npm, cấu hình MCP client bằng:
+
+```json
+{
+  "mcpServers": {
+    "webmcp": {
+      "command": "npx",
+      "args": ["-y", "@gyga-browser/webmcp-browser-automation-kit", "mcp"]
+    }
+  }
+}
+```
+
+Và chạy gateway bằng package release:
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit gateway start
+```
+
+Các lệnh dưới đây dành cho local development từ checkout này.
+
 Mỗi lệnh dưới đây tự `npm run setup` (cài deps gồm MCP SDK) **rồi** cài skill + ghi/in
 cấu hình MCP cho đúng runtime. Cuối cùng luôn in reminder phải chạy gateway trước.
 
@@ -66,14 +87,14 @@ Mở UI Inspector → tab **Tools** → bấm `ping` → ra `{ "ok": true }` là
 Local dev dùng đường dẫn tuyệt đối tới server:
 `/Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs`
 
-Sau khi package được publish lên npm, dùng dạng portable:
+Với package release trên npm, dùng dạng portable:
 
 ```json
 {
   "mcpServers": {
-    "webmcp-browser": {
+    "webmcp": {
       "command": "npx",
-      "args": ["-y", "webmcp-browser-automation-kit", "mcp"]
+      "args": ["-y", "@gyga-browser/webmcp-browser-automation-kit", "mcp"]
     }
   }
 }
@@ -84,10 +105,10 @@ Sau khi package được publish lên npm, dùng dạng portable:
 Cách nhanh nhất:
 
 ```bash
-claude mcp add webmcp-browser -- node /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs
+claude mcp add webmcp -- node /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs
 ```
 
-Kiểm tra: `claude mcp list` → thấy `webmcp-browser`. Trong phiên Claude Code, hỏi
+Kiểm tra: `claude mcp list` → thấy `webmcp`. Trong phiên Claude Code, hỏi
 "liệt kê tab đang mở" để thử.
 
 ### 4.2 Cursor
@@ -97,7 +118,7 @@ Sửa `~/.cursor/mcp.json` (hoặc `.cursor/mcp.json` trong project):
 ```json
 {
   "mcpServers": {
-    "webmcp-browser": {
+    "webmcp": {
       "command": "node",
       "args": [
         "/Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs"
@@ -117,7 +138,7 @@ Sửa file config:
 ```json
 {
   "mcpServers": {
-    "webmcp-browser": {
+    "webmcp": {
       "command": "node",
       "args": [
         "/Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs"
@@ -136,7 +157,7 @@ Nếu gateway chạy port khác:
 ```json
 {
   "mcpServers": {
-    "webmcp-browser": {
+    "webmcp": {
       "command": "node",
       "args": ["/.../server/mcp_server.mjs"],
       "env": { "WEBMCP_GATEWAY_URL": "http://localhost:9000" }
@@ -150,7 +171,7 @@ Nếu đang local dev và muốn MCP tự spawn gateway khi gateway chưa chạy
 ```json
 {
   "mcpServers": {
-    "webmcp-browser": {
+    "webmcp": {
       "command": "node",
       "args": ["/.../server/mcp_server.mjs"],
       "env": {

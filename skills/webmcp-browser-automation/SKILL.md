@@ -37,10 +37,10 @@ cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
 npm run gateway
 ```
 
-After the package is published to npm, the portable equivalent is:
+With the released npm package, the portable equivalent is:
 
 ```bash
-npx -y webmcp-browser-automation-kit gateway start
+npx -y @gyga-browser/webmcp-browser-automation-kit gateway start
 ```
 
 The Chrome extension connects to `ws://localhost:7865`; scripts and agents call:

@@ -28,8 +28,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MCP_SERVER = join(ROOT, 'server', 'mcp_server.mjs');
 const SKILL_NAME = 'webmcp-browser-automation';
 const SKILL_SRC = join(ROOT, 'skills', SKILL_NAME);
-const SERVER_NAME = 'webmcp-browser';
-const PACKAGE_NAME = process.env.WEBMCP_NPM_PACKAGE || 'webmcp-browser-automation-kit';
+const SERVER_NAME = 'webmcp';
+const PACKAGE_NAME = process.env.WEBMCP_NPM_PACKAGE || '@gyga-browser/webmcp-browser-automation-kit';
 const INSTALL_MODE = (process.env.WEBMCP_INSTALL_MODE || 'local').toLowerCase();
 
 const log = (...a) => console.log(...a);
@@ -74,11 +74,11 @@ function printMcpJson(label, file) {
   }, null, 2));
 }
 
-// Ghi permission "mcp__webmcp-browser__*" vào ~/.claude/settings.json (global).
+// Ghi permission "mcp__webmcp__*" vào ~/.claude/settings.json (global).
 // Merge an toàn: đọc JSON hiện có, thêm vào mảng allow nếu chưa có, ghi lại.
 function addClaudeGlobalPermission() {
   const settingsFile = join(homedir(), '.claude', 'settings.json');
-  const PERM = 'mcp__webmcp-browser__*';
+  const PERM = 'mcp__webmcp__*';
   let settings = {};
   if (existsSync(settingsFile)) {
     try { settings = JSON.parse(readFileSync(settingsFile, 'utf8')); } catch {}
@@ -209,7 +209,7 @@ function reminder() {
   log('  1) Chạy gateway: `webmcp gateway start` hoặc `npm run gateway`');
   log('  2) Mở Chrome đã load extension (webmcp-extension/dist) -> tự connect');
   log('  3) Mở AI client -> nó spawn MCP server và MCP kết nối gateway đang chạy');
-  log('  Để sinh config npx sau khi publish npm: WEBMCP_INSTALL_MODE=npx npm run install:<target>');
+  log('  Để sinh config dùng package release: WEBMCP_INSTALL_MODE=npx npm run install:<target>');
   log(`${'-'.repeat(64)}`);
 }
 

@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
-const PACKAGE_NAME = 'webmcp-browser-automation-kit';
+const PACKAGE_NAME = '@gyga-browser/webmcp-browser-automation-kit';
+const PACKAGE_VERSION = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).version;
 
 function printHelp() {
   console.log(`WebMCP Browser Automation
@@ -22,7 +24,7 @@ Usage:
 MCP config example:
   {
     "mcpServers": {
-      "webmcp-browser": {
+      "webmcp": {
         "command": "npx",
         "args": ["-y", "${PACKAGE_NAME}", "mcp"]
       }
@@ -123,7 +125,7 @@ async function main() {
   }
 
   if (command === '--version' || command === '-v') {
-    console.log('1.0.0');
+    console.log(PACKAGE_VERSION);
     return;
   }
 

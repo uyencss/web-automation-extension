@@ -137,7 +137,7 @@ async function callGateway(method, params) {
 
 // --- 4.3 MCP server ---------------------------------------------------
 const server = new Server(
-  { name: 'webmcp-browser', version: '1.0.0' },
+  { name: 'webmcp', version: '1.0.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -164,7 +164,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 // KHÔNG console.log ra stdout — stdio đang là kênh MCP. Dùng console.error nếu cần log.
-console.error(`[mcp] webmcp-browser MCP server ready, gateway=${GATEWAY}`);
+console.error(`[mcp] webmcp MCP server ready, gateway=${GATEWAY}`);
 ```
 
 Điểm cần làm khi code thật:

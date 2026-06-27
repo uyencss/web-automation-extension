@@ -148,7 +148,7 @@ function contentFromResult(result) {
 
 const server = new Server(
   {
-    name: 'webmcp-browser',
+    name: 'webmcp',
     version: '1.0.0',
   },
   {
@@ -195,9 +195,9 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 
 if (!health) {
-  console.error(`[mcp] webmcp-browser ready, but gateway is NOT reachable at ${gatewayUrl}. Run "webmcp gateway start" or "npm run gateway".`);
+  console.error(`[mcp] webmcp ready, but gateway is NOT reachable at ${gatewayUrl}. Run "webmcp gateway start" or "npm run gateway".`);
 } else if (!health.extensionConnected) {
-  console.error(`[mcp] webmcp-browser ready, gateway=${gatewayUrl}, but the Chrome extension is not connected. Load/reload the unpacked extension from webmcp-extension/dist.`);
+  console.error(`[mcp] webmcp ready, gateway=${gatewayUrl}, but the Chrome extension is not connected. Load/reload the unpacked extension from webmcp-extension/dist.`);
 } else {
-  console.error(`[mcp] webmcp-browser ready, gateway=${gatewayUrl}, extension connected.`);
+  console.error(`[mcp] webmcp ready, gateway=${gatewayUrl}, extension connected.`);
 }
