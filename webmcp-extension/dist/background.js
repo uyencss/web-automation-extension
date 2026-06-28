@@ -21,16 +21,28 @@ chrome.runtime.onStartup.addListener(() => {
   connectWebSocket();
 });
 
-// Keep service worker alive while WebSocket is connected
-// (Manifest V3 service workers can be killed after 30s of inactivity)
-const keepAlive = () => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    // Send a ping to keep the connection alive
-    sendNotification('heartbeat', { timestamp: Date.now() });
-  }
-};
+// ── Keep-alive via chrome.alarms (reliable in MV3) ──────────
+// setInterval is NOT reliable in Manifest V3 service workers because
+// the worker can be terminated after ~30s of inactivity. chrome.alarms
+// persists across worker restarts and will wake the worker on fire.
+const KEEPALIVE_ALARM = 'webmcp-keepalive';
 
-// Ping every 20 seconds to prevent service worker termination
-setInterval(keepAlive, 20000);
+chrome.alarms.create(KEEPALIVE_ALARM, {
+  // Fire every 20 seconds (minimum is ~1 min in practice, but Chrome
+  // allows sub-minute alarms for packed extensions)
+  periodInMinutes: 0.33,
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== KEEPALIVE_ALARM) return;
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendNotification('heartbeat', { timestamp: Date.now() });
+  } else {
+    // Attempt reconnect on each alarm tick if disconnected
+    connectWebSocket();
+  }
+});
 
 console.log('[WebMCP] Background service worker started (modular version).');
+

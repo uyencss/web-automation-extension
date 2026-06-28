@@ -5,6 +5,8 @@ import { webmcpHandlers } from './webmcp.js';
 import { aiVisionHandlers } from './ai-vision.js';
 import { cdpInputHandlers } from './cdp-input.js';
 import { fullControlHandlers } from './full-control.js';
+import { ariaSnapshotHandlers } from './aria-snapshot.js';
+import { pageStabilityHandlers } from './page-stability.js';
 
 export const commandHandlers = {
   ...tabHandlers,
@@ -13,5 +15,7 @@ export const commandHandlers = {
   ...webmcpHandlers,
   ...aiVisionHandlers,
   ...cdpInputHandlers,
-  ...fullControlHandlers
+  ...fullControlHandlers,
+  ...ariaSnapshotHandlers,
+  ...pageStabilityHandlers,
 };

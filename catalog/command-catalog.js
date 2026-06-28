@@ -4,6 +4,7 @@ const COMMAND_GROUPS = [
   { id: 'cdp', label: 'Chrome DevTools Protocol' },
   { id: 'webmcp', label: 'Page WebMCP tools' },
   { id: 'vision', label: 'AI observation' },
+  { id: 'aria', label: 'ARIA snapshot interaction' },
   { id: 'input', label: 'CDP input' },
   { id: 'control', label: 'Full browser control' },
   { id: 'runner', label: 'Runner pseudo commands' },
@@ -32,6 +33,14 @@ const COMMAND_DEFINITIONS = [
   ['getDOMSnapshot', { group: 'vision', optionalParams: ['computedStyles'] }],
   ['getElementBounds', { group: 'vision', requiredParams: ['selector'] }],
   ['getInteractiveElements', { group: 'vision' }],
+
+  ['getAriaSnapshot', { group: 'aria', description: 'Capture an accessibility snapshot of the page with ref IDs. Returns a readable tree with refs like ref=S1 that can be used with clickByRef, typeByRef, etc. More robust than CSS selectors for interacting with dynamic pages.', optionalParams: ['maxDepth'] }],
+  ['clickByRef', { group: 'aria', description: 'Click an element using its ARIA snapshot ref (e.g. ref=S1). Run getAriaSnapshot first to get refs. More reliable than CSS selector click on SPAs.', requiredParams: ['ref'], optionalParams: ['element'] }],
+  ['typeByRef', { group: 'aria', description: 'Type text into an element using its ARIA snapshot ref. Run getAriaSnapshot first. Supports optional submit (press Enter after typing).', requiredParams: ['ref', 'text'], optionalParams: ['submit'] }],
+  ['hoverByRef', { group: 'aria', description: 'Hover over an element using its ARIA snapshot ref.', requiredParams: ['ref'] }],
+  ['selectByRef', { group: 'aria', description: 'Select option(s) in a dropdown using its ARIA snapshot ref.', requiredParams: ['ref', 'values'] }],
+
+  ['waitForStable', { group: 'control', description: 'Wait for the page to stabilize (no DOM mutations for a quiet period). Useful after navigation or clicking dynamic elements.', optionalParams: ['minStableMs', 'maxWaitMs', 'maxMutations'] }],
 
   ['dispatchClick', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['button', 'clickCount'] }],
   ['moveMouse', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['fromX', 'fromY', 'steps'] }],

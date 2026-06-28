@@ -72,6 +72,17 @@ getDOMSnapshot          { computedStyles?, tabId? }
 getElementBounds        { selector, tabId? }
 getInteractiveElements  { tabId? }
 
+## ARIA Snapshot (preferred for interaction)
+getAriaSnapshot         { maxDepth?, tabId? }
+clickByRef              { ref, element?, tabId? }
+typeByRef               { ref, text, submit?, tabId? }
+hoverByRef              { ref, tabId? }
+selectByRef             { ref, values, tabId? }
+
+## Page Stability
+waitForStable           { minStableMs?, maxWaitMs?, maxMutations?, tabId? }
+
+## CDP Input
 dispatchClick           { x, y, button?, clickCount?, tabId? }
 moveMouse               { x, y, steps?, fromX?, fromY?, tabId? }
 pressKey                { key, text?, modifiers?, tabId? }
@@ -80,6 +91,7 @@ scroll                  { deltaX?, deltaY?, x?, y?, tabId? }
 hover                   { selector, tabId? }
 selectOption            { selector, value?, index?, text?, tabId? }
 
+## Storage & Browser
 getCookies              { tabId? }
 setCookie               { name, value, domain?, path?, tabId? }
 deleteCookies           { name, domain?, url?, tabId? }
@@ -117,11 +129,20 @@ stop_network_capture     {}
 Need a tab/page?
   -> newTab, navigate, getActiveTab, listTabs
 
-Need to know what is clickable or typeable?
-  -> getInteractiveElements
+Need to understand page structure? (PREFERRED)
+  -> getAriaSnapshot (returns semantic tree with ref IDs)
 
-Need robust real input?
+Need to click/type on SPA or dynamic page? (PREFERRED)
+  -> getAriaSnapshot -> clickByRef / typeByRef / selectByRef
+
+Need to know what is clickable or typeable?
+  -> getAriaSnapshot (preferred) or getInteractiveElements
+
+Need robust real input (anti-bot)?
   -> dispatchClick, typeText, pressKey, scroll
+
+Need to wait for page to settle?
+  -> waitForStable (auto-applied after click/type/clickByRef/typeByRef)
 
 Need DOM extraction?
   -> webmcp.invokeTool(query_selector_all)
@@ -129,7 +150,13 @@ Need DOM extraction?
 Need metadata/headings/links?
   -> webmcp.invokeTool(get_page_metadata)
 
-Need form fill?
+Need form fill (SPA)?
+  -> getAriaSnapshot
+  -> typeByRef for text fields
+  -> selectByRef for dropdowns
+  -> clickByRef on submit button
+
+Need form fill (simple page)?
   -> webmcp.invokeTool(query_selector_all)
   -> webmcp.invokeTool(fill_form_field)
   -> webmcp.invokeTool(click_element or submit_form)

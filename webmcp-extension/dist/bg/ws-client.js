@@ -6,6 +6,7 @@ const RECONNECT_INTERVAL_MS = 3000;
 export let ws = null;
 let reconnectTimer = null;
 let isConnecting = false;
+let reconnectAttempt = 0;
 
 export function connectWebSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
@@ -23,6 +24,7 @@ export function connectWebSocket() {
 
   ws.onopen = () => {
     isConnecting = false;
+    reconnectAttempt = 0;
     clearReconnectTimer();
     console.log('[WS] ✓ Connected to', WS_URL);
 
@@ -40,6 +42,10 @@ export function connectWebSocket() {
         'webmcp.listTools', 'webmcp.invokeTool',
         // Phase 1: AI Vision
         'getAccessibilityTree', 'getDOMSnapshot', 'getElementBounds', 'getInteractiveElements',
+        // ARIA Snapshot Interaction (ref-based, robust alternative to CSS selectors)
+        'getAriaSnapshot', 'clickByRef', 'typeByRef', 'hoverByRef', 'selectByRef',
+        // Page Stability
+        'waitForStable',
         // Phase 2: CDP Input
         'dispatchClick', 'moveMouse', 'pressKey', 'typeText', 'scroll', 'hover', 'selectOption',
         // Phase 3: Full Control
@@ -78,9 +84,17 @@ export function connectWebSocket() {
 
 function scheduleReconnect() {
   clearReconnectTimer();
+
+  // Use chrome.alarms as a fallback in case the service worker is killed
+  // before the setTimeout fires. Alarm-based reconnect is handled by
+  // background.js onAlarm listener (which calls connectWebSocket).
+  // Here we do an immediate fast retry via setTimeout.
+  const delay = Math.min(RECONNECT_INTERVAL_MS * Math.pow(1.5, reconnectAttempt), 30000);
+  reconnectAttempt++;
+
   reconnectTimer = setTimeout(() => {
     connectWebSocket();
-  }, RECONNECT_INTERVAL_MS);
+  }, delay);
 }
 
 function clearReconnectTimer() {

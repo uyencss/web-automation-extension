@@ -4,13 +4,14 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (36)
+## Extension Commands (42)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
 | Command | Params | Handler |
 |---|---|---|
 | `click` | `{ selector, tabId? }` | `high-level.js` |
+| `clickByRef` | `{ ... }` | `aria-snapshot.js` |
 | `closeTab` | `{ tabId? }` | `tab-management.js` |
 | `createWindow` | `{ url?, width?, height?, type? }` | `full-control.js` |
 | `deleteCookies` | `{ name, domain?, url?, tabId? }` | `full-control.js` |
@@ -19,6 +20,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `executeCDP` | `{ method, params?, tabId? }` | `cdp-actions.js` |
 | `getAccessibilityTree` | `{ interestingOnly?, depth?, tabId? }` | `ai-vision.js` |
 | `getActiveTab` | `{}` | `tab-management.js` |
+| `getAriaSnapshot` | `{ ... }` | `aria-snapshot.js` |
 | `getCookies` | `{ tabId? }` | `full-control.js` |
 | `getDOMSnapshot` | `{ computedStyles?, tabId? }` | `ai-vision.js` |
 | `getElementBounds` | `{ selector, tabId? }` | `ai-vision.js` |
@@ -27,6 +29,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `getLocalStorage` | `{ tabId? }` | `full-control.js` |
 | `getPageContent` | `{ tabId? }` | `high-level.js` |
 | `hover` | `{ selector, tabId? }` | `cdp-input.js` |
+| `hoverByRef` | `{ ... }` | `aria-snapshot.js` |
 | `listTabs` | `{}` | `tab-management.js` |
 | `listWindows` | `{}` | `full-control.js` |
 | `moveMouse` | `{ x, y, steps?, fromX?, fromY?, tabId? }` | `cdp-input.js` |
@@ -37,13 +40,16 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `resetViewport` | `{ tabId? }` | `full-control.js` |
 | `screenshot` | `{ fullPage?, tabId? }` | `cdp-actions.js` |
 | `scroll` | `{ deltaX?, deltaY?, x?, y?, tabId? }` | `cdp-input.js` |
+| `selectByRef` | `{ ... }` | `aria-snapshot.js` |
 | `selectOption` | `{ selector, value?, index?, text?, tabId? }` | `cdp-input.js` |
 | `setCookie` | `{ name, value, domain?, path?, tabId? }` | `full-control.js` |
 | `setLocalStorage` | `{ key, value, tabId? }` | `full-control.js` |
 | `setViewport` | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` | `full-control.js` |
 | `type` | `{ selector, text, tabId? }` | `high-level.js` |
+| `typeByRef` | `{ ... }` | `aria-snapshot.js` |
 | `typeText` | `{ text, tabId? }` | `cdp-input.js` |
 | `waitForSelector` | `{ selector, timeout?, tabId? }` | `high-level.js` |
+| `waitForStable` | `{ ... }` | `page-stability.js` |
 | `webmcp.invokeTool` | `{ toolName, input?, tabId? }` | `webmcp.js` |
 | `webmcp.listTools` | `{ tabId? }` | `webmcp.js` |
 
@@ -70,8 +76,8 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 
 ## Capability Announcement Check
 
-- Announced capabilities: 36
-- Commands with handlers: 36
+- Announced capabilities: 42
+- Commands with handlers: 42
 - Announced without handler: none
 - Handler not announced: none
 

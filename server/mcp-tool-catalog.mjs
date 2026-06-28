@@ -16,6 +16,10 @@ const NUMERIC_PARAMS = new Set([
   'fromX',
   'fromY',
   'height',
+  'maxDepth',
+  'maxMutations',
+  'maxWaitMs',
+  'minStableMs',
   'ms',
   'steps',
   'tabId',
@@ -29,6 +33,7 @@ const BOOLEAN_PARAMS = new Set([
   'fullPage',
   'interestingOnly',
   'mobile',
+  'submit',
 ]);
 
 const OBJECT_PARAMS = new Set([
@@ -39,6 +44,7 @@ const OBJECT_PARAMS = new Set([
 const ARRAY_PARAMS = new Set([
   'computedStyles',
   'modifiers',
+  'values',
 ]);
 
 const TOOL_DESCRIPTIONS = {

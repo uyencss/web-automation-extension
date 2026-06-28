@@ -5,6 +5,7 @@
   "description": "Browser automation extension with WebSocket bridge. Exposes custom tools via WebMCP and accepts commands from external AI programs.",
   "permissions": [
     "activeTab",
+    "alarms",
     "scripting",
     "storage",
     "debugger",
@@ -12,6 +13,9 @@
     "downloads"
   ],
   "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*;"
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

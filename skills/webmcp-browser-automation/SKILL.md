@@ -12,13 +12,19 @@ description: >
 
 ## Mental Model
 
-The WebMCP extension exposes two different tool layers. Do not mix them up.
+The WebMCP extension exposes three different tool layers. Do not mix them up.
 
-1. Extension commands are JSON-RPC methods handled by the background service
+1. **Extension commands** are JSON-RPC methods handled by the background service
    worker. Use them for tabs, navigation, screenshots, accessibility/interactive
    element discovery, real CDP mouse/keyboard input, storage, cookies, and
    viewport control.
-2. Page WebMCP tools are registered by
+2. **ARIA snapshot commands** (extension layer) provide ref-based element
+   interaction. Call `getAriaSnapshot` to capture the page's accessibility tree
+   with unique ref IDs (e.g. `ref=S1`), then use `clickByRef`, `typeByRef`,
+   `hoverByRef`, or `selectByRef` to interact using those refs. This is **more
+   robust than CSS selectors** on SPAs and dynamic pages — prefer this approach
+   whenever possible.
+3. **Page WebMCP tools** are registered by
    `webmcp-extension/dist/content-scripts/register-tools.js` into
    `navigator.modelContext`. These are page-local tools. You must discover them
    with `webmcp.listTools` and invoke them with `webmcp.invokeTool`.
@@ -101,19 +107,27 @@ For every browser automation task:
    `webmcp-extension/dist`.
 2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`.
 3. Wait for readiness: `navigate` waits for page load; otherwise use
-   `waitForSelector` or the page tool `wait_for_element`.
-4. Discover page tools: call `webmcp.listTools` for the target tab before
-   invoking page tools. Read each tool's `name`, `description`, and
-   `input_schema`.
-5. Pick the smallest reliable action:
+   `waitForSelector`, `waitForStable`, or the page tool `wait_for_element`.
+4. Discover the page:
+   - Call `getAriaSnapshot` to get a ref-based accessibility tree — this is
+     the **preferred** way to understand page structure.
+   - Call `webmcp.listTools` for page-registered tools.
+5. Pick the smallest reliable action (in order of preference):
+   - **ARIA ref interaction** (preferred): use `clickByRef`, `typeByRef`,
+     `selectByRef` with refs from `getAriaSnapshot`. These are robust against
+     DOM changes and work reliably on SPAs.
    - Page structure/data: use page WebMCP tools.
    - Real browser input: use `getInteractiveElements` plus `dispatchClick`,
      `typeText`, `pressKey`, or `scroll`.
+   - CSS selector interaction: use `click`, `type` for simple pages.
    - Last-resort DOM/API logic: use `evaluateJS` or page tool
      `execute_javascript`.
-6. Invoke one action, then verify the postcondition with a wait, a query, a
-   screenshot, or `getInteractiveElements`.
-7. Parse WebMCP results before reasoning from them.
+6. Invoke one action. The extension **automatically waits for page stability**
+   after `click`, `type`, `clickByRef`, `typeByRef`, and `selectByRef`. For
+   other actions, use `waitForStable` explicitly if needed.
+7. Verify the postcondition with `getAriaSnapshot`, `screenshot`,
+   `getInteractiveElements`, or a query.
+8. Parse WebMCP results before reasoning from them.
 
 ## Calling Page WebMCP Tools
 
@@ -198,6 +212,15 @@ These are background commands registered in
 | `getDOMSnapshot` | Capture DOM/layout snapshot | `{ computedStyles?, tabId? }` |
 | `getElementBounds` | Get selector bounds | `{ selector, tabId? }` |
 | `getInteractiveElements` | List clickable/focusable elements with centers | `{ tabId? }` |
+| **ARIA Snapshot** | | |
+| `getAriaSnapshot` | Capture accessibility tree with ref IDs (e.g. `ref=S1`) | `{ maxDepth?, tabId? }` |
+| `clickByRef` | Click element by ARIA ref — more robust than CSS selector | `{ ref, element?, tabId? }` |
+| `typeByRef` | Type into element by ARIA ref, optionally submit | `{ ref, text, submit?, tabId? }` |
+| `hoverByRef` | Hover over element by ARIA ref | `{ ref, tabId? }` |
+| `selectByRef` | Select dropdown option(s) by ARIA ref | `{ ref, values, tabId? }` |
+| **Page Stability** | | |
+| `waitForStable` | Wait for page DOM to settle (no mutations) | `{ minStableMs?, maxWaitMs?, maxMutations?, tabId? }` |
+| **CDP Input** | | |
 | `dispatchClick` | Real CDP click at coordinates | `{ x, y, button?, clickCount?, tabId? }` |
 | `moveMouse` | Real CDP mouse move | `{ x, y, steps?, fromX?, fromY?, tabId? }` |
 | `pressKey` | Real CDP key press | `{ key, text?, modifiers?, tabId? }` |
@@ -205,6 +228,7 @@ These are background commands registered in
 | `scroll` | Real CDP mouse-wheel scroll | `{ deltaX?, deltaY?, x?, y?, tabId? }` |
 | `hover` | Real CDP hover by selector | `{ selector, tabId? }` |
 | `selectOption` | Select an HTML `<select>` option | `{ selector, value?, index?, text?, tabId? }` |
+| **Storage & Browser** | | |
 | `getCookies` | Read cookies for current page | `{ tabId? }` |
 | `setCookie` | Set a cookie | `{ name, value, domain?, path?, tabId? }` |
 | `deleteCookies` | Delete a cookie | `{ name, domain?, url?, tabId? }` |
@@ -215,9 +239,21 @@ These are background commands registered in
 | `setViewport` | Override viewport | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` |
 | `resetViewport` | Clear viewport override | `{ tabId? }` |
 
+### ARIA Snapshot vs CSS Selectors
+
+Prefer ARIA ref-based interaction (`getAriaSnapshot` → `clickByRef`/`typeByRef`)
+over CSS selector-based interaction (`click`/`type`) whenever possible:
+
+- **ARIA refs** are stable across DOM re-renders on SPAs — CSS selectors break
+  when classes/IDs change.
+- **ARIA refs** identify elements by semantic role — the AI understands what
+  each element does (button, textbox, link, etc.).
+- **CSS selectors** are still useful for simple static pages or when you need
+  `query_selector_all` for bulk extraction.
+
 Use `selectOption` for native `<select>` elements when CDP/background control is
-preferred. Use page tool `fill_form_field` when staying in the WebMCP page-tool
-layer is simpler.
+preferred. Use `selectByRef` when you already have an ARIA ref. Use page tool
+`fill_form_field` when staying in the WebMCP page-tool layer is simpler.
 
 ## Page-Registered Tools
 
@@ -255,12 +291,17 @@ Use standard CSS selectors only. Playwright-only selectors such as
 | Need | Best action |
 |---|---|
 | Open or change page | `newTab` or `navigate` |
-| Know what can be clicked/typed | `getInteractiveElements` |
+| Understand page structure (preferred) | `getAriaSnapshot` — returns semantic tree with ref IDs |
+| Know what can be clicked/typed | `getAriaSnapshot` or `getInteractiveElements` |
+| Click a button/link on SPA | `getAriaSnapshot` → `clickByRef` (robust) |
+| Fill a text field on SPA | `getAriaSnapshot` → `typeByRef` (robust) |
+| Select a dropdown option | `getAriaSnapshot` → `selectByRef` (robust) |
 | Extract visible repeated DOM data | `webmcp.invokeTool` -> `query_selector_all` |
 | Extract page title/meta/headings/links | `webmcp.invokeTool` -> `get_page_metadata` |
-| Fill ordinary form field | `webmcp.invokeTool` -> `fill_form_field` |
+| Fill ordinary form field (simple page) | `webmcp.invokeTool` -> `fill_form_field` |
 | Submit form | `webmcp.invokeTool` -> `submit_form`, then wait |
 | Anti-bot/framework requires real input | `getInteractiveElements`, `dispatchClick`, `typeText`, `pressKey` |
+| Wait for page to settle | `waitForStable` (auto-applied after click/type/clickByRef/typeByRef) |
 | Infinite scroll | `scroll` or `scroll_page`, then query count again |
 | Table extraction | `webmcp.invokeTool` -> `extract_table_data` |
 | Need XHR/fetch body | `start_network_capture`, trigger action, `wait_for_network_response`, `stop_network_capture` |
@@ -294,7 +335,16 @@ Use standard CSS selectors only. Playwright-only selectors such as
 }
 ```
 
-### Real click and type
+### Click and type with ARIA refs (preferred)
+
+1. Call `getAriaSnapshot` to see the page structure with ref IDs.
+2. Identify the target element by its role and name (e.g. `ref=S5 button "Sign In"`).
+3. Call `clickByRef` with `{ "ref": "S5" }`.
+4. The extension auto-waits for page stability after clicking.
+5. Call `getAriaSnapshot` again to see updated state.
+6. To type, call `typeByRef` with `{ "ref": "S3", "text": "hello", "submit": true }`.
+
+### Real click and type (CDP coordinates)
 
 1. Call `getInteractiveElements`.
 2. Choose an element by text/name/placeholder and use its `bounds.centerX` and
@@ -304,7 +354,15 @@ Use standard CSS selectors only. Playwright-only selectors such as
 5. Call `pressKey` with `Enter` if needed.
 6. Verify with `waitForSelector`, `getInteractiveElements`, or `screenshot`.
 
-### Form fill with page tools
+### Form fill with ARIA refs (preferred for SPAs)
+
+1. Call `getAriaSnapshot` to discover form fields with refs.
+2. `typeByRef` for each text field.
+3. `selectByRef` for dropdowns.
+4. `clickByRef` on the submit button.
+5. Extension auto-waits; then call `getAriaSnapshot` to verify result.
+
+### Form fill with page tools (alternative)
 
 1. `webmcp.invokeTool` -> `wait_for_element` with `selector: "form"`.
 2. `webmcp.invokeTool` -> `query_selector_all` with
@@ -340,15 +398,22 @@ Captured records include `method`, `status`, `mimeType`, `durationMs`,
   private messages.
 - Do not read cookies, localStorage, tokens, or secrets unless the user asks for
   that specific task.
-- Prefer `getInteractiveElements` plus CDP input when JS clicks or synthetic
-  events fail.
-- Always wait after navigation, form submits, route changes, modal opens, and
-  infinite scroll actions.
-- Keep selectors resilient: prefer stable IDs, names, roles, labels,
-  `data-testid`, `aria-label`, and meaningful containers.
+- **Prefer ARIA ref-based interaction** (`getAriaSnapshot` → `clickByRef` /
+  `typeByRef`) over CSS selectors for clicking and typing. ARIA refs are stable
+  across DOM re-renders.
+- Fall back to `getInteractiveElements` plus CDP input when ARIA refs are not
+  available or JS clicks/synthetic events fail.
+- The extension **auto-waits for page stability** after `click`, `type`,
+  `clickByRef`, `typeByRef`, and `selectByRef`. For other actions, use
+  `waitForStable` explicitly after navigation, form submits, route changes,
+  modal opens, and infinite scroll actions.
+- When using CSS selectors, keep them resilient: prefer stable IDs, names, roles,
+  labels, `data-testid`, `aria-label`, and meaningful containers.
 - Avoid brittle absolute DOM paths like `body > div > div > div:nth-child(4)`.
-- When a selector fails, discover again instead of repeating the same failing
-  call.
+- When a ref or selector fails, call `getAriaSnapshot` again to refresh refs
+  instead of repeating the same failing call.
+- ARIA refs are **session-scoped per tab** — they are invalidated after page
+  navigation or full reload. Always call `getAriaSnapshot` after navigating.
 
 ## Troubleshooting
 

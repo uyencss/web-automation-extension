@@ -173,6 +173,60 @@ const networkCaptureWorkflow = [
   pageTool('stop_network_capture'),
 ];
 
+// ============================================================
+// ARIA Ref-Based Workflows (Preferred for SPAs)
+//
+// These workflows use getAriaSnapshot → clickByRef/typeByRef
+// instead of CSS selectors. More robust on dynamic pages.
+// ============================================================
+
+// Task: "Log into a SPA app using ARIA refs" (preferred over CSS selectors)
+const ariaLoginWorkflow = [
+  command('newTab', { url: 'https://spa.example.com/login' }),
+  // Step 1: Snapshot the page to get ref IDs
+  command('getAriaSnapshot', {}),
+  // Step 2: AI reads the snapshot and identifies:
+  //   - ref=S1 textbox "Email"
+  //   - ref=S2 textbox "Password"
+  //   - ref=S3 button "Sign In"
+  command('typeByRef', { ref: 'S1', text: 'user@example.com' }),
+  command('typeByRef', { ref: 'S2', text: 'my-password' }),
+  command('clickByRef', { ref: 'S3', element: 'Sign In' }),
+  // Auto-waits for stability, then re-snapshot to verify
+  command('getAriaSnapshot', {}),
+];
+
+// Task: "Fill a dynamic form using ARIA refs"
+const ariaFormWorkflow = [
+  command('newTab', { url: 'https://app.example.com/apply' }),
+  command('getAriaSnapshot', { maxDepth: 10 }),
+  // AI identifies form fields by role:
+  //   - ref=S1 textbox "First Name"
+  //   - ref=S2 textbox "Last Name"
+  //   - ref=S3 textbox "Email"
+  //   - ref=S4 combobox "Position" [expanded=false]
+  //   - ref=S5 button "Next Step"
+  command('typeByRef', { ref: 'S1', text: 'John' }),
+  command('typeByRef', { ref: 'S2', text: 'Doe' }),
+  command('typeByRef', { ref: 'S3', text: 'john@example.com' }),
+  command('selectByRef', { ref: 'S4', values: ['senior-engineer'] }),
+  command('clickByRef', { ref: 'S5', element: 'Next Step' }),
+  // Re-snapshot after page transition
+  command('getAriaSnapshot', {}),
+];
+
+// Task: "Search using ARIA refs with waitForStable"
+const ariaSearchWorkflow = [
+  command('newTab', { url: 'https://www.google.com' }),
+  command('getAriaSnapshot', {}),
+  // AI finds: ref=S1 combobox "Search"
+  command('typeByRef', { ref: 'S1', text: 'WebMCP specification', submit: true }),
+  // Explicitly wait for search results to load
+  command('waitForStable', { minStableMs: 1000, maxWaitMs: 5000 }),
+  // Re-snapshot to read results
+  command('getAriaSnapshot', { maxDepth: 6 }),
+];
+
 module.exports = {
   command,
   pageTool,
@@ -184,4 +238,7 @@ module.exports = {
   multiStepFormWorkflow,
   stockMonitoringWorkflow,
   networkCaptureWorkflow,
+  ariaLoginWorkflow,
+  ariaFormWorkflow,
+  ariaSearchWorkflow,
 };

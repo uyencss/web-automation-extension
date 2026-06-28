@@ -1,5 +1,6 @@
 import { resolveTabId } from '../utils.js';
 import { evaluateInTab } from '../cdp-bridge.js';
+import { waitForPageStable } from './page-stability.js';
 
 export const highLevelHandlers = {
   async click(params) {
@@ -20,6 +21,8 @@ export const highLevelHandlers = {
         };
       })()
     `);
+    // Auto-wait for page stability after click
+    await waitForPageStable(tabId, { minStableMs: 500, maxWaitMs: 3000 });
     return { tabId, ...result };
   },
 
@@ -45,6 +48,8 @@ export const highLevelHandlers = {
         return { success: true, tag: el.tagName.toLowerCase(), name: el.name || el.id };
       })()
     `);
+    // Auto-wait for page stability after type
+    await waitForPageStable(tabId, { minStableMs: 300, maxWaitMs: 2000 });
     return { tabId, ...result };
   },
 
