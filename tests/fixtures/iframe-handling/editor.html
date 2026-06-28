@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>WebMCP iframe fixture - editor</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+
+      table {
+        border-collapse: collapse;
+      }
+
+      td,
+      th {
+        border: 1px solid #aaa;
+        padding: 4px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Editor frame</h2>
+    <button id="editor-button" type="button">Editor button</button>
+    <p id="editor-status">editor idle</p>
+
+    <label for="editor-input">Editor input</label>
+    <input id="editor-input" name="editorInput" value="">
+
+    <label for="editor-select">Editor select</label>
+    <select id="editor-select" name="editorSelect">
+      <option value="">Choose</option>
+      <option value="alpha">Alpha</option>
+      <option value="beta">Beta</option>
+    </select>
+
+    <table id="editor-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>first</td>
+          <td>one</td>
+        </tr>
+        <tr>
+          <td>second</td>
+          <td>two</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <script>
+      document.getElementById('editor-button').addEventListener('click', () => {
+        document.getElementById('editor-status').textContent = 'editor clicked';
+      });
+    </script>
+  </body>
+</html>

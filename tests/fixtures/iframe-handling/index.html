@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>WebMCP iframe fixture - main</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 24px;
+      }
+
+      iframe {
+        display: block;
+        width: 720px;
+        height: 280px;
+        margin: 16px 0;
+        border: 2px solid #777;
+      }
+
+      #deep-scroll-target {
+        margin-top: 900px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebMCP iframe fixture - main</h1>
+    <button id="main-button" type="button">Main button</button>
+    <p id="main-status">main idle</p>
+
+    <iframe
+      id="editor-frame"
+      name="editor"
+      src="./editor.html"
+      title="Editor frame"
+    ></iframe>
+
+    <iframe
+      id="outer-frame"
+      name="outer"
+      src="./outer.html"
+      title="Outer nested frame"
+    ></iframe>
+
+    <button id="deep-scroll-target" type="button">Deep main button</button>
+
+    <script>
+      document.getElementById('main-button').addEventListener('click', () => {
+        document.getElementById('main-status').textContent = 'main clicked';
+      });
+    </script>
+  </body>
+</html>

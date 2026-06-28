@@ -4,58 +4,59 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (46)
+## Extension Commands (47)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
 | Command | Params | Handler |
 |---|---|---|
-| `click` | `{ selector, tabId? }` | `high-level.js` |
+| `click` | `{ selector, frame?, tabId? }` | `high-level.js` |
 | `clickByRef` | `{ ... }` | `aria-snapshot.js` |
 | `closeTab` | `{ tabId? }` | `tab-management.js` |
 | `createWindow` | `{ url?, width?, height?, type? }` | `full-control.js` |
 | `deleteCookies` | `{ name, domain?, url?, tabId? }` | `full-control.js` |
-| `dispatchClick` | `{ x, y, button?, clickCount?, tabId? }` | `cdp-input.js` |
-| `evaluateJS` | `{ code, tabId? }` | `cdp-actions.js` |
+| `dispatchClick` | `{ x, y, button?, clickCount?, frame?, tabId? }` | `cdp-input.js` |
+| `evaluateJS` | `{ code, frame?, tabId? }` | `cdp-actions.js` |
 | `executeCDP` | `{ method, params?, tabId? }` | `cdp-actions.js` |
-| `findByText` | `{ ... }` | `high-level.js` |
+| `findByText` | `{ text, exact?, selector?, maxResults?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
 | `getAccessibilityTree` | `{ interestingOnly?, depth?, tabId? }` | `ai-vision.js` |
 | `getActiveTab` | `{}` | `tab-management.js` |
 | `getAriaSnapshot` | `{ ... }` | `aria-snapshot.js` |
 | `getCookies` | `{ tabId? }` | `full-control.js` |
 | `getDOMSnapshot` | `{ computedStyles?, tabId? }` | `ai-vision.js` |
-| `getElementBounds` | `{ selector, tabId? }` | `ai-vision.js` |
+| `getElementBounds` | `{ selector, pierceShadow?, frame?, tabId? }` | `ai-vision.js` |
 | `getExtensionInfo` | `{}` | `full-control.js` |
-| `getInteractiveElements` | `{ tabId? }` | `ai-vision.js` |
+| `getInteractiveElements` | `{ pierceShadow?, frame?, tabId? }` | `ai-vision.js` |
 | `getLocalStorage` | `{ tabId? }` | `full-control.js` |
-| `getPageContent` | `{ tabId? }` | `high-level.js` |
-| `getWindowVariable` | `{ ... }` | `high-level.js` |
-| `hover` | `{ selector, tabId? }` | `cdp-input.js` |
+| `getPageContent` | `{ format?, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
+| `getWindowVariable` | `{ path, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
+| `hover` | `{ selector, frame?, tabId? }` | `cdp-input.js` |
 | `hoverByRef` | `{ ... }` | `aria-snapshot.js` |
+| `listFrames` | `{ flat?, force?, tabId? }` | `frame-management.js` |
 | `listTabs` | `{}` | `tab-management.js` |
 | `listWindows` | `{}` | `full-control.js` |
-| `moveMouse` | `{ x, y, steps?, fromX?, fromY?, tabId? }` | `cdp-input.js` |
+| `moveMouse` | `{ x, y, steps?, fromX?, fromY?, frame?, tabId? }` | `cdp-input.js` |
 | `navigate` | `{ url, tabId? }` | `tab-management.js` |
 | `newTab` | `{ url? }` | `tab-management.js` |
-| `pageFetch` | `{ ... }` | `high-level.js` |
+| `pageFetch` | `{ url, method?, headers?, body?, responseType?, credentials?, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
 | `ping` | `{}` | `full-control.js` |
 | `pressKey` | `{ key, text?, modifiers?, tabId? }` | `cdp-input.js` |
-| `querySelectorAll` | `{ ... }` | `high-level.js` |
+| `querySelectorAll` | `{ selector, limit?, offset?, fields?, textMaxLength?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
 | `resetViewport` | `{ tabId? }` | `full-control.js` |
 | `screenshot` | `{ fullPage?, tabId? }` | `cdp-actions.js` |
 | `scroll` | `{ deltaX?, deltaY?, x?, y?, tabId? }` | `cdp-input.js` |
 | `selectByRef` | `{ ... }` | `aria-snapshot.js` |
-| `selectOption` | `{ selector, value?, index?, text?, tabId? }` | `cdp-input.js` |
+| `selectOption` | `{ selector, value?, index?, text?, frame?, tabId? }` | `cdp-input.js` |
 | `setCookie` | `{ name, value, domain?, path?, tabId? }` | `full-control.js` |
 | `setLocalStorage` | `{ key, value, tabId? }` | `full-control.js` |
 | `setViewport` | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` | `full-control.js` |
-| `type` | `{ selector, text, tabId? }` | `high-level.js` |
+| `type` | `{ selector, text, frame?, tabId? }` | `high-level.js` |
 | `typeByRef` | `{ ... }` | `aria-snapshot.js` |
 | `typeText` | `{ text, tabId? }` | `cdp-input.js` |
-| `waitForSelector` | `{ selector, timeout?, tabId? }` | `high-level.js` |
+| `waitForSelector` | `{ selector, timeout?, frame?, tabId? }` | `high-level.js` |
 | `waitForStable` | `{ ... }` | `page-stability.js` |
-| `webmcp.invokeTool` | `{ toolName, input?, tabId? }` | `webmcp.js` |
-| `webmcp.listTools` | `{ tabId? }` | `webmcp.js` |
+| `webmcp.invokeTool` | `{ toolName, input?, frame?, tabId? }` | `webmcp.js` |
+| `webmcp.listTools` | `{ frame?, tabId? }` | `webmcp.js` |
 
 ## Page-Registered WebMCP Tools (14)
 
@@ -64,12 +65,12 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 | Tool | Required | Inputs | Description |
 |---|---|---|---|
 | `get_page_metadata` | - | `include_headings`, `include_links` | Extract structured metadata from the current page: title, meta tags, Open Graph data, canonical URL, and optionally all headings. |
-| `query_selector_all` | `selector` | `selector`, `frame_selector`, `max_results`, `attributes` | Find all elements matching a CSS selector and return their tag, text, attributes, and bounding-box position. Useful for understanding page layout. |
-| `click_element` | `selector` | `selector`, `frame_selector`, `scroll_into_view` | Click an element matching a CSS selector. Optionally scroll it into view first. Returns the element text and tag for confirmation. |
-| `fill_form_field` | `selector`, `value` | `selector`, `frame_selector`, `value` | Set the value of an input, textarea, or select element. Dispatches input/change events so React, Vue, Angular, and vanilla forms detect the change. |
-| `extract_table_data` | - | `selector`, `frame_selector`, `max_rows` | Extract data from an HTML <table> as structured JSON. Returns an array of row objects keyed by the column header text. |
-| `wait_for_element` | `selector` | `selector`, `frame_selector`, `timeout_ms` | Wait until an element matching a CSS selector appears in the DOM. Returns when found or after the timeout. Useful for SPAs and dynamic content. |
-| `get_computed_styles` | `selector` | `selector`, `frame_selector`, `properties` | Get the computed CSS styles for an element. Useful for debugging layout, colors, fonts, and visibility. |
+| `query_selector_all` | `selector` | `selector`, `frame_selector`, `frame_path`, `frame_timeout_ms`, `max_results`, `attributes` | Find all elements matching a CSS selector and return their tag, text, attributes, and bounding-box position. Useful for understanding page layout. |
+| `click_element` | `selector` | `selector`, `frame_selector`, `frame_path`, `frame_timeout_ms`, `scroll_into_view` | Click an element matching a CSS selector. Optionally scroll it into view first. Returns the element text and tag for confirmation. |
+| `fill_form_field` | `selector`, `value` | `selector`, `frame_selector`, `frame_path`, `frame_timeout_ms`, `value` | Set the value of an input, textarea, or select element. Dispatches input/change events so React, Vue, Angular, and vanilla forms detect the change. |
+| `extract_table_data` | - | `selector`, `frame_selector`, `frame_path`, `frame_timeout_ms`, `max_rows` | Extract data from an HTML <table> as structured JSON. Returns an array of row objects keyed by the column header text. |
+| `wait_for_element` | `selector` | `selector`, `frame_selector`, `frame_path`, `frame_timeout_ms`, `timeout_ms` | Wait until an element matching a CSS selector appears in the DOM. Returns when found or after the timeout. Useful for SPAs and dynamic content. |
+| `get_computed_styles` | `selector` | `selector`, `frame_selector`, `frame_path`, `frame_timeout_ms`, `properties` | Get the computed CSS styles for an element. Useful for debugging layout, colors, fonts, and visibility. |
 | `scroll_page` | - | `target`, `delta_y`, `container_selector`, `behavior` | Scroll the page or a specific container. Can scroll to a position, by a delta, or to a specific element. |
 | `submit_form` | - | `form_selector`, `fields`, `submit_button_selector` | Submit a form element. Optionally fill multiple fields before submitting. Can submit by clicking a submit button or calling form.submit(). |
 | `execute_javascript` | `code` | `code` | Execute arbitrary JavaScript code in the page context and return the result. The code has full access to the page DOM and all page APIs. Use this as a fallback when no other tool fits. |
@@ -80,8 +81,8 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 
 ## Capability Announcement Check
 
-- Announced capabilities: 46
-- Commands with handlers: 46
+- Announced capabilities: 47
+- Commands with handlers: 47
 - Announced without handler: none
 - Handler not announced: none
 

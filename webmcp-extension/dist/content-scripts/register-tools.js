@@ -145,23 +145,144 @@
     });
   }
 
-  async function invokeIframe(frameSelector, cmd, params) {
-    const frame = document.querySelector(frameSelector);
-    if (!frame) return mcpError(`Iframe not found: ${frameSelector}`);
+  const FRAME_SELECTOR_SCHEMA = {
+    oneOf: [
+      { type: 'string', description: 'CSS selector for an iframe.' },
+      {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS selector for an iframe.' },
+          name: { type: 'string', description: 'iframe name attribute.' },
+          index: { type: 'number', description: 'Zero-based iframe index.' },
+          url: { type: 'string', description: 'Substring of iframe src URL.' },
+        },
+      },
+    ],
+    description: 'Optional iframe target. String form is treated as a CSS selector.',
+  };
+
+  const FRAME_PATH_SCHEMA = {
+    type: 'array',
+    items: FRAME_SELECTOR_SCHEMA,
+    description: 'Nested iframe path, from outer frame to inner frame.',
+  };
+
+  const FRAME_TIMEOUT_SCHEMA = {
+    type: 'number',
+    description: 'Maximum iframe bridge wait in milliseconds. Default 5000.',
+  };
+
+  function describeFrameSpec(frameSpec) {
+    if (typeof frameSpec === 'string') return frameSpec;
+    if (!frameSpec || typeof frameSpec !== 'object') return String(frameSpec);
+    return JSON.stringify(frameSpec);
+  }
+
+  function resolveFrame(frameSpec) {
+    if (typeof frameSpec === 'string') {
+      return document.querySelector(frameSpec);
+    }
+
+    if (!frameSpec || typeof frameSpec !== 'object') return null;
+
+    if (frameSpec.selector) {
+      return document.querySelector(frameSpec.selector);
+    }
+
+    const frames = Array.from(document.querySelectorAll('iframe, frame'));
+
+    if (frameSpec.name) {
+      return frames.find((frame) => frame.getAttribute('name') === frameSpec.name) || null;
+    }
+
+    if (typeof frameSpec.index === 'number') {
+      return frames[frameSpec.index] || null;
+    }
+
+    if (frameSpec.url) {
+      return frames.find((frame) => {
+        const src = frame.getAttribute('src') || frame.src || '';
+        return src.includes(frameSpec.url);
+      }) || null;
+    }
+
+    return null;
+  }
+
+  function getFrameOrigin(frame) {
+    const rawSrc = frame.getAttribute('src') || frame.src || '';
+    if (!rawSrc || rawSrc === 'about:blank' || frame.hasAttribute('srcdoc')) {
+      return '*';
+    }
+    try {
+      return new URL(rawSrc, location.href).origin;
+    } catch {
+      return '*';
+    }
+  }
+
+  function cleanFrameParams(input) {
+    const {
+      frame_selector,
+      frame_path,
+      frame_timeout_ms,
+      ...rest
+    } = input || {};
+    return rest;
+  }
+
+  function shouldInvokeFrame(input) {
+    return Boolean(
+      input?.frame_selector ||
+      (Array.isArray(input?.frame_path) && input.frame_path.length > 0)
+    );
+  }
+
+  async function invokeFrameForTool(input, cmd) {
+    const path = Array.isArray(input?.frame_path) && input.frame_path.length > 0
+      ? input.frame_path
+      : [input.frame_selector];
+    return invokeIframe(path, cmd, cleanFrameParams(input), input?.frame_timeout_ms);
+  }
+
+  async function invokeIframe(frameTarget, cmd, params, timeoutMs = 5000) {
+    const path = Array.isArray(frameTarget) ? frameTarget.filter(Boolean) : [frameTarget];
+    const [frameSpec, ...remainingPath] = path;
+    const frame = resolveFrame(frameSpec);
+    const targetDescription = describeFrameSpec(frameSpec);
+    if (!frame || !frame.contentWindow) {
+      return mcpError(`Iframe not found: ${targetDescription}`);
+    }
+
     const id = ++_reqId;
     return new Promise((resolve) => {
+      let settled = false;
+      let timer;
+      const done = (result) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        window.removeEventListener('message', handler);
+        resolve(result);
+      };
       const handler = (event) => {
-        if (event.data?.type === 'WEBMCP_IFRAME_RES' && event.data.id === id) {
-          window.removeEventListener('message', handler);
-          resolve(event.data.result);
-        }
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.type !== 'WEBMCP_IFRAME_RES' || event.data.id !== id) return;
+        done(event.data.result);
       };
       window.addEventListener('message', handler);
-      frame.contentWindow.postMessage({ type: 'WEBMCP_IFRAME_CMD', cmd, params, id }, '*');
-      setTimeout(() => {
-        window.removeEventListener('message', handler);
-        resolve(mcpError(`Timeout communicating with iframe: ${frameSelector}. Note: cross-origin iframes must have register-tools.js injected via all_frames: true.`));
-      }, 5000);
+      const targetOrigin = getFrameOrigin(frame);
+      frame.contentWindow.postMessage({
+        type: 'WEBMCP_IFRAME_CMD',
+        cmd,
+        params,
+        framePath: remainingPath,
+        timeoutMs,
+        id,
+      }, targetOrigin);
+      timer = setTimeout(() => {
+        done(mcpError(`Timeout communicating with iframe: ${targetDescription}. Note: cross-origin iframes must have register-tools.js injected via all_frames: true.`));
+      }, Number(timeoutMs) || 5000);
     });
   }
 
@@ -172,8 +293,10 @@
         const { cmd, params, id } = event.data;
         let result;
         try {
-          // We can reuse the tools registry to execute inside iframe!
-          if (navigator.modelContext && navigator.modelContext.tools) {
+          if (Array.isArray(event.data.framePath) && event.data.framePath.length > 0) {
+            result = await invokeIframe(event.data.framePath, cmd, params, event.data.timeoutMs);
+          } else if (navigator.modelContext && navigator.modelContext.tools) {
+            // We can reuse the tools registry to execute inside iframe.
             result = await navigator.modelContext.invokeTool(cmd, params);
           } else {
             result = mcpError('navigator.modelContext not available in iframe');
@@ -181,7 +304,7 @@
         } catch (err) {
           result = mcpError(err.message);
         }
-        event.source.postMessage({ type: 'WEBMCP_IFRAME_RES', id, result }, event.origin);
+        event.source.postMessage({ type: 'WEBMCP_IFRAME_RES', id, result }, event.origin || '*');
       }
     });
   }
@@ -267,9 +390,10 @@
           description: 'CSS selector to query.',
         },
         frame_selector: {
-          type: 'string',
-          description: 'Optional CSS selector for an iframe containing the element.',
+          ...FRAME_SELECTOR_SCHEMA,
         },
+        frame_path: FRAME_PATH_SCHEMA,
+        frame_timeout_ms: FRAME_TIMEOUT_SCHEMA,
         max_results: {
           type: 'number',
           description: 'Maximum number of elements to return. Default 50.',
@@ -285,8 +409,8 @@
       required: ['selector'],
     },
     async execute(input) {
-      if (input.frame_selector) {
-        return invokeIframe(input.frame_selector, 'query_selector_all', { ...input, frame_selector: undefined });
+      if (shouldInvokeFrame(input)) {
+        return invokeFrameForTool(input, 'query_selector_all');
       }
       const defaultAttrs = ['id', 'class', 'href', 'src', 'type', 'role', 'aria-label', 'name', 'value', 'placeholder'];
       const attrList = input.attributes || defaultAttrs;
@@ -338,9 +462,10 @@
           description: 'CSS selector for the element to click.',
         },
         frame_selector: {
-          type: 'string',
-          description: 'Optional CSS selector for an iframe containing the element.',
+          ...FRAME_SELECTOR_SCHEMA,
         },
+        frame_path: FRAME_PATH_SCHEMA,
+        frame_timeout_ms: FRAME_TIMEOUT_SCHEMA,
         scroll_into_view: {
           type: 'boolean',
           description: 'Whether to scroll the element into view before clicking. Default true.',
@@ -349,8 +474,8 @@
       required: ['selector'],
     },
     async execute(input) {
-      if (input.frame_selector) {
-        return invokeIframe(input.frame_selector, 'click_element', { ...input, frame_selector: undefined });
+      if (shouldInvokeFrame(input)) {
+        return invokeFrameForTool(input, 'click_element');
       }
       const el = document.querySelector(input.selector);
       if (!el) return mcpError(`No element found for selector: ${input.selector}`);
@@ -385,9 +510,10 @@
           description: 'CSS selector for the form field.',
         },
         frame_selector: {
-          type: 'string',
-          description: 'Optional CSS selector for an iframe containing the element.',
+          ...FRAME_SELECTOR_SCHEMA,
         },
+        frame_path: FRAME_PATH_SCHEMA,
+        frame_timeout_ms: FRAME_TIMEOUT_SCHEMA,
         value: {
           type: 'string',
           description: 'The value to set.',
@@ -396,6 +522,9 @@
       required: ['selector', 'value'],
     },
     async execute(input) {
+      if (shouldInvokeFrame(input)) {
+        return invokeFrameForTool(input, 'fill_form_field');
+      }
       const el = document.querySelector(input.selector);
       if (!el) return mcpError(`No element found: ${input.selector}`);
 
@@ -452,9 +581,10 @@
           description: 'CSS selector for the <table>. Defaults to the first table on the page.',
         },
         frame_selector: {
-          type: 'string',
-          description: 'Optional CSS selector for an iframe containing the element.',
+          ...FRAME_SELECTOR_SCHEMA,
         },
+        frame_path: FRAME_PATH_SCHEMA,
+        frame_timeout_ms: FRAME_TIMEOUT_SCHEMA,
         max_rows: {
           type: 'number',
           description: 'Maximum rows to extract. Default 100.',
@@ -462,8 +592,8 @@
       },
     },
     async execute(input) {
-      if (input.frame_selector) {
-        return invokeIframe(input.frame_selector, 'extract_table_data', { ...input, frame_selector: undefined });
+      if (shouldInvokeFrame(input)) {
+        return invokeFrameForTool(input, 'extract_table_data');
       }
       const table = document.querySelector(input?.selector || 'table');
       if (!table) return mcpError('No table found on the page.');
@@ -506,9 +636,10 @@
           description: 'CSS selector to wait for.',
         },
         frame_selector: {
-          type: 'string',
-          description: 'Optional CSS selector for an iframe containing the element.',
+          ...FRAME_SELECTOR_SCHEMA,
         },
+        frame_path: FRAME_PATH_SCHEMA,
+        frame_timeout_ms: FRAME_TIMEOUT_SCHEMA,
         timeout_ms: {
           type: 'number',
           description: 'Maximum wait time in milliseconds. Default 10000.',
@@ -517,8 +648,8 @@
       required: ['selector'],
     },
     async execute(input) {
-      if (input.frame_selector) {
-        return invokeIframe(input.frame_selector, 'wait_for_element', { ...input, frame_selector: undefined });
+      if (shouldInvokeFrame(input)) {
+        return invokeFrameForTool(input, 'wait_for_element');
       }
       const timeout = input.timeout_ms || 10000;
       const start = Date.now();
@@ -581,9 +712,10 @@
           description: 'CSS selector for the element.',
         },
         frame_selector: {
-          type: 'string',
-          description: 'Optional CSS selector for an iframe containing the element.',
+          ...FRAME_SELECTOR_SCHEMA,
         },
+        frame_path: FRAME_PATH_SCHEMA,
+        frame_timeout_ms: FRAME_TIMEOUT_SCHEMA,
         properties: {
           type: 'array',
           items: { type: 'string' },
@@ -596,8 +728,8 @@
       required: ['selector'],
     },
     async execute(input) {
-      if (input.frame_selector) {
-        return invokeIframe(input.frame_selector, 'get_computed_styles', { ...input, frame_selector: undefined });
+      if (shouldInvokeFrame(input)) {
+        return invokeFrameForTool(input, 'get_computed_styles');
       }
       const el = document.querySelector(input.selector);
       if (!el) return mcpError(`No element found: ${input.selector}`);

@@ -1,16 +1,29 @@
 import { resolveTabId } from '../utils.js';
-import { evaluateInTab, sendCDPCommand } from '../cdp-bridge.js';
+import {
+  evaluateInFrameMainWorld,
+  evaluateInTab,
+  formatFrameTarget,
+  resolveFrameTarget,
+  sendCDPCommand,
+} from '../cdp-bridge.js';
 
 export const cdpActionHandlers = {
   async evaluateJS(params) {
     const { code } = params;
     if (!code) throw new Error('Missing required param: code');
     const tabId = await resolveTabId(params);
+    const frameTarget = params.frame ? await resolveFrameTarget(tabId, params.frame) : null;
 
     // Wrap in an async IIFE so users can use `return` and `await`
     const wrapped = `(async () => { ${code} })()`;
-    const result = await evaluateInTab(tabId, wrapped);
-    return { tabId, result };
+    const result = frameTarget
+      ? await evaluateInFrameMainWorld(tabId, frameTarget, wrapped)
+      : await evaluateInTab(tabId, wrapped);
+    return {
+      tabId,
+      ...(frameTarget ? { frame: formatFrameTarget(frameTarget) } : {}),
+      result,
+    };
   },
 
   async executeCDP(params) {

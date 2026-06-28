@@ -1,15 +1,36 @@
 import { resolveTabId } from '../utils.js';
-import { evaluateInTab } from '../cdp-bridge.js';
+import {
+  evaluateInFrameMainWorld,
+  evaluateInTab,
+  formatFrameTarget,
+  resolveFrameTarget,
+} from '../cdp-bridge.js';
 import { waitForPageStable } from './page-stability.js';
 import { DOM_DEEP_HELPERS } from './dom-helpers.js';
+
+async function getEvaluator(tabId, frameSpec) {
+  if (!frameSpec) {
+    return { evaluate: (expr) => evaluateInTab(tabId, expr), frameTarget: null };
+  }
+  const frameTarget = await resolveFrameTarget(tabId, frameSpec);
+  return {
+    evaluate: (expr) => evaluateInFrameMainWorld(tabId, frameTarget, expr),
+    frameTarget,
+  };
+}
+
+function framePayload(frameTarget) {
+  return frameTarget ? { frame: formatFrameTarget(frameTarget) } : {};
+}
 
 export const highLevelHandlers = {
   async click(params) {
     const { selector } = params;
     if (!selector) throw new Error('Missing required param: selector');
     const tabId = await resolveTabId(params);
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return { success: false, error: 'Element not found: ${selector}' };
@@ -24,7 +45,7 @@ export const highLevelHandlers = {
     `);
     // Auto-wait for page stability after click
     await waitForPageStable(tabId, { minStableMs: 500, maxWaitMs: 3000 });
-    return { tabId, ...result };
+    return { tabId, ...framePayload(frameTarget), ...result };
   },
 
   async type(params) {
@@ -32,8 +53,9 @@ export const highLevelHandlers = {
     if (!selector) throw new Error('Missing required param: selector');
     if (text === undefined) throw new Error('Missing required param: text');
     const tabId = await resolveTabId(params);
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return { success: false, error: 'Element not found: ${selector}' };
@@ -51,15 +73,16 @@ export const highLevelHandlers = {
     `);
     // Auto-wait for page stability after type
     await waitForPageStable(tabId, { minStableMs: 300, maxWaitMs: 2000 });
-    return { tabId, ...result };
+    return { tabId, ...framePayload(frameTarget), ...result };
   },
 
   async waitForSelector(params) {
     const { selector, timeout = 10000 } = params;
     if (!selector) throw new Error('Missing required param: selector');
     const tabId = await resolveTabId(params);
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       new Promise((resolve) => {
         const existing = document.querySelector(${JSON.stringify(selector)});
         if (existing) {
@@ -87,7 +110,7 @@ export const highLevelHandlers = {
         }, ${timeout});
       })
     `);
-    return { tabId, ...result };
+    return { tabId, ...framePayload(frameTarget), ...result };
   },
 
   async getPageContent(params) {
@@ -101,8 +124,9 @@ export const highLevelHandlers = {
       maxLength = 50000,
       offset = 0,
     } = params;
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         const fmt = ${JSON.stringify(format)};
         const offset = ${Number(offset)};
@@ -135,7 +159,7 @@ export const highLevelHandlers = {
         return out;
       })()
     `);
-    return { tabId, ...result };
+    return { tabId, ...framePayload(frameTarget), ...result };
   },
 
   // Paginated DOM extraction — replaces the "stuff data into HTML attributes"
@@ -152,8 +176,9 @@ export const highLevelHandlers = {
       textMaxLength = 2000,
       pierceShadow = true,
     } = params;
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         ${pierceShadow ? DOM_DEEP_HELPERS : ''}
         const els = ${pierceShadow
@@ -186,7 +211,7 @@ export const highLevelHandlers = {
         };
       })()
     `);
-    return { tabId, selector, ...result };
+    return { tabId, selector, ...framePayload(frameTarget), ...result };
   },
 
   // P2 — Read a named window variable (e.g. ytInitialData, __NEXT_DATA__).
@@ -198,8 +223,9 @@ export const highLevelHandlers = {
     if (!path) throw new Error('Missing required param: path');
     const tabId = await resolveTabId(params);
     const { maxLength = 50000, offset = 0 } = params;
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         // Walk dot-notation path safely (e.g. "ytInitialData.contents.twoColumn...")
         const parts = ${JSON.stringify(path)}.split('.');
@@ -249,7 +275,7 @@ export const highLevelHandlers = {
         };
       })()
     `);
-    return { tabId, path, ...result };
+    return { tabId, path, ...framePayload(frameTarget), ...result };
   },
 
   // P3 — Find elements by visible text using TreeWalker (no CSS class dependency).
@@ -265,8 +291,9 @@ export const highLevelHandlers = {
       maxResults = 10,
       pierceShadow = true,
     } = params;
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         ${pierceShadow ? DOM_DEEP_HELPERS : ''}
         const needle = ${JSON.stringify(text)};
@@ -341,7 +368,7 @@ export const highLevelHandlers = {
         return { total: matches.length, exact, needle, pierceShadow, elements: matches };
       })()
     `);
-    return { tabId, ...result };
+    return { tabId, ...framePayload(frameTarget), ...result };
   },
 
   // pageFetch — run fetch() inside the page (MAIN world) so it inherits the
@@ -361,8 +388,9 @@ export const highLevelHandlers = {
       maxLength = 100000,
       offset = 0,
     } = params;
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (async () => {
         try {
           const res = await fetch(${JSON.stringify(url)}, {
@@ -426,6 +454,6 @@ export const highLevelHandlers = {
         }
       })()
     `);
-    return { tabId, url, ...result };
+    return { tabId, url, ...framePayload(frameTarget), ...result };
   }
 };

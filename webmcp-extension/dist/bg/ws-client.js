@@ -36,6 +36,7 @@ export function connectWebSocket() {
         // Tab management
         'listTabs', 'navigate', 'newTab', 'closeTab', 'getActiveTab',
         // Page interaction (JS-based)
+        'listFrames',
         'evaluateJS', 'executeCDP', 'screenshot',
         'click', 'type', 'waitForSelector', 'getPageContent', 'querySelectorAll',
         'getWindowVariable', 'findByText', 'pageFetch',

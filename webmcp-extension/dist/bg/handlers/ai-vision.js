@@ -1,6 +1,29 @@
 import { resolveTabId } from '../utils.js';
-import { sendCDPCommand, evaluateInTab } from '../cdp-bridge.js';
+import {
+  evaluateInFrameMainWorld,
+  evaluateInTab,
+  formatFrameTarget,
+  getFrameViewportOffset,
+  resolveFrameTarget,
+  sendCDPCommand,
+} from '../cdp-bridge.js';
 import { DOM_DEEP_HELPERS } from './dom-helpers.js';
+
+async function getEvaluator(tabId, frameSpec) {
+  if (!frameSpec) {
+    return {
+      evaluate: (expr) => evaluateInTab(tabId, expr),
+      frameTarget: null,
+      offset: { x: 0, y: 0 },
+    };
+  }
+  const frameTarget = await resolveFrameTarget(tabId, frameSpec);
+  return {
+    evaluate: (expr) => evaluateInFrameMainWorld(tabId, frameTarget, expr),
+    frameTarget,
+    offset: await getFrameViewportOffset(tabId, frameTarget),
+  };
+}
 
 export const aiVisionHandlers = {
   async getAccessibilityTree(params) {
@@ -65,10 +88,12 @@ export const aiVisionHandlers = {
     if (!selector) throw new Error('Missing required param: selector');
     const tabId = await resolveTabId(params);
     const { pierceShadow = true } = params;
+    const { evaluate, frameTarget, offset } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         ${pierceShadow ? DOM_DEEP_HELPERS : ''}
+        const offset = ${JSON.stringify(offset)};
         const els = ${pierceShadow
           ? `__webmcpQueryDeep(${JSON.stringify(selector)})`
           : `document.querySelectorAll(${JSON.stringify(selector)})`};
@@ -89,6 +114,14 @@ export const aiVisionHandlers = {
               centerX: Math.round(rect.x + rect.width / 2),
               centerY: Math.round(rect.y + rect.height / 2),
             },
+            absoluteBounds: offset.x || offset.y ? {
+              x: Math.round(rect.x + offset.x),
+              y: Math.round(rect.y + offset.y),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+              centerX: Math.round(rect.x + offset.x + rect.width / 2),
+              centerY: Math.round(rect.y + offset.y + rect.height / 2),
+            } : undefined,
             visible: rect.width > 0 && rect.height > 0 &&
               getComputedStyle(el).display !== 'none' &&
               getComputedStyle(el).visibility !== 'hidden',
@@ -96,16 +129,22 @@ export const aiVisionHandlers = {
         });
       })()
     `);
-    return { tabId, elements: result };
+    return {
+      tabId,
+      ...(frameTarget ? { frame: formatFrameTarget(frameTarget) } : {}),
+      elements: result,
+    };
   },
 
   async getInteractiveElements(params) {
     const tabId = await resolveTabId(params);
     const { pierceShadow = true } = params;
+    const { evaluate, frameTarget, offset } = await getEvaluator(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         ${pierceShadow ? DOM_DEEP_HELPERS : ''}
+        const offset = ${JSON.stringify(offset)};
         const selectors = 'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[role="searchbox"],[contenteditable="true"]';
         const els = ${pierceShadow
           ? `__webmcpQueryDeep(selectors)`
@@ -137,10 +176,22 @@ export const aiVisionHandlers = {
               centerX: Math.round(rect.x + rect.width / 2),
               centerY: Math.round(rect.y + rect.height / 2),
             },
+            absoluteBounds: offset.x || offset.y ? {
+              x: Math.round(rect.x + offset.x),
+              y: Math.round(rect.y + offset.y),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+              centerX: Math.round(rect.x + offset.x + rect.width / 2),
+              centerY: Math.round(rect.y + offset.y + rect.height / 2),
+            } : undefined,
           };
         }).filter(Boolean);
       })()
     `);
-    return { tabId, elements: result };
+    return {
+      tabId,
+      ...(frameTarget ? { frame: formatFrameTarget(frameTarget) } : {}),
+      elements: result,
+    };
   }
 };

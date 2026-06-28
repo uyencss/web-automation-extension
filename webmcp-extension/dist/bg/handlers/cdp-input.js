@@ -1,32 +1,72 @@
 import { resolveTabId } from '../utils.js';
-import { sendCDPCommand, evaluateInTab } from '../cdp-bridge.js';
+import {
+  evaluateInFrameMainWorld,
+  evaluateInTab,
+  formatFrameTarget,
+  getFrameViewportOffset,
+  resolveFrameTarget,
+  sendCDPCommand,
+} from '../cdp-bridge.js';
+
+async function getFrameContext(tabId, frameSpec) {
+  if (!frameSpec) {
+    return {
+      evaluate: (expr) => evaluateInTab(tabId, expr),
+      frameTarget: null,
+      offset: { x: 0, y: 0 },
+    };
+  }
+  const frameTarget = await resolveFrameTarget(tabId, frameSpec);
+  return {
+    evaluate: (expr) => evaluateInFrameMainWorld(tabId, frameTarget, expr),
+    frameTarget,
+    offset: await getFrameViewportOffset(tabId, frameTarget),
+  };
+}
+
+function addOffset(value, offset) {
+  return Math.round(Number(value) + Number(offset || 0));
+}
 
 export const cdpInputHandlers = {
   async dispatchClick(params) {
     const { x, y, button = 'left', clickCount = 1 } = params;
     if (x === undefined || y === undefined) throw new Error('Missing required params: x, y');
     const tabId = await resolveTabId(params);
+    const { frameTarget, offset } = await getFrameContext(tabId, params.frame);
+    const targetX = addOffset(x, offset.x);
+    const targetY = addOffset(y, offset.y);
 
-    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: targetX, y: targetY });
     await new Promise(r => setTimeout(r, 50));
-    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, clickCount });
-    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount });
+    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: targetX, y: targetY, button, clickCount });
+    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: targetX, y: targetY, button, clickCount });
 
-    return { tabId, clicked: true, x, y, button };
+    return {
+      tabId,
+      ...(frameTarget ? { frame: formatFrameTarget(frameTarget), local: { x, y }, offset } : {}),
+      clicked: true,
+      x: targetX,
+      y: targetY,
+      button,
+    };
   },
 
   async moveMouse(params) {
     const { x, y, steps = 1 } = params;
     if (x === undefined || y === undefined) throw new Error('Missing required params: x, y');
     const tabId = await resolveTabId(params);
+    const { frameTarget, offset } = await getFrameContext(tabId, params.frame);
+    const targetX = addOffset(x, offset.x);
+    const targetY = addOffset(y, offset.y);
 
-    const startX = params.fromX ?? 0;
-    const startY = params.fromY ?? 0;
+    const startX = params.fromX !== undefined ? addOffset(params.fromX, offset.x) : 0;
+    const startY = params.fromY !== undefined ? addOffset(params.fromY, offset.y) : 0;
 
     for (let i = 1; i <= steps; i++) {
       const progress = i / steps;
-      const currentX = startX + (x - startX) * progress;
-      const currentY = startY + (y - startY) * progress;
+      const currentX = startX + (targetX - startX) * progress;
+      const currentY = startY + (targetY - startY) * progress;
       await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', {
         type: 'mouseMoved',
         x: Math.round(currentX),
@@ -34,7 +74,12 @@ export const cdpInputHandlers = {
       });
     }
 
-    return { tabId, x, y };
+    return {
+      tabId,
+      ...(frameTarget ? { frame: formatFrameTarget(frameTarget), local: { x, y }, offset } : {}),
+      x: targetX,
+      y: targetY,
+    };
   },
 
   async pressKey(params) {
@@ -114,8 +159,9 @@ export const cdpInputHandlers = {
     const { selector } = params;
     if (!selector) throw new Error('Missing required param: selector');
     const tabId = await resolveTabId(params);
+    const { evaluate, frameTarget, offset } = await getFrameContext(tabId, params.frame);
 
-    const bounds = await evaluateInTab(tabId, `
+    const bounds = await evaluate(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return null;
@@ -129,12 +175,20 @@ export const cdpInputHandlers = {
     `);
 
     if (!bounds) throw new Error(`Element not found: ${selector}`);
+    const x = addOffset(bounds.x, offset.x);
+    const y = addOffset(bounds.y, offset.y);
 
     await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', {
-      type: 'mouseMoved', x: bounds.x, y: bounds.y,
+      type: 'mouseMoved', x, y,
     });
 
-    return { tabId, selector };
+    return {
+      tabId,
+      selector,
+      ...(frameTarget ? { frame: formatFrameTarget(frameTarget), local: bounds, offset } : {}),
+      x,
+      y,
+    };
   },
 
   async selectOption(params) {
@@ -145,8 +199,9 @@ export const cdpInputHandlers = {
     }
     const tabId = await resolveTabId(params);
     const payload = { selector, value, index, text };
+    const { evaluate, frameTarget } = await getFrameContext(tabId, params.frame);
 
-    const result = await evaluateInTab(tabId, `
+    const result = await evaluate(`
       (() => {
         const input = ${JSON.stringify(payload)};
         const el = document.querySelector(input.selector);
@@ -195,6 +250,10 @@ export const cdpInputHandlers = {
       })()
     `);
 
-    return { tabId, ...result };
+    return {
+      tabId,
+      ...(frameTarget ? { frame: formatFrameTarget(frameTarget) } : {}),
+      ...result,
+    };
   }
 };

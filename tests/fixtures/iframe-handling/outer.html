@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>WebMCP iframe fixture - outer</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+
+      iframe {
+        display: block;
+        width: 620px;
+        height: 180px;
+        border: 2px solid #587;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Outer frame</h2>
+    <p id="outer-marker">outer frame text</p>
+    <iframe
+      id="inner-frame"
+      name="inner"
+      src="./inner.html"
+      title="Inner nested frame"
+    ></iframe>
+  </body>
+</html>

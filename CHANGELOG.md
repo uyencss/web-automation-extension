@@ -2,6 +2,25 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.11 - 2026-06-28
+
+### Added
+
+- Added iframe discovery with `listFrames`, including CDP frame IDs, Chrome frame IDs when available, frame names, URLs, and parent relationships.
+- Added frame targeting for core background commands, WebMCP bridge commands, observation commands, and coordinate input commands.
+- Added nested iframe fixture pages for live extension verification.
+
+### Changed
+
+- Upgraded page-tool iframe forwarding to support selector objects, nested `frame_path`, configurable timeouts, and response-source validation.
+- Regenerated the command catalog and WebMCP skill references for frame-aware commands.
+- Rebuilt the Chrome extension zip for version `2.1.1`.
+
+### Fixed
+
+- Fixed `fill_form_field` so its declared `frame_selector` support actually forwards into the target iframe.
+- Fixed the catalog mismatch for `selectOption`.
+
 ## 1.0.10 - 2026-06-28
 
 ### Added

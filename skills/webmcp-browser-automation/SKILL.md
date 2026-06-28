@@ -227,7 +227,7 @@ These are background commands registered in
 | `typeText` | Real CDP text insertion into focused element | `{ text, tabId? }` |
 | `scroll` | Real CDP mouse-wheel scroll | `{ deltaX?, deltaY?, x?, y?, tabId? }` |
 | `hover` | Real CDP hover by selector | `{ selector, tabId? }` |
-| `selectOption` | Select an HTML `<select>` option | `{ selector, value?, index?, text?, tabId? }` |
+| `selectOption` | Select an HTML `<select>` option | `{ selector, value?, index?, text?, frame?, tabId? }` |
 | **Storage & Browser** | | |
 | `getCookies` | Read cookies for current page | `{ tabId? }` |
 | `setCookie` | Set a cookie | `{ name, value, domain?, path?, tabId? }` |
@@ -277,10 +277,16 @@ These tools are registered by `register-tools.js` and should be called only via
 | `get_captured_requests` | List everything captured so far without consuming; bodies/headers optional | none |
 | `stop_network_capture` | Stop capture (optionally one pattern) and clean up | none |
 
-`frame_selector` forwarding is implemented for `query_selector_all`,
-`click_element`, `extract_table_data`, `wait_for_element`, and
-`get_computed_styles`. Prefer top-level selectors for other tools unless you
-confirm iframe support in `register-tools.js`.
+Use `listFrames` before targeting iframes from background commands. Most
+selector/page commands accept a `frame` object such as `{ cdpFrameId }`,
+`{ frameId }`, `{ frameName }`, `{ frameUrl }`, `{ frameSelector }`, or nested
+`{ framePath: [...] }`.
+
+Page-registered iframe forwarding is implemented for `query_selector_all`,
+`click_element`, `fill_form_field`, `extract_table_data`, `wait_for_element`,
+and `get_computed_styles`. These page tools accept `frame_selector`,
+`frame_path`, and `frame_timeout_ms` inside the `input` passed to
+`webmcp.invokeTool`.
 
 Use standard CSS selectors only. Playwright-only selectors such as
 `:has-text("Login")` are invalid here. To click by visible text, first call

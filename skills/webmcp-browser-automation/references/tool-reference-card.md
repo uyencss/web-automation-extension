@@ -55,22 +55,23 @@ newTab                  { url? }
 navigate                { url, tabId? }
 closeTab                { tabId? }
 
-waitForSelector         { selector, timeout?, tabId? }
-getPageContent          { tabId? }
-click                   { selector, tabId? }
-type                    { selector, text, tabId? }
-evaluateJS              { code, tabId? }
+listFrames              { flat?, force?, tabId? }
+waitForSelector         { selector, timeout?, frame?, tabId? }
+getPageContent          { format?, maxLength?, offset?, frame?, tabId? }
+click                   { selector, frame?, tabId? }
+type                    { selector, text, frame?, tabId? }
+evaluateJS              { code, frame?, tabId? }
 
 executeCDP              { method, params?, tabId? }
 screenshot              { fullPage?, tabId? }
 
-webmcp.listTools        { tabId? }
-webmcp.invokeTool       { toolName, input?, tabId? }
+webmcp.listTools        { frame?, tabId? }
+webmcp.invokeTool       { toolName, input?, frame?, tabId? }
 
 getAccessibilityTree    { interestingOnly?, depth?, tabId? }
 getDOMSnapshot          { computedStyles?, tabId? }
-getElementBounds        { selector, tabId? }
-getInteractiveElements  { tabId? }
+getElementBounds        { selector, pierceShadow?, frame?, tabId? }
+getInteractiveElements  { pierceShadow?, frame?, tabId? }
 
 ## ARIA Snapshot (preferred for interaction)
 getAriaSnapshot         { maxDepth?, tabId? }
@@ -83,13 +84,13 @@ selectByRef             { ref, values, tabId? }
 waitForStable           { minStableMs?, maxWaitMs?, maxMutations?, tabId? }
 
 ## CDP Input
-dispatchClick           { x, y, button?, clickCount?, tabId? }
-moveMouse               { x, y, steps?, fromX?, fromY?, tabId? }
+dispatchClick           { x, y, button?, clickCount?, frame?, tabId? }
+moveMouse               { x, y, steps?, fromX?, fromY?, frame?, tabId? }
 pressKey                { key, text?, modifiers?, tabId? }
 typeText                { text, tabId? }
 scroll                  { deltaX?, deltaY?, x?, y?, tabId? }
-hover                   { selector, tabId? }
-selectOption            { selector, value?, index?, text?, tabId? }
+hover                   { selector, frame?, tabId? }
+selectOption            { selector, value?, index?, text?, frame?, tabId? }
 
 ## Storage & Browser
 getCookies              { tabId? }
@@ -109,12 +110,12 @@ Call these with `webmcp.invokeTool`.
 
 ```text
 get_page_metadata        { include_headings?, include_links? }
-query_selector_all       { selector, frame_selector?, max_results?, attributes? }
-click_element            { selector, frame_selector?, scroll_into_view? }
-fill_form_field          { selector, value }
-extract_table_data       { selector?, frame_selector?, max_rows? }
-wait_for_element         { selector, frame_selector?, timeout_ms? }
-get_computed_styles      { selector, frame_selector?, properties? }
+query_selector_all       { selector, frame_selector?, frame_path?, frame_timeout_ms?, max_results?, attributes? }
+click_element            { selector, frame_selector?, frame_path?, frame_timeout_ms?, scroll_into_view? }
+fill_form_field          { selector, value, frame_selector?, frame_path?, frame_timeout_ms? }
+extract_table_data       { selector?, frame_selector?, frame_path?, frame_timeout_ms?, max_rows? }
+wait_for_element         { selector, frame_selector?, frame_path?, frame_timeout_ms?, timeout_ms? }
+get_computed_styles      { selector, frame_selector?, frame_path?, frame_timeout_ms?, properties? }
 scroll_page              { target?, delta_y?, container_selector?, behavior? }
 submit_form              { form_selector?, fields?, submit_button_selector? }
 execute_javascript       { code }

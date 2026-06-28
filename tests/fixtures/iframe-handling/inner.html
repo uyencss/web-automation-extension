@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>WebMCP iframe fixture - inner</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Inner frame</h3>
+    <button id="inner-button" type="button">Inner button</button>
+    <p id="inner-status">inner idle</p>
+
+    <script>
+      document.getElementById('inner-button').addEventListener('click', () => {
+        document.getElementById('inner-status').textContent = 'inner clicked';
+      });
+    </script>
+  </body>
+</html>

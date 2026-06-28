@@ -16,27 +16,28 @@ const COMMAND_DEFINITIONS = [
   ['newTab', { group: 'tabs', optionalParams: ['url'] }],
   ['closeTab', { group: 'tabs', optionalParams: ['tabId'] }],
   ['getActiveTab', { group: 'tabs' }],
+  ['listFrames', { group: 'page', description: 'List the frame tree for a tab, returning CDP frame IDs, Chrome frame IDs when available, URLs, names, and parent relationships. Use this before targeting iframe commands.', optionalParams: ['flat', 'force'] }],
 
-  ['click', { group: 'page', requiredParams: ['selector'] }],
-  ['type', { group: 'page', requiredParams: ['selector', 'text'] }],
-  ['waitForSelector', { group: 'page', requiredParams: ['selector'], optionalParams: ['timeout'] }],
-  ['getPageContent', { group: 'page', description: 'Get page title/url plus text and/or HTML. Supports pagination for large pages.', optionalParams: ['format', 'maxLength', 'offset'] }],
-  ['querySelectorAll', { group: 'page', description: 'Extract all elements matching a CSS selector as structured records, with limit/offset pagination. Pierces open Shadow DOM by default (pierceShadow). Use instead of stuffing data into HTML attributes when results exceed a single payload.', requiredParams: ['selector'], optionalParams: ['limit', 'offset', 'fields', 'textMaxLength', 'pierceShadow'] }],
-  ['getWindowVariable', { group: 'page', description: 'Read a named window variable by dot-notation path (e.g. ytInitialData, __NEXT_DATA__, __NUXT__). Primary extraction strategy for SSR/hydrated SPAs — data is already rendered client-side and more stable than DOM selectors. Supports maxLength/offset pagination for large objects.', requiredParams: ['path'], optionalParams: ['maxLength', 'offset'] }],
-  ['findByText', { group: 'page', description: 'Find elements by visible text content using TreeWalker — no CSS class dependency. Pierces open Shadow DOM by default (pierceShadow). Returns bounds with centerX/Y for direct use with dispatchClick. More stable than class-based selectors on SPAs where class names change per build.', requiredParams: ['text'], optionalParams: ['exact', 'selector', 'maxResults', 'pierceShadow'] }],
-  ['pageFetch', { group: 'page', description: 'Run fetch() inside the page (MAIN world) so it inherits the page cookies/origin/session. Returns a structured, size-bounded result (text/json/base64) with offset pagination. Use to call same-origin in-page APIs with the real logged-in session instead of hand-writing evaluateJS + fetch.', requiredParams: ['url'], optionalParams: ['method', 'headers', 'body', 'responseType', 'credentials', 'maxLength', 'offset'] }],
-  ['evaluateJS', { group: 'cdp', requiredParams: ['code'] }],
+  ['click', { group: 'page', requiredParams: ['selector'], optionalParams: ['frame'] }],
+  ['type', { group: 'page', requiredParams: ['selector', 'text'], optionalParams: ['frame'] }],
+  ['waitForSelector', { group: 'page', requiredParams: ['selector'], optionalParams: ['timeout', 'frame'] }],
+  ['getPageContent', { group: 'page', description: 'Get page title/url plus text and/or HTML. Supports pagination for large pages and optional iframe targeting via frame.', optionalParams: ['format', 'maxLength', 'offset', 'frame'] }],
+  ['querySelectorAll', { group: 'page', description: 'Extract all elements matching a CSS selector as structured records, with limit/offset pagination. Pierces open Shadow DOM by default (pierceShadow). Supports optional iframe targeting via frame.', requiredParams: ['selector'], optionalParams: ['limit', 'offset', 'fields', 'textMaxLength', 'pierceShadow', 'frame'] }],
+  ['getWindowVariable', { group: 'page', description: 'Read a named window variable by dot-notation path (e.g. ytInitialData, __NEXT_DATA__, __NUXT__). Supports pagination and optional iframe targeting via frame.', requiredParams: ['path'], optionalParams: ['maxLength', 'offset', 'frame'] }],
+  ['findByText', { group: 'page', description: 'Find elements by visible text content using TreeWalker — no CSS class dependency. Pierces open Shadow DOM by default (pierceShadow). Supports optional iframe targeting via frame.', requiredParams: ['text'], optionalParams: ['exact', 'selector', 'maxResults', 'pierceShadow', 'frame'] }],
+  ['pageFetch', { group: 'page', description: 'Run fetch() inside the page or target iframe so it inherits the cookies/origin/session for that frame. Returns a structured, size-bounded result.', requiredParams: ['url'], optionalParams: ['method', 'headers', 'body', 'responseType', 'credentials', 'maxLength', 'offset', 'frame'] }],
+  ['evaluateJS', { group: 'cdp', requiredParams: ['code'], optionalParams: ['frame'] }],
 
   ['executeCDP', { group: 'cdp', requiredParams: ['method'], optionalParams: ['params'] }],
   ['screenshot', { group: 'cdp', optionalParams: ['fullPage'] }],
 
-  ['webmcp.listTools', { group: 'webmcp' }],
-  ['webmcp.invokeTool', { group: 'webmcp', requiredParams: ['toolName'], optionalParams: ['input'] }],
+  ['webmcp.listTools', { group: 'webmcp', optionalParams: ['frame'] }],
+  ['webmcp.invokeTool', { group: 'webmcp', requiredParams: ['toolName'], optionalParams: ['input', 'frame'] }],
 
   ['getAccessibilityTree', { group: 'vision', optionalParams: ['depth', 'interestingOnly'] }],
   ['getDOMSnapshot', { group: 'vision', optionalParams: ['computedStyles'] }],
-  ['getElementBounds', { group: 'vision', requiredParams: ['selector'], optionalParams: ['pierceShadow'] }],
-  ['getInteractiveElements', { group: 'vision', optionalParams: ['pierceShadow'] }],
+  ['getElementBounds', { group: 'vision', requiredParams: ['selector'], optionalParams: ['pierceShadow', 'frame'] }],
+  ['getInteractiveElements', { group: 'vision', optionalParams: ['pierceShadow', 'frame'] }],
 
   ['getAriaSnapshot', { group: 'aria', description: 'Capture an accessibility snapshot of the page with ref IDs. Returns a readable tree with refs like ref=S1 that can be used with clickByRef, typeByRef, etc. More robust than CSS selectors for interacting with dynamic pages.', optionalParams: ['maxDepth'] }],
   ['clickByRef', { group: 'aria', description: 'Click an element using its ARIA snapshot ref (e.g. ref=S1). Run getAriaSnapshot first to get refs. More reliable than CSS selector click on SPAs.', requiredParams: ['ref'], optionalParams: ['element'] }],
@@ -46,12 +47,13 @@ const COMMAND_DEFINITIONS = [
 
   ['waitForStable', { group: 'control', description: 'Wait for the page to stabilize (no DOM mutations for a quiet period). Useful after navigation or clicking dynamic elements. Use watchSelector to scope to a subtree, ignoreSelectors to exclude noisy elements (e.g. video player), and ignoreCharacterData to suppress text-node tick mutations on video/live pages.', optionalParams: ['minStableMs', 'maxWaitMs', 'maxMutations', 'watchSelector', 'ignoreSelectors', 'ignoreCharacterData'] }],
 
-  ['dispatchClick', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['button', 'clickCount'] }],
-  ['moveMouse', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['fromX', 'fromY', 'steps'] }],
+  ['dispatchClick', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['button', 'clickCount', 'frame'] }],
+  ['moveMouse', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['fromX', 'fromY', 'steps', 'frame'] }],
   ['pressKey', { group: 'input', requiredParams: ['key'], optionalParams: ['text', 'modifiers'] }],
   ['typeText', { group: 'input', requiredParams: ['text'] }],
   ['scroll', { group: 'input', optionalParams: ['x', 'y', 'deltaX', 'deltaY'] }],
-  ['hover', { group: 'input', requiredParams: ['selector'] }],
+  ['hover', { group: 'input', requiredParams: ['selector'], optionalParams: ['frame'] }],
+  ['selectOption', { group: 'input', requiredParams: ['selector'], optionalParams: ['value', 'index', 'text', 'frame'] }],
 
   ['getCookies', { group: 'control' }],
   ['setCookie', { group: 'control', requiredParams: ['name', 'value'], optionalParams: ['domain', 'path'] }],
@@ -68,9 +70,7 @@ const COMMAND_DEFINITIONS = [
   ['delay', { group: 'runner', optionalParams: ['ms', 'timeout'] }],
 ];
 
-const UNSUPPORTED_COMMANDS = {
-  selectOption: 'ws-client.js advertises selectOption, but commandHandlers does not register a selectOption handler.',
-};
+const UNSUPPORTED_COMMANDS = {};
 
 const COMMANDS = new Map(
   COMMAND_DEFINITIONS.map(([name, definition]) => [
