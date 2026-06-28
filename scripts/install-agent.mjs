@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 /**
- * Installer cho WebMCP Browser automation kit.
+ * Installer for the WebMCP Browser automation kit.
  *
- * Mỗi "target" là một AI runtime phổ biến. Cài đặt là GLOBAL (theo provider,
- * không phải vào dự án này), gồm 2 phần:
- *   1) Skill  — copy thư mục skill từ skills/<name> vào skill-dir global của
- *               runtime (~/.claude/skills, ~/.codex/skills) nếu runtime hỗ trợ.
- *   2) MCP    — đăng ký MCP server vào config global của runtime.
+ * Each "target" is a common AI runtime. Installation is GLOBAL (per provider,
+ * not into this project) and has two parts:
+ *   1) Skill  — copy the skill directory from skills/<name> into the runtime's
+ *               global skill directory (~/.claude/skills, ~/.codex/skills) when supported.
+ *   2) MCP    — register the MCP server in the runtime's global config.
  *
- * Triết lý an toàn: chỉ TỰ GHI vào những chỗ chắc chắn không phá hỏng cấu hình
- * có sẵn (copy skill vào skill-dir global, gọi `claude mcp add -s user`,
- * append section MCP vào ~/.codex/config.toml nếu chưa có, ghi ~/.cursor/mcp.json
- * nếu chưa tồn tại). Với config dùng chung mà script chưa biết merge an toàn
- * (VS Code user settings), script chỉ IN ra đoạn cần dán — tránh ghi đè nhầm.
+ * Safety philosophy: only WRITE automatically where we are sure it will not break
+ * existing config (copy the skill into the global skill directory, call
+ * `claude mcp add -s user`, append the MCP section to ~/.codex/config.toml when absent,
+ * write ~/.cursor/mcp.json only if it does not already exist). For shared config that
+ * the script cannot safely merge yet (VS Code user settings), it only PRINTS the snippet
+ * to paste, avoiding accidental overwrites.
  *
  * Usage:
  *   node scripts/install-agent.mjs <claude|codex|copilot|antigravity|cursor|all>
@@ -39,7 +40,7 @@ const head = (m) => log(`\n=== ${m} ===`);
 
 function copySkill(dest) {
   if (!existsSync(SKILL_SRC)) {
-    note(`Bỏ qua skill: không tìm thấy ${SKILL_SRC}`);
+    note(`Skipping skill: ${SKILL_SRC} not found`);
     return;
   }
   mkdirSync(dirname(dest), { recursive: true });
@@ -53,7 +54,7 @@ function getMcpCommandConfig() {
   }
 
   if (INSTALL_MODE !== 'local') {
-    throw new Error(`WEBMCP_INSTALL_MODE không hợp lệ: "${INSTALL_MODE}". Chọn "local" hoặc "npx".`);
+    throw new Error(`Invalid WEBMCP_INSTALL_MODE: "${INSTALL_MODE}". Choose "local" or "npx".`);
   }
 
   return { command: 'node', args: [MCP_SERVER] };
@@ -66,7 +67,7 @@ function mcpServerConfig() {
 
 function printMcpJson(label, file) {
   const config = mcpServerConfig();
-  note(`Thêm vào ${label}: ${file}`);
+  note(`Add to ${label}: ${file}`);
   log(JSON.stringify({
     mcpServers: {
       [SERVER_NAME]: config,
@@ -74,8 +75,8 @@ function printMcpJson(label, file) {
   }, null, 2));
 }
 
-// Ghi permission "mcp__webmcp__*" vào ~/.claude/settings.json (global).
-// Merge an toàn: đọc JSON hiện có, thêm vào mảng allow nếu chưa có, ghi lại.
+// Write permission "mcp__webmcp__*" to ~/.claude/settings.json (global).
+// Safe merge: read the existing JSON, add to the allow array if missing, then write it back.
 function addClaudeGlobalPermission() {
   const settingsFile = join(homedir(), '.claude', 'settings.json');
   const PERM = 'mcp__webmcp__*';
@@ -89,15 +90,15 @@ function addClaudeGlobalPermission() {
     settings.permissions.allow.push(PERM);
     mkdirSync(dirname(settingsFile), { recursive: true });
     writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
-    ok(`Permission "${PERM}" thêm vào ${settingsFile}`);
+    ok(`Permission "${PERM}" added to ${settingsFile}`);
   } else {
-    ok(`Permission "${PERM}" đã có trong ${settingsFile}`);
+    ok(`Permission "${PERM}" already exists in ${settingsFile}`);
   }
 }
 
 function writeIfAbsent(file, content) {
   if (existsSync(file)) {
-    note(`${file} đã tồn tại — không ghi đè. Hãy tự gộp đoạn dưới:`);
+    note(`${file} already exists; not overwriting. Merge the snippet below manually:`);
     log(content);
     return;
   }
@@ -124,8 +125,8 @@ function addCodexMcpConfig() {
   }
 
   if (config.includes(section)) {
-    ok(`MCP "${SERVER_NAME}" đã có trong ${configFile}`);
-    note(`Nếu muốn chuyển sang install mode "${INSTALL_MODE}", thay section hiện có bằng:`);
+    ok(`MCP "${SERVER_NAME}" already exists in ${configFile}`);
+    note(`To switch to install mode "${INSTALL_MODE}", replace the existing section with:`);
     log(block.trim());
     return;
   }
@@ -133,11 +134,11 @@ function addCodexMcpConfig() {
   mkdirSync(dirname(configFile), { recursive: true });
   const prefix = config && !config.endsWith('\n') ? '\n' : '';
   writeFileSync(configFile, config + prefix + block);
-  ok(`MCP "${SERVER_NAME}" thêm vào ${configFile}`);
+  ok(`MCP "${SERVER_NAME}" added to ${configFile}`);
 }
 
 const TARGETS = {
-  // Claude Code: global skill ở ~/.claude/skills — có tác dụng với mọi project.
+  // Claude Code: global skill in ~/.claude/skills, available to every project.
   claude() {
     head('Claude Code');
     copySkill(join(homedir(), '.claude', 'skills', SKILL_NAME));
@@ -148,13 +149,13 @@ const TARGETS = {
         ['mcp', 'add', SERVER_NAME, '-s', 'user', '--', command, ...args],
         { encoding: 'utf8', stdio: 'pipe' },
       );
-      ok(`Đăng ký MCP "${SERVER_NAME}" (user scope)`);
+      ok(`Registered MCP "${SERVER_NAME}" (user scope)`);
     } catch (e) {
       const combined = `${e.stdout || ''}${e.stderr || ''}`;
       if (combined.includes('already exists')) {
-        ok(`MCP "${SERVER_NAME}" đã đăng ký (user scope)`);
+        ok(`MCP "${SERVER_NAME}" is already registered (user scope)`);
       } else if (combined.includes('command not found') || !combined) {
-        note('Không tìm thấy `claude` CLI. Chạy thủ công:');
+        note('`claude` CLI not found. Run manually:');
         const { command, args } = getMcpCommandConfig();
         log(`  claude mcp add ${SERVER_NAME} -s user -- ${[command, ...args].join(' ')}`);
       } else {
@@ -164,28 +165,28 @@ const TARGETS = {
     addClaudeGlobalPermission();
   },
 
-  // Codex: skill global ở ~/.codex/skills, MCP global ở ~/.codex/config.toml.
+  // Codex: global skill in ~/.codex/skills, global MCP in ~/.codex/config.toml.
   codex() {
     head('Codex');
     copySkill(join(homedir(), '.codex', 'skills', SKILL_NAME));
     addCodexMcpConfig();
   },
 
-  // GitHub Copilot (VS Code agent mode): MCP global trong VS Code user settings.
-  // Đường dẫn user khác nhau theo OS nên chỉ in JSON để bạn dán an toàn.
+  // GitHub Copilot (VS Code agent mode): global MCP in VS Code user settings.
+  // User paths differ by OS, so only print JSON for safe manual pasting.
   copilot() {
     head('GitHub Copilot (VS Code)');
-    note('Copilot không có file-skill; hướng dẫn dùng nằm trong SKILL.md.');
-    note('Dán vào VS Code user config global (Command Palette → "MCP: Open User Configuration"):');
+    note('Copilot does not support file-based skills; usage guidance is in SKILL.md.');
+    note('Paste into the global VS Code user config (Command Palette -> "MCP: Open User Configuration"):');
     const config = mcpServerConfig();
     log(JSON.stringify({
       servers: { [SERVER_NAME]: { type: 'stdio', ...config } },
     }, null, 2));
   },
 
-  // Antigravity: MCP configuration in ~/.gemini/config/mcp_config.json and global skills under ~/.gemini/config/skills/.
-  antigravity() {
-    head('Antigravity');
+  // Gemini CLI: MCP configuration in ~/.gemini/config/mcp_config.json and global skills under ~/.gemini/config/skills/.
+  gemini() {
+    head('Gemini CLI');
     copySkill(join(homedir(), '.gemini', 'config', 'skills', SKILL_NAME));
 
     const configFile = join(homedir(), '.gemini', 'config', 'mcp_config.json');
@@ -195,7 +196,7 @@ const TARGETS = {
       try {
         config = JSON.parse(readFileSync(configFile, 'utf8'));
       } catch (e) {
-        note(`Không thể parse ${configFile}, sẽ ghi đè.`);
+        note(`Could not parse ${configFile}; it will be overwritten.`);
       }
     }
     config.mcpServers ??= {};
@@ -203,13 +204,36 @@ const TARGETS = {
 
     mkdirSync(dirname(configFile), { recursive: true });
     writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
-    ok(`MCP "${SERVER_NAME}" đã được cập nhật vào ${configFile}`);
+    ok(`MCP "${SERVER_NAME}" updated in ${configFile}`);
   },
 
-  // Cursor: MCP global ở ~/.cursor/mcp.json (áp dụng cho mọi project).
+  // Antigravity: MCP configuration in ~/.gemini/config/mcp_config.json and global skills under ~/.gemini/config/skills/.
+  antigravity() {
+    head('Antigravity');
+    copySkill(join(homedir(), '.gemini', 'config', 'skills', SKILL_NAME));
+
+    const configFile = join(homedir(), '.gemini', 'antigravity-ide', 'mcp_config.json');
+    const { command, args } = getMcpCommandConfig();
+    let config = {};
+    if (existsSync(configFile)) {
+      try {
+        config = JSON.parse(readFileSync(configFile, 'utf8'));
+      } catch (e) {
+        note(`Could not parse ${configFile}; it will be overwritten.`);
+      }
+    }
+    config.mcpServers ??= {};
+    config.mcpServers[SERVER_NAME] = { command, args };
+
+    mkdirSync(dirname(configFile), { recursive: true });
+    writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
+    ok(`MCP "${SERVER_NAME}" updated in ${configFile}`);
+  },
+
+  // Cursor: global MCP in ~/.cursor/mcp.json, available to every project.
   cursor() {
     head('Cursor');
-    note('Cursor dùng "rules" thay cho skill; có thể dán nội dung SKILL.md vào ~/.cursor/rules.');
+    note('Cursor uses "rules" instead of skills; you can paste SKILL.md content into ~/.cursor/rules.');
     const config = mcpServerConfig();
     const content = JSON.stringify({
       mcpServers: { [SERVER_NAME]: config },
@@ -221,22 +245,22 @@ const TARGETS = {
 function reminder() {
   log(`\n${'-'.repeat(64)}`);
   log(`MCP install mode: ${INSTALL_MODE}${INSTALL_MODE === 'npx' ? ` (${PACKAGE_NAME})` : ` (${MCP_SERVER})`}`);
-  log('QUAN TRỌNG — bước thủ công duy nhất là load extension vào Chrome:');
-  log('  1) Chạy gateway: `webmcp gateway start` hoặc `npm run gateway`');
-  log('  2) Mở Chrome đã load extension (webmcp-extension/dist) -> tự connect');
-  log('  3) Mở AI client -> nó spawn MCP server và MCP kết nối gateway đang chạy');
-  log('  Mặc định dùng package release. Để trỏ local checkout: WEBMCP_INSTALL_MODE=local npm run install:<target>');
+  log('IMPORTANT — the only manual step is loading the extension into Chrome:');
+  log('  1) Run the gateway: `webmcp gateway start` or `npm run gateway`');
+  log('  2) Open Chrome with the extension loaded (webmcp-extension/dist) -> it auto-connects');
+  log('  3) Open the AI client -> it spawns the MCP server, which connects to the running gateway');
+  log('  The released package is used by default. To point at a local checkout: WEBMCP_INSTALL_MODE=local npm run install:<target>');
   log(`${'-'.repeat(64)}`);
 }
 
 const arg = (process.argv[2] || '').toLowerCase();
 if (arg === 'all' || arg === '') {
-  if (arg === '') note('Không truyền target -> in cấu hình cho tất cả runtime.\n');
+  if (arg === '') note('No target provided -> printing config for all runtimes.\n');
   for (const fn of Object.values(TARGETS)) fn();
 } else if (TARGETS[arg]) {
   TARGETS[arg]();
 } else {
-  console.error(`Target không hợp lệ: "${arg}". Chọn: ${Object.keys(TARGETS).join(', ')}, all`);
+  console.error(`Invalid target: "${arg}". Choose: ${Object.keys(TARGETS).join(', ')}, all`);
   process.exit(1);
 }
 reminder();

@@ -1,6 +1,8 @@
 # WebMCP Extension v2.1.0
 
-Chrome extension cho **AI-driven browser automation** qua WebSocket. Cung cấp **36 commands** để AI model có thể điều khiển browser hoàn toàn: nhìn cấu trúc trang, click/type tại tọa độ, quản lý cookies/storage, screenshot...
+Chrome extension for **AI-driven browser automation** over WebSocket. Provides **36 commands**
+so an AI model can fully control the browser: inspect page structure, click/type at
+coordinates, manage cookies/storage, take screenshots, and more.
 
 ## Architecture
 
@@ -20,21 +22,21 @@ Chrome extension cho **AI-driven browser automation** qua WebSocket. Cung cấp 
 
 ## Quick Start
 
-### Step 1: Load Extension vào Chrome
+### Step 1: Load Extension Into Chrome
 
-1. Mở Chrome → `chrome://extensions`
-2. Bật **Developer mode** (toggle góc trên phải)
-3. Click **Load unpacked** → chọn thư mục `dist/`
-4. Extension icon xuất hiện trên toolbar
+1. Open Chrome -> `chrome://extensions`
+2. Enable **Developer mode** (toggle in the top-right corner)
+3. Click **Load unpacked** -> select the `dist/` directory
+4. The extension icon appears in the toolbar
 
 ### Step 2: Start Gateway Server
 
-Chỉ cần khi gọi gateway trực tiếp bằng script/curl. Nếu dùng qua MCP server thì
-bỏ qua bước này — `server/mcp_server.mjs` tự khởi động gateway.
+Only needed when calling the gateway directly with scripts/curl. If using the MCP server,
+skip this step; `server/mcp_server.mjs` starts the gateway automatically.
 
 ```bash
 cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
-npm run setup      # Lần đầu
+npm run setup      # First time
 npm run gateway
 ```
 
@@ -49,9 +51,9 @@ Output:
 ======================================================================
 ```
 
-### Step 3: Extension tự kết nối
+### Step 3: Extension Auto-Connects
 
-Extension tự connect trong 3 giây. Gateway sẽ ghi log:
+The extension auto-connects within 3 seconds. The gateway logs:
 
 ```
 ✓ Extension connected
@@ -61,56 +63,56 @@ Extension tự connect trong 3 giây. Gateway sẽ ghi log:
 
 ---
 
-## Tất cả Commands (36)
+## All Commands (36)
 
-Gửi dưới dạng JSON-RPC 2.0 qua WebSocket. Nếu bỏ `tabId`, command sẽ target tab đang active.
+Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets the active tab.
 
 ### Tab Management (5)
 
-| Method         | Params            | Mô tả                                  |
+| Method         | Params            | Description                            |
 | -------------- | ----------------- | -------------------------------------- |
-| `listTabs`     | `{}`              | Liệt kê tất cả tabs                    |
-| `navigate`     | `{ url, tabId? }` | Điều hướng tab đến URL (chờ load xong) |
-| `newTab`       | `{ url? }`        | Mở tab mới                             |
-| `closeTab`     | `{ tabId? }`      | Đóng tab                               |
-| `getActiveTab` | `{}`              | Thông tin tab đang active              |
+| `listTabs`     | `{}`              | List all tabs                          |
+| `navigate`     | `{ url, tabId? }` | Navigate a tab to a URL (waits for load) |
+| `newTab`       | `{ url? }`        | Open a new tab                         |
+| `closeTab`     | `{ tabId? }`      | Close a tab                            |
+| `getActiveTab` | `{}`              | Current active tab info                |
 
 ### Page Interaction — JS-based (5)
 
-| Method            | Params                           | Mô tả                                    |
+| Method            | Params                           | Description                              |
 | ----------------- | -------------------------------- | ---------------------------------------- |
-| `click`           | `{ selector, tabId? }`           | Click element bằng CSS selector          |
-| `type`            | `{ selector, text, tabId? }`     | Gõ text vào input (React/Vue compatible) |
-| `waitForSelector` | `{ selector, timeout?, tabId? }` | Chờ element xuất hiện                    |
-| `getPageContent`  | `{ tabId? }`                     | Lấy title + text + HTML của trang        |
-| `evaluateJS`      | `{ code, tabId? }`               | Chạy JavaScript tùy ý                    |
+| `click`           | `{ selector, tabId? }`           | Click an element by CSS selector         |
+| `type`            | `{ selector, text, tabId? }`     | Type text into an input (React/Vue compatible) |
+| `waitForSelector` | `{ selector, timeout?, tabId? }` | Wait for an element to appear            |
+| `getPageContent`  | `{ tabId? }`                     | Get page title + text + HTML             |
+| `evaluateJS`      | `{ code, tabId? }`               | Run arbitrary JavaScript                 |
 
 ### CDP — Chrome DevTools Protocol (2)
 
-| Method       | Params                        | Mô tả                        |
+| Method       | Params                        | Description                  |
 | ------------ | ----------------------------- | ---------------------------- |
-| `executeCDP` | `{ method, params?, tabId? }` | Gửi **bất kỳ** lệnh CDP nào  |
-| `screenshot` | `{ fullPage?, tabId? }`       | Chụp screenshot (base64 PNG) |
+| `executeCDP` | `{ method, params?, tabId? }` | Send **any** CDP command     |
+| `screenshot` | `{ fullPage?, tabId? }`       | Capture screenshot (base64 PNG) |
 
 ### WebMCP Tools (2)
 
-| Method              | Params                         | Mô tả                           |
+| Method              | Params                         | Description                     |
 | ------------------- | ------------------------------ | ------------------------------- |
-| `webmcp.listTools`  | `{ tabId? }`                   | Liệt kê WebMCP tools trên trang |
-| `webmcp.invokeTool` | `{ toolName, input?, tabId? }` | Gọi một WebMCP tool             |
+| `webmcp.listTools`  | `{ tabId? }`                   | List WebMCP tools on the page   |
+| `webmcp.invokeTool` | `{ toolName, input?, tabId? }` | Invoke one WebMCP tool          |
 
 ### 🆕 AI Vision — Page Structure (4)
 
-AI cần "nhìn" được cấu trúc trang để biết click vào đâu.
+The AI needs to "see" the page structure to know where to click.
 
-| Method                   | Params                                 | Mô tả                                                                                                                       |
+| Method                   | Params                                 | Description                                                                                                                 |
 | ------------------------ | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `getAccessibilityTree`   | `{ interestingOnly?, depth?, tabId? }` | Accessibility tree (roles, names, states). AI dùng để hiểu layout                                                           |
+| `getAccessibilityTree`   | `{ interestingOnly?, depth?, tabId? }` | Accessibility tree (roles, names, states). AI uses it to understand layout                                                  |
 | `getDOMSnapshot`         | `{ computedStyles?, tabId? }`          | Full DOM + layout + styles snapshot                                                                                         |
-| `getElementBounds`       | `{ selector, tabId? }`                 | Vị trí (bounding box) của elements match selector                                                                           |
-| `getInteractiveElements` | `{ tabId? }`                           | **⭐ Command quan trọng nhất** — liệt kê TẤT CẢ elements có thể tương tác (buttons, links, inputs...) + vị trí + trạng thái |
+| `getElementBounds`       | `{ selector, tabId? }`                 | Position (bounding box) of elements matching the selector                                                                   |
+| `getInteractiveElements` | `{ tabId? }`                           | **⭐ Most important command** — lists ALL interactive elements (buttons, links, inputs...) + position + state                |
 
-**Ví dụ `getInteractiveElements` response:**
+**Example `getInteractiveElements` response:**
 
 ```json
 {
@@ -150,40 +152,40 @@ AI cần "nhìn" được cấu trúc trang để biết click vào đâu.
 
 ### 🆕 CDP Input Dispatch (7)
 
-Click/type **thật** qua CDP — không bị block bởi anti-bot, hoạt động trên mọi framework.
+Real click/type through CDP: not blocked by anti-bot checks and works across frameworks.
 
-| Method          | Params                                        | Mô tả                                                   |
+| Method          | Params                                        | Description                                             |
 | --------------- | --------------------------------------------- | ------------------------------------------------------- |
-| `dispatchClick` | `{ x, y, button?, clickCount?, tabId? }`      | Click tại tọa độ (x, y)                                 |
-| `moveMouse`     | `{ x, y, steps?, fromX?, fromY?, tabId? }`    | Di chuyển chuột (mượt, nhiều steps)                     |
-| `pressKey`      | `{ key, text?, modifiers?, tabId? }`          | Nhấn phím. `modifiers`: `['ctrl','shift','alt','meta']` |
-| `typeText`      | `{ text, tabId? }`                            | Gõ text nhanh (CDP `Input.insertText`)                  |
-| `scroll`        | `{ deltaX?, deltaY?, x?, y?, tabId? }`        | Cuộn trang                                              |
-| `hover`         | `{ selector, tabId? }`                        | Hover vào element (CSS selector)                        |
-| `selectOption`  | `{ selector, value?, index?, text?, tabId? }` | Chọn option trong `<select>`                            |
+| `dispatchClick` | `{ x, y, button?, clickCount?, tabId? }`      | Click at coordinates (x, y)                             |
+| `moveMouse`     | `{ x, y, steps?, fromX?, fromY?, tabId? }`    | Move mouse smoothly in multiple steps                   |
+| `pressKey`      | `{ key, text?, modifiers?, tabId? }`          | Press a key. `modifiers`: `['ctrl','shift','alt','meta']` |
+| `typeText`      | `{ text, tabId? }`                            | Type text quickly (CDP `Input.insertText`)              |
+| `scroll`        | `{ deltaX?, deltaY?, x?, y?, tabId? }`        | Scroll the page                                         |
+| `hover`         | `{ selector, tabId? }`                        | Hover over an element (CSS selector)                    |
+| `selectOption`  | `{ selector, value?, index?, text?, tabId? }` | Select an option in `<select>`                          |
 
-**Special keys cho `pressKey`:**
+**Special keys for `pressKey`:**
 `Enter`, `Tab`, `Escape`, `Backspace`, `Delete`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`, `Home`, `End`, `PageUp`, `PageDown`, `Space`
 
 **Keyboard shortcuts:** `{ key: "a", modifiers: ["ctrl"] }` = Ctrl+A
 
 ### 🆕 Full Control (9)
 
-| Method            | Params                                                   | Mô tả                               |
+| Method            | Params                                                   | Description                         |
 | ----------------- | -------------------------------------------------------- | ----------------------------------- |
-| `getCookies`      | `{ tabId? }`                                             | Đọc cookies của trang               |
-| `setCookie`       | `{ name, value, domain?, path?, tabId? }`                | Tạo/sửa cookie                      |
-| `deleteCookies`   | `{ name, domain?, url?, tabId? }`                        | Xoá cookie                          |
-| `getLocalStorage` | `{ tabId? }`                                             | Đọc toàn bộ localStorage            |
-| `setLocalStorage` | `{ key, value, tabId? }`                                 | Ghi localStorage                    |
-| `listWindows`     | `{}`                                                     | Liệt kê browser windows             |
-| `createWindow`    | `{ url?, width?, height?, type? }`                       | Tạo window mới                      |
+| `getCookies`      | `{ tabId? }`                                             | Read page cookies                   |
+| `setCookie`       | `{ name, value, domain?, path?, tabId? }`                | Create/update a cookie              |
+| `deleteCookies`   | `{ name, domain?, url?, tabId? }`                        | Delete a cookie                     |
+| `getLocalStorage` | `{ tabId? }`                                             | Read all localStorage               |
+| `setLocalStorage` | `{ key, value, tabId? }`                                 | Write localStorage                  |
+| `listWindows`     | `{}`                                                     | List browser windows                |
+| `createWindow`    | `{ url?, width?, height?, type? }`                       | Create a new window                 |
 | `setViewport`     | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` | Override viewport (responsive test) |
-| `resetViewport`   | `{ tabId? }`                                             | Reset viewport về mặc định          |
+| `resetViewport`   | `{ tabId? }`                                             | Reset viewport to default           |
 
 ### Utility (2)
 
-| Method             | Params | Mô tả                     |
+| Method             | Params | Description               |
 | ------------------ | ------ | ------------------------- |
 | `ping`             | `{}`   | Health check              |
 | `getExtensionInfo` | `{}`   | Version + debugger status |
@@ -192,19 +194,19 @@ Click/type **thật** qua CDP — không bị block bởi anti-bot, hoạt độ
 
 ## Events (Extension → Server)
 
-Extension tự động gửi notifications:
+The extension automatically sends notifications:
 
-| Event             | Khi nào               | Params                                  |
+| Event             | When                  | Params                                  |
 | ----------------- | --------------------- | --------------------------------------- |
-| `extensionReady`  | Extension kết nối     | `{ name, version, capabilities }`       |
-| `tabUpdated`      | Tab load xong         | `{ tabId, url, title, status }`         |
-| `tabClosed`       | Tab bị đóng           | `{ tabId }`                             |
-| `tabCreated`      | Tab mới được tạo      | `{ tabId, url, windowId }`              |
-| `tabActivated`    | Chuyển tab            | `{ tabId, windowId }`                   |
+| `extensionReady`  | Extension connected   | `{ name, version, capabilities }`       |
+| `tabUpdated`      | Tab finished loading  | `{ tabId, url, title, status }`         |
+| `tabClosed`       | Tab was closed        | `{ tabId }`                             |
+| `tabCreated`      | New tab was created   | `{ tabId, url, windowId }`              |
+| `tabActivated`    | Tab switched          | `{ tabId, windowId }`                   |
 | `cdpEvent`        | CDP event             | `{ tabId, method, params }`             |
-| `downloadStarted` | Bắt đầu download      | `{ id, url, filename, mime, fileSize }` |
+| `downloadStarted` | Download started      | `{ id, url, filename, mime, fileSize }` |
 | `downloadChanged` | Download state change | `{ id, state, filename, error }`        |
-| `heartbeat`       | Mỗi 20 giây           | `{ timestamp }`                         |
+| `heartbeat`       | Every 20 seconds      | `{ timestamp }`                         |
 
 ---
 
@@ -260,51 +262,51 @@ Extension tự động gửi notifications:
 ## AI Automation Workflow
 
 ```python
-# 1. AI nhìn trang
+# 1. AI sees the page
 elements = send("getInteractiveElements")
 # → [{ tag: "input", placeholder: "Search", bounds: { centerX: 400, centerY: 65 } }, ...]
 
-# 2. AI click vào search box
+# 2. AI clicks the search box
 send("dispatchClick", { x: 400, y: 65 })
 
-# 3. AI gõ text
+# 3. AI types text
 send("typeText", { text: "hello world" })
 
-# 4. AI nhấn Enter
+# 4. AI presses Enter
 send("pressKey", { key: "Enter" })
 
-# 5. Chờ trang load (nhận tabUpdated event)
-# 6. AI chụp screenshot để xem kết quả
+# 5. Wait for page load (receive tabUpdated event)
+# 6. AI captures a screenshot to inspect the result
 send("screenshot")
 
-# 7. AI đọc cấu trúc trang mới
+# 7. AI reads the new page structure
 send("getAccessibilityTree")
 
-# Lặp lại...
+# Repeat...
 ```
 
 ---
 
 ## 14 Page-Registered WebMCP Tools
 
-Tự động inject vào mỗi trang qua `navigator.modelContext`:
+Automatically injected into every page through `navigator.modelContext`:
 
-| #   | Tool                        | Mô tả                                            |
+| #   | Tool                        | Description                                      |
 | --- | --------------------------- | ------------------------------------------------ |
 | 1   | `get_page_metadata`         | Title, meta tags, OG data, headings              |
-| 2   | `query_selector_all`        | Tìm elements bằng CSS selector                   |
+| 2   | `query_selector_all`        | Find elements by CSS selector                    |
 | 3   | `click_element`             | Click element (+ scroll into view)               |
-| 4   | `fill_form_field`           | Set giá trị input/textarea/select                |
+| 4   | `fill_form_field`           | Set input/textarea/select value                  |
 | 5   | `extract_table_data`        | Extract bảng HTML → JSON                         |
-| 6   | `wait_for_element`          | Chờ element xuất hiện (MutationObserver)         |
-| 7   | `get_computed_styles`       | Đọc CSS computed styles                          |
-| 8   | `scroll_page`               | Cuộn trang (top/bottom/element/delta)            |
-| 9   | `submit_form`               | Fill nhiều fields + submit form                  |
-| 10  | `execute_javascript`        | Chạy JS tùy ý trong page context                 |
-| 11  | `start_network_capture`     | Capture network theo URL pattern (gọi nhiều lần = nhiều pattern) |
-| 12  | `wait_for_network_response` | Chờ (event-driven) response kế tiếp + body; consume từng cái |
-| 13  | `get_captured_requests`     | Liệt kê mọi request đã capture, không consume (bodies/headers tùy chọn) |
-| 14  | `stop_network_capture`      | Dừng capture (1 pattern hoặc tất cả) và dọn tài nguyên |
+| 6   | `wait_for_element`          | Wait for an element to appear (MutationObserver) |
+| 7   | `get_computed_styles`       | Read CSS computed styles                         |
+| 8   | `scroll_page`               | Scroll the page (top/bottom/element/delta)       |
+| 9   | `submit_form`               | Fill multiple fields + submit form               |
+| 10  | `execute_javascript`        | Run arbitrary JS in the page context             |
+| 11  | `start_network_capture`     | Capture network by URL pattern (multiple calls = multiple patterns) |
+| 12  | `wait_for_network_response` | Wait for the next event-driven response + body; consume one at a time |
+| 13  | `get_captured_requests`     | List all captured requests without consuming them (optional bodies/headers) |
+| 14  | `stop_network_capture`      | Stop capture for one pattern or all patterns and clean up resources |
 
 ---
 
@@ -317,13 +319,13 @@ web-automation-extension/
 ├── server/
 │   └── gateway_server.js              # HTTP + WebSocket gateway
 ├── webmcp-extension/
-│   ├── README.md                      # File này
-│   └── dist/                          # ← Load thư mục này vào Chrome
+│   ├── README.md                      # This file
+│   └── dist/                          # ← Load this directory into Chrome
 │       ├── manifest.json              # Manifest V3
 │       ├── background.js              # WebSocket client + 36 command handlers
 │       ├── content-scripts/
 │       │   ├── bridge.js              # Isolated-world bridge
-│       │   └── register-tools.js      # Inject 13 WebMCP tools vào mỗi trang
+│       │   └── register-tools.js      # Inject 13 WebMCP tools into every page
 │       └── icons/
 ├── skills/
 │   └── webmcp-browser-automation/     # Agent skill source (installed globally)
@@ -374,19 +376,19 @@ asyncio.run(main())
 
 ## Troubleshooting
 
-| Vấn đề                                 | Giải pháp                                                             |
+| Problem                                | Solution                                                              |
 | -------------------------------------- | --------------------------------------------------------------------- |
-| `ERR_CONNECTION_REFUSED`               | Start gateway server trước. Extension auto-reconnect mỗi 3s.          |
-| `Another debugger is already attached` | Đóng extension khác (Codex) hoặc dùng tab khác.                       |
-| `navigator.modelContext not found`     | Trang chưa load. Dùng `waitForSelector` trước. Hoặc reload extension. |
-| WebMCP tools không xuất hiện           | Extension chưa load hoặc trang là `chrome://` URL.                    |
-| Server không nhận connection           | Kiểm tra extension đã load. Thử reload tại `chrome://extensions`.     |
-| `getAccessibilityTree` trả về ít nodes | Dùng `interestingOnly: false` để lấy tất cả nodes.                    |
+| `ERR_CONNECTION_REFUSED`               | Start the gateway server first. The extension auto-reconnects every 3s. |
+| `Another debugger is already attached` | Close the other extension (Codex) or use another tab.                 |
+| `navigator.modelContext not found`     | Page has not loaded yet. Use `waitForSelector` first, or reload the extension. |
+| WebMCP tools do not appear             | Extension is not loaded, or the page is a `chrome://` URL.            |
+| Server does not receive connection     | Check that the extension is loaded. Try reloading at `chrome://extensions`. |
+| `getAccessibilityTree` returns few nodes | Use `interestingOnly: false` to retrieve all nodes.                 |
 
 ## Documentation
 
-- [Root Kit Quickstart](../README.md) — Entrypoint cho extension + gateway + skill
+- [Root Kit Quickstart](../README.md) — Entrypoint for extension + gateway + skill
 - [Generated Tool Reference](../skills/webmcp-browser-automation/references/generated-tools.md) — Source-derived commands/tools
-- [Codex Extension Analysis](../docs/extension/codex-extension-analysis.md) — Cách Codex extension hoạt động
-- [Implementation Plan](../docs/extension/implementation-plan.md) — Chi tiết thiết kế và tất cả commands
-- [Compatibility Audit](../docs/extension/compatibility-audit.md) — So sánh với Codex v1.1.5
+- [Codex Extension Analysis](../docs/extension/codex-extension-analysis.md) — How the Codex extension works
+- [Implementation Plan](../docs/extension/implementation-plan.md) — Design details and all commands
+- [Compatibility Audit](../docs/extension/compatibility-audit.md) — Comparison with Codex v1.1.5

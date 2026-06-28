@@ -1,26 +1,27 @@
-# Guide — Chạy & Setup MCP Server (WebMCP Browser)
+# Guide — Run & Set Up The MCP Server (WebMCP Browser)
 
-> File này hướng dẫn chạy MCP server sau khi đã implement theo
-> [mcp-server-plan.md](./mcp-server-plan.md). MCP server cho phép Claude Desktop,
-> Cursor, Claude Code... điều khiển Chrome thật (đã login) qua extension.
+> This file explains how to run the MCP server after it has been implemented according to
+> [mcp-server-plan.md](./mcp-server-plan.md). The MCP server lets Claude Desktop,
+> Cursor, Claude Code, and similar clients control a real signed-in Chrome browser through
+> the extension.
 
-## 0. Mô hình chạy — cần 3 thứ cùng lúc
+## 0. Runtime Model — Three Things Must Run Together
 
 ```
-[1] Chrome + extension đã load   →  connect tới  →  [2] Gateway (ws://localhost:7865)
-                                                          ▲ HTTP /api
-[3] MCP server (stdio)  ──────────────────────────────────┘
+[1] Chrome + loaded extension   →  connects to  →  [2] Gateway (ws://localhost:7865)
+                                                        ▲ HTTP /api
+[3] MCP server (stdio)  ────────────────────────────────┘
         ▲ stdio
    MCP client (Claude Desktop / Cursor / Claude Code)
 ```
 
-- **[1] và [2]** luôn phải chạy (như hiện tại).
-- **[3]** thường **do MCP client tự spawn** — bạn KHÔNG chạy tay. Bạn chỉ cần khai báo
-  lệnh chạy nó trong file config của client.
+- **[1] and [2]** must always be running, as they do today.
+- **[3]** is usually **spawned by the MCP client**; you do NOT run it manually. You only
+  declare the command that starts it in the client config file.
 
-## 1. Chuẩn bị một lần — cài bằng MỘT lệnh theo runtime
+## 1. One-Time Setup — Install With One Command Per Runtime
 
-Nếu bạn chỉ muốn dùng package release từ npm, cấu hình MCP client bằng:
+If you only want to use the released npm package, configure the MCP client with:
 
 ```json
 {
@@ -33,61 +34,62 @@ Nếu bạn chỉ muốn dùng package release từ npm, cấu hình MCP client 
 }
 ```
 
-Và chạy gateway bằng package release:
+And run the gateway through the released package:
 
 ```bash
 npx -y @gyga-browser/webmcp-browser-automation-kit gateway start
 ```
 
-Các lệnh dưới đây dành cho local development từ checkout này.
+The commands below are for local development from this checkout.
 
-Mỗi lệnh dưới đây tự `npm run setup` (cài deps gồm MCP SDK) **rồi** cài skill + ghi/in
-cấu hình MCP cho đúng runtime. Cuối cùng luôn in reminder phải chạy gateway trước.
+Each command below runs `npm run setup` (installing deps including the MCP SDK), **then**
+installs the skill and writes/prints the MCP config for the selected runtime. At the end,
+it always prints a reminder to run the gateway first.
 
 ```bash
 cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
 
 npm run install:claude        # Claude Code  — copy skill -> ~/.claude/skills + `claude mcp add -s user`
-npm run install:codex         # Codex        — copy skill -> ~/.codex/skills + thêm MCP vào ~/.codex/config.toml
-npm run install:copilot       # GitHub Copilot (VS Code) — in snippet MCP global để dán
-npm run install:antigravity   # Antigravity  — in snippet MCP để dán
-npm run install:cursor        # Cursor       — ghi ~/.cursor/mcp.json (global)
-npm run install:agent         # (không target) in cấu hình cho TẤT CẢ runtime
+npm run install:codex         # Codex        — copy skill -> ~/.codex/skills + add MCP to ~/.codex/config.toml
+npm run install:copilot       # GitHub Copilot (VS Code) — print global MCP snippet to paste
+npm run install:antigravity   # Antigravity  — print MCP snippet to paste
+npm run install:cursor        # Cursor       — write ~/.cursor/mcp.json (global)
+npm run install:agent         # (no target) print config for ALL runtimes
 ```
 
-Hoặc chỉ cài deps thủ công, tự cấu hình client sau:
+Or install deps manually and configure the client yourself later:
 
 ```bash
 cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
-npm run setup                       # cài deps cho server (gồm @modelcontextprotocol/sdk)
+npm run setup                       # install server deps (including @modelcontextprotocol/sdk)
 ```
 
-Load extension: `chrome://extensions` → Developer mode → Load unpacked → chọn
+Load extension: `chrome://extensions` -> Developer mode -> Load unpacked -> choose
 `webmcp-extension/dist`.
 
-## 2. Chạy hub (gateway) — luôn cần
+## 2. Run The Hub (Gateway) — Always Required
 
 ```bash
 npm run gateway
 ```
 
-Kỳ vọng log: `Extension is ready ... capabilities registered`. Cứ để terminal này chạy.
+Expected log: `Extension is ready ... capabilities registered`. Keep this terminal running.
 
-## 3. Tự test MCP server trước khi gắn client
+## 3. Test The MCP Server Before Attaching A Client
 
 ```bash
 npx @modelcontextprotocol/inspector node server/mcp_server.mjs
 ```
 
-Mở UI Inspector → tab **Tools** → bấm `ping` → ra `{ "ok": true }` là MCP server OK.
-(Bước này không bắt buộc nhưng nên làm để tách lỗi.)
+Open the Inspector UI -> **Tools** tab -> click `ping` -> `{ "ok": true }` means the MCP
+server is OK. This step is optional but useful for isolating errors.
 
-## 4. Cấu hình từng client
+## 4. Configure Each Client
 
-Local dev dùng đường dẫn tuyệt đối tới server:
+Local dev uses the absolute path to the server:
 `/Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs`
 
-Với package release trên npm, dùng dạng portable:
+For the released npm package, use the portable form:
 
 ```json
 {
@@ -102,18 +104,18 @@ Với package release trên npm, dùng dạng portable:
 
 ### 4.1 Claude Code (CLI)
 
-Cách nhanh nhất:
+Fastest path:
 
 ```bash
 claude mcp add webmcp -- node /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension/server/mcp_server.mjs
 ```
 
-Kiểm tra: `claude mcp list` → thấy `webmcp`. Trong phiên Claude Code, hỏi
-"liệt kê tab đang mở" để thử.
+Check: `claude mcp list` -> you should see `webmcp`. In a Claude Code session, ask
+"list open tabs" to test it.
 
 ### 4.2 Cursor
 
-Sửa `~/.cursor/mcp.json` (hoặc `.cursor/mcp.json` trong project):
+Edit `~/.cursor/mcp.json` (or `.cursor/mcp.json` in the project):
 
 ```json
 {
@@ -128,11 +130,11 @@ Sửa `~/.cursor/mcp.json` (hoặc `.cursor/mcp.json` trong project):
 }
 ```
 
-Restart Cursor → Settings → MCP → thấy server "connected" với danh sách tool.
+Restart Cursor -> Settings -> MCP -> the server should be "connected" with the tool list.
 
 ### 4.3 Claude Desktop
 
-Sửa file config:
+Edit the config file:
 `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
 
 ```json
@@ -148,11 +150,11 @@ Sửa file config:
 }
 ```
 
-Thoát hẳn Claude Desktop (Cmd+Q) rồi mở lại → biểu tượng tool (🔨) hiện các tool browser.
+Quit Claude Desktop completely (Cmd+Q), then reopen it -> the tool icon shows the browser tools.
 
-### 4.4 Tùy chỉnh qua biến môi trường (tùy chọn)
+### 4.4 Customize With Environment Variables (Optional)
 
-Nếu gateway chạy port khác:
+If the gateway runs on another port:
 
 ```json
 {
@@ -166,7 +168,7 @@ Nếu gateway chạy port khác:
 }
 ```
 
-Nếu đang local dev và muốn MCP tự spawn gateway khi gateway chưa chạy:
+If you are in local development and want MCP to spawn the gateway when it is not running:
 
 ```json
 {
@@ -183,32 +185,32 @@ Nếu đang local dev và muốn MCP tự spawn gateway khi gateway chưa chạy
 }
 ```
 
-## 5. Luồng dùng end-to-end
+## 5. End-To-End Usage Flow
 
-1. Chạy gateway: `npm run gateway` hoặc `webmcp gateway start`.
-2. Load/reload unpacked extension trong Chrome.
-3. Mở client (Claude Desktop/Cursor/Claude Code) — nó tự spawn MCP server, MCP
-   server kết nối gateway đang chạy.
-4. Ra lệnh tự nhiên, ví dụ: "mở google.com, tìm 'webmcp', chụp màn hình."
-   Client sẽ tự gọi `navigate` → `getInteractiveElements` → `dispatchClick` →
-   `typeText` → `pressKey` → `screenshot`.
+1. Run the gateway: `npm run gateway` or `webmcp gateway start`.
+2. Load/reload the unpacked extension in Chrome.
+3. Open the client (Claude Desktop/Cursor/Claude Code). It spawns the MCP server, and the
+   MCP server connects to the running gateway.
+4. Give a natural-language command, for example: "open google.com, search for 'webmcp',
+   take a screenshot." The client will call `navigate` -> `getInteractiveElements` ->
+   `dispatchClick` -> `typeText` -> `pressKey` -> `screenshot`.
 
 ## 6. Troubleshooting
 
-| Triệu chứng | Nguyên nhân & cách xử lý |
+| Symptom | Cause & fix |
 |---|---|
-| Client báo server "failed"/"disconnected" | Sai đường dẫn file, hoặc Node không có trong PATH của client. Dùng đường dẫn tuyệt đối; thử `command: "/usr/local/bin/node"`. |
-| MCP báo gateway không reachable | Chạy `npm run gateway` hoặc `webmcp gateway start`; chỉ bật `WEBMCP_GATEWAY_AUTOSTART=1` cho local dev. |
-| Tool gọi được nhưng lỗi `extension is not connected` | Gateway đã chạy nhưng extension chưa load/connect trong Chrome. Reload unpacked extension. |
-| `invalid JSON` / server crash khi handshake | Có `console.log` in ra **stdout**. Mọi log phải dùng `console.error`. |
-| Không thấy tool nào | MCP server chạy nhưng `tools/list` rỗng → kiểm tra việc sinh tool từ catalog. Test lại bằng Inspector (mục 3). |
-| `screenshot` trả chuỗi base64 khổng lồ | MVP nhồi vào text. Nâng cấp: trả `{ type: "image" }` (xem plan mục 4). |
-| Đổi port gateway không ăn | Đặt `env.WEBMCP_GATEWAY_URL` trong config client (mục 4.4). |
+| Client reports server "failed"/"disconnected" | Wrong file path, or Node is not in the client's PATH. Use an absolute path; try `command: "/usr/local/bin/node"`. |
+| MCP reports gateway is unreachable | Run `npm run gateway` or `webmcp gateway start`; only enable `WEBMCP_GATEWAY_AUTOSTART=1` for local dev. |
+| Tool is callable but returns `extension is not connected` | Gateway is running, but the extension is not loaded/connected in Chrome. Reload the unpacked extension. |
+| `invalid JSON` / server crash during handshake | A `console.log` printed to **stdout**. All logs must use `console.error`. |
+| No tools are visible | MCP server is running but `tools/list` is empty -> check tool generation from the catalog. Test again with Inspector (section 3). |
+| `screenshot` returns a huge base64 string | MVP puts it into text. Upgrade path: return `{ type: "image" }` (see plan section 4). |
+| Gateway port change does not apply | Set `env.WEBMCP_GATEWAY_URL` in the client config (section 4.4). |
 
-## 7. Quan hệ với các cách dùng cũ
+## 7. Relationship To Previous Usage Modes
 
-MCP server **không thay thế** gì cả — nó là lớp thứ 3 thêm vào:
+The MCP server **does not replace** anything; it is an added third layer:
 
-- Script/agent chạy shell vẫn dùng được `curl http://localhost:7865/api` như cũ.
-- Workflow runner JSON đã được archive khỏi surface chính; dùng MCP/gateway cho AI agent flow.
-- MCP server chỉ thêm đường cho các MCP client cắm thẳng, không cần biết WebSocket.
+- Shell-based scripts/agents can still use `curl http://localhost:7865/api` as before.
+- Workflow runner JSON has been archived from the main surface; use MCP/gateway for AI agent flows.
+- The MCP server only adds a direct integration path for MCP clients without requiring WebSocket knowledge.

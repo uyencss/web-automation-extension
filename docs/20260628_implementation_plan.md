@@ -1,112 +1,115 @@
 # Implementation Plan — Web-Automation-Extension
 
-> Phần phân tích & so sánh 3 extension đã tách sang
+> The analysis and comparison of the three extensions has been split into
 > [`extension/evaluation-vs-browser-mcp-codex.md`](extension/evaluation-vs-browser-mcp-codex.md).
-> File này chỉ chứa **kế hoạch hành động**.
+> This file only contains the **action plan**.
 
-## Nguyên tắc định hướng
+## Guiding Principles
 
-Sản phẩm này là **automation kit phân phối qua npm**, do **AI agent** điều khiển qua
-WS localhost — KHÔNG phải browser companion có human-in-the-loop. Mọi tính năng đều phải
-trả lời được: _"điều này phục vụ AI agent điều khiển trình duyệt, hay chỉ đánh bóng cho
-người quan sát?"_. Giữ kiến trúc tối giản, modular, readable.
+This product is an **automation kit distributed through npm**, controlled by an
+**AI agent** over localhost WebSocket. It is NOT a human-in-the-loop browser
+companion. Every feature must answer: _"Does this help an AI agent control the
+browser, or is it only polish for a human observer?"_ Keep the architecture
+minimal, modular, and readable.
 
 ---
 
-## ✅ Phase 1 — Reliability tương tác (ĐÃ HOÀN THÀNH)
+## ✅ Phase 1 — Interaction Reliability (DONE)
 
-Đã triển khai (commit chưa push). Đây là phần đóng đúng khoảng cách quan trọng nhất với
-Browser-MCP / Codex.
+Implemented (commit not yet pushed). This closes the most important reliability
+gap with Browser-MCP / Codex.
 
-| Hạng mục                                                                                                          | File                                                                    |
+| Item                                                                                                              | File                                                                    |
 | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | ARIA snapshot + ref-based interaction (`getAriaSnapshot`, `clickByRef`, `typeByRef`, `hoverByRef`, `selectByRef`) | `webmcp-extension/dist/bg/handlers/aria-snapshot.js`                    |
-| Page stability + auto-wait sau `click`/`type` (`waitForStable`)                                                   | `webmcp-extension/dist/bg/handlers/page-stability.js`, `high-level.js`  |
+| Page stability + auto-wait after `click`/`type` (`waitForStable`)                                                 | `webmcp-extension/dist/bg/handlers/page-stability.js`, `high-level.js`  |
 | Alarm-based reconnect + exponential backoff                                                                       | `webmcp-extension/dist/bg/ws-client.js`                                 |
-| Chrome Alarms keepalive (thay `setInterval`)                                                                      | `webmcp-extension/dist/background.js`                                   |
+| Chrome Alarms keepalive (replaces `setInterval`)                                                                  | `webmcp-extension/dist/background.js`                                   |
 | CSP hardening (`content_security_policy`)                                                                         | `webmcp-extension/dist/manifest.json`                                   |
-| Catalog + skill docs cập nhật                                                                                     | `catalog/command-catalog.js`, `server/mcp-tool-catalog.mjs`, `skills/…` |
+| Updated catalog + skill docs                                                                                      | `catalog/command-catalog.js`, `server/mcp-tool-catalog.mjs`, `skills/…` |
 
-**Còn lại cho Phase 1:** verify + commit (xem [Verification](#verification)).
+**Remaining for Phase 1:** verify + commit (see [Verification](#verification)).
 
 ---
 
-## 🟢 Phase 2 — Hai việc thực sự đáng làm
+## 🟢 Phase 2 — Two Items Actually Worth Doing
 
-### 2.1 Popup status (chỉ chẩn đoán kết nối)
+### 2.1 Popup Status (Connection Diagnostics Only)
 
-**Vấn đề:** Khi gateway không kết nối, user không có tín hiệu nào để chẩn đoán.
+**Problem:** When the gateway is disconnected, the user has no signal for diagnostics.
 
-**Phạm vi — cố tình tối giản (KHÔNG làm settings/command-log):**
+**Scope — intentionally minimal (NO settings/command log):**
 
-- Hiển thị: Gateway `✓/✗`, WS state (connecting / connected / reconnecting), tab đang active,
-  số reconnect attempt gần nhất.
-- Read-only. Lấy state từ background qua `chrome.runtime.sendMessage`.
+- Show: Gateway `✓/✗`, WS state (connecting / connected / reconnecting), current active tab,
+  and the latest reconnect attempt count.
+- Read-only. Get state from the background via `chrome.runtime.sendMessage`.
 
 **Files:**
 
-- `webmcp-extension/dist/popup/popup.html` — markup tĩnh (tuân thủ CSP: không inline script)
+- `webmcp-extension/dist/popup/popup.html` — static markup (CSP-compliant: no inline script)
 - `webmcp-extension/dist/popup/popup.js` — query state, render
-- `webmcp-extension/dist/manifest.json` — thêm `"action": { "default_popup": "popup/popup.html" }`
-- `webmcp-extension/dist/background.js` — thêm message handler `getStatus` trả về
+- `webmcp-extension/dist/manifest.json` — add `"action": { "default_popup": "popup/popup.html" }`
+- `webmcp-extension/dist/background.js` — add a `getStatus` message handler returning
   `{ wsState, gatewayUrl, activeTabId, reconnectAttempt }`
 
-**Acceptance:** Mở popup khi gateway tắt → hiện `✗`; bật gateway → tự chuyển `✓` trong vài giây.
+**Acceptance:** Open the popup while the gateway is off -> it shows `✗`; start the gateway -> it
+switches to `✓` within a few seconds.
 
-### 2.2 WS security hardening (thay cho Native Messaging)
+### 2.2 WS Security Hardening (Replacement for Native Messaging)
 
-**Vấn đề:** WS bind `ws://localhost:7865`, không có auth — bất kỳ process local nào cũng nối được.
+**Problem:** WS binds to `ws://localhost:7865` with no auth, so any local process can connect.
 
-**Phạm vi:**
+**Scope:**
 
-- Gateway server **bind `127.0.0.1`** (không phải `0.0.0.0`/`localhost` mơ hồ).
-- **Shared token** trong handshake: gateway sinh token lúc khởi động, ghi ra file
-  (vd `~/.webmcp/token`); extension đọc token (qua popup/storage hoặc config) và gửi kèm
-  khi connect; gateway từ chối connection không có token đúng.
-- Origin check: từ chối WS upgrade từ origin không mong đợi (chống DNS-rebinding).
+- Gateway server **binds to `127.0.0.1`** (not ambiguous `0.0.0.0`/`localhost`).
+- **Shared token** in the handshake: the gateway generates a token on startup and writes it
+  to a file (for example, `~/.webmcp/token`); the extension reads the token (through
+  popup/storage or config) and sends it when connecting; the gateway rejects connections
+  without the correct token.
+- Origin check: reject WS upgrades from unexpected origins (DNS rebinding protection).
 
 **Files:**
 
-- `server/mcp_server.mjs` (và file gateway tương ứng) — bind 127.0.0.1, token gen + verify, origin check
-- `webmcp-extension/dist/bg/ws-client.js` — gửi token trong handshake/first message
-- Doc cài đặt: mô tả cách extension lấy token
+- `server/mcp_server.mjs` (and the corresponding gateway file) — bind 127.0.0.1, token generation + verification, origin check
+- `webmcp-extension/dist/bg/ws-client.js` — send the token in the handshake/first message
+- Setup docs: describe how the extension obtains the token
 
-**Acceptance:** Connection không token → bị từ chối; connection đúng token → hoạt động bình thường.
+**Acceptance:** Connection without a token -> rejected; connection with the correct token -> works normally.
 
 > [!NOTE]
-> Đây là lựa chọn thay thế Native Messaging: rẻ hơn nhiều, giữ được mô hình phân phối
-> `npx … mcp` một lệnh, đạt ~80% lợi ích bảo mật.
+> This is the Native Messaging alternative: much cheaper, preserves the one-command
+> `npx … mcp` distribution model, and captures ~80% of the security benefit.
 
 ---
 
-## 🟡 Phase 3 — Optional (chỉ làm khi có nhu cầu cụ thể)
+## 🟡 Phase 3 — Optional (Only When There Is a Concrete Need)
 
 ### 3.1 History / Bookmarks / TopSites
 
-Mở rộng capability thật (AI tìm "bài báo tuần trước"), low-effort, additive, không đụng
-kiến trúc. **Nhưng** thêm permission nhạy cảm về privacy.
+This is a real capability expansion (AI searches for "last week's article"), low-effort,
+additive, and does not touch the architecture. **But** it adds privacy-sensitive permissions.
 
-→ Chỉ triển khai khi xuất hiện task cần browsing-context. Khi làm:
+-> Only implement when a task requires browsing context. When doing it:
 
 - Permissions: `"history"`, `"bookmarks"`, `"topSites"`
 - Handlers: `searchHistory`, `getBookmarks`, `getTopSites`
-- Cập nhật `command-catalog.js` + skill docs
+- Update `command-catalog.js` + skill docs
 
 ---
 
-## ❌ Đã loại khỏi kế hoạch (không khớp sản phẩm)
+## ❌ Removed From The Plan (Does Not Fit The Product)
 
-Giữ lại đây để khỏi đề xuất lại; chỉ kích hoạt nếu bối cảnh sản phẩm thay đổi.
+Kept here so these do not get proposed again; reactivate only if the product context changes.
 
-| Tính năng                        | Điều kiện kích hoạt lại (nếu có)                            |
+| Feature                          | Reactivation condition (if any)                             |
 | -------------------------------- | ----------------------------------------------------------- |
-| Visual cursor overlay            | Nếu thêm chế độ human-in-the-loop / demo                    |
-| Favicon badge                    | Như trên                                                    |
-| Session management / tab leasing | Khi có **nhiều agent điều khiển cùng một Chrome đồng thời** |
-| Graceful update lifecycle        | Nếu phân phối qua Chrome Web Store với auto-update          |
-| Tab Groups                       | Đi kèm session management                                   |
-| Notifications                    | (không) — dư thừa với kênh MCP                              |
-| Native Messaging transport       | (không) — đã thay bằng WS hardening                         |
+| Visual cursor overlay            | If a human-in-the-loop / demo mode is added                 |
+| Favicon badge                    | Same as above                                               |
+| Session management / tab leasing | When **multiple agents control the same Chrome concurrently** |
+| Graceful update lifecycle        | If distributed through Chrome Web Store with auto-update    |
+| Tab Groups                       | Alongside session management                                |
+| Notifications                    | No — redundant with the MCP channel                         |
+| Native Messaging transport       | No — replaced by WS hardening                               |
 
 ---
 
@@ -115,33 +118,33 @@ Giữ lại đây để khỏi đề xuất lại; chỉ kích hoạt nếu bố
 ### Automated
 
 ```bash
-node server/mcp_server.mjs &      # MCP server khởi động OK
+node server/mcp_server.mjs &      # MCP server starts successfully
 npm run health                    # gateway health
 npm run tools:check               # tool catalog sync
 ```
 
-### Manual (Phase 1 — làm trước khi commit)
+### Manual (Phase 1 — Run Before Commit)
 
-- Load extension vào Chrome, kiểm tra connect tới gateway.
-- `getAriaSnapshot` trên 1 SPA + 1 trang static → có ref IDs hợp lệ.
-- `clickByRef` / `typeByRef` bằng ref vừa lấy → tương tác đúng element.
-- Page stability: click element làm load nội dung động → action kế tiếp đợi DOM ổn định.
-- Reconnect: restart gateway → extension tự nối lại (exponential backoff, không spam).
-- Keepalive: để idle > 60s → service worker không chết, heartbeat vẫn chạy.
+- Load the extension into Chrome and verify it connects to the gateway.
+- `getAriaSnapshot` on one SPA + one static page -> valid ref IDs exist.
+- `clickByRef` / `typeByRef` using the ref just captured -> interacts with the correct element.
+- Page stability: click an element that loads dynamic content -> the next action waits for DOM stability.
+- Reconnect: restart the gateway -> the extension reconnects automatically (exponential backoff, no spam).
+- Keepalive: leave idle for > 60s -> the service worker does not die and heartbeat keeps running.
 
 ### Manual (Phase 2)
 
-- Popup phản ánh đúng trạng thái khi bật/tắt gateway.
-- WS từ chối connection sai/không token; chấp nhận token đúng.
+- Popup reflects the correct state when the gateway is turned on/off.
+- WS rejects missing/wrong-token connections and accepts the correct token.
 
 ---
 
-## Tóm tắt ưu tiên
+## Priority Summary
 
-| Ưu tiên | Việc                                                               | Trạng thái                | Effort  |
+| Priority | Work                                                               | Status                    | Effort  |
 | ------- | ------------------------------------------------------------------ | ------------------------- | ------- |
-| ✅      | Phase 1 — reliability (ARIA, stability, reconnect, keepalive, CSP) | Done, cần verify + commit | —       |
-| 🟢 P1   | Popup status                                                       | Chưa làm                  | Low     |
-| 🟢 P1   | WS security hardening                                              | Chưa làm                  | Low–Med |
+| ✅      | Phase 1 — reliability (ARIA, stability, reconnect, keepalive, CSP) | Done, needs verify + commit | —     |
+| 🟢 P1   | Popup status                                                       | Not done                  | Low     |
+| 🟢 P1   | WS security hardening                                              | Not done                  | Low–Med |
 | 🟡 P2   | History/Bookmarks/TopSites                                         | Optional                  | Low     |
-| ❌      | Phần còn lại của plan cũ                                           | Loại / hoãn               | —       |
+| ❌      | Rest of the old plan                                               | Removed / deferred        | —       |

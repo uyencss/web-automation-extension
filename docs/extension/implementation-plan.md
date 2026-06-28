@@ -1,10 +1,10 @@
 # Implementation Plan — WebMCP Extension v2.1.0
 
-## Tổng quan
+## Overview
 
-Extension cung cấp **AI-driven browser automation** qua WebSocket. Gateway server nhận lệnh HTTP từ agent/scripts, chuyển tiếp JSON-RPC 2.0 qua WebSocket tới extension để điều khiển browser.
+The extension provides **AI-driven browser automation** over WebSocket. The gateway server receives HTTP commands from agents/scripts and forwards JSON-RPC 2.0 over WebSocket to the extension to control the browser.
 
-## Kiến trúc
+## Architecture
 
 ```
 ┌─────────────────────────┐         WebSocket          ┌─────────────────────────┐
@@ -34,7 +34,7 @@ Extension cung cấp **AI-driven browser automation** qua WebSocket. Gateway ser
 
 ---
 
-## Tất cả Commands (36 total)
+## All Commands (36 total)
 
 ### 1. Tab Management (5 commands)
 
@@ -67,7 +67,7 @@ Extension cung cấp **AI-driven browser automation** qua WebSocket. Gateway ser
 | `executeCDP` | `{ method, params?, tabId? }` | `{ tabId, result }` |
 | `screenshot` | `{ fullPage?, tabId? }` | `{ tabId, base64, format }` |
 
-> `executeCDP` là passthrough — có thể gửi **bất kỳ lệnh CDP nào** (e.g., `DOM.getDocument`, `Network.enable`, `Runtime.evaluate`).
+> `executeCDP` is a passthrough. It can send **any CDP command** (e.g., `DOM.getDocument`, `Network.enable`, `Runtime.evaluate`).
 
 ---
 
@@ -82,7 +82,7 @@ Extension cung cấp **AI-driven browser automation** qua WebSocket. Gateway ser
 
 ### 5. 🆕 Phase 1: AI Vision (4 commands)
 
-Cho phép AI "nhìn" cấu trúc trang, biết được các elements có thể tương tác và vị trí của chúng.
+Allows the AI to "see" the page structure and understand which elements are interactive and where they are located.
 
 | Method | Params | Response |
 |--------|--------|----------|
@@ -91,17 +91,17 @@ Cho phép AI "nhìn" cấu trúc trang, biết được các elements có thể 
 | `getElementBounds` | `{ selector, tabId? }` | `{ tabId, elements: [{ index, tag, id, text, bounds: { x, y, width, height, centerX, centerY }, visible }] }` |
 | `getInteractiveElements` | `{ tabId? }` | `{ tabId, elements: [{ index, tag, type, id, name, role, ariaLabel, text, href, value, checked, disabled, bounds }] }` |
 
-**Giải thích:**
-- `getAccessibilityTree` — Dùng CDP `Accessibility.getFullAXTree`. Trả về cây accessibility đã lọc (chỉ nodes có ý nghĩa: buttons, links, inputs, headings...). AI dùng để hiểu cấu trúc trang.
-- `getDOMSnapshot` — Dùng CDP `DOMSnapshot.captureSnapshot`. Trả về full DOM + layout + styles. Nặng nhưng đầy đủ.
-- `getElementBounds` — Trả về vị trí (bounding box) của tất cả elements match selector. AI dùng để biết click vào đâu.
-- `getInteractiveElements` — Liệt kê TẤT CẢ elements có thể tương tác (a, button, input, select, textarea, [role=button]...) + vị trí + trạng thái. **Command quan trọng nhất cho AI.**
+**Explanation:**
+- `getAccessibilityTree` — Uses CDP `Accessibility.getFullAXTree`. Returns a filtered accessibility tree with meaningful nodes only: buttons, links, inputs, headings, etc. The AI uses this to understand the page structure.
+- `getDOMSnapshot` — Uses CDP `DOMSnapshot.captureSnapshot`. Returns full DOM + layout + styles. Heavy but complete.
+- `getElementBounds` — Returns the position (bounding box) of all elements that match the selector. The AI uses this to know where to click.
+- `getInteractiveElements` — Lists ALL interactive elements (`a`, `button`, `input`, `select`, `textarea`, `[role=button]`, etc.) + position + state. **The most important command for AI.**
 
 ---
 
 ### 6. 🆕 Phase 2: CDP Input Dispatch (7 commands)
 
-Click/type thật qua CDP — không bị block bởi anti-bot, hoạt động trên mọi framework (React, Vue, Angular).
+Real click/type through CDP: not blocked by anti-bot checks and works across frameworks (React, Vue, Angular).
 
 | Method | Params | Response |
 |--------|--------|----------|
@@ -113,14 +113,14 @@ Click/type thật qua CDP — không bị block bởi anti-bot, hoạt động t
 | `hover` | `{ selector, tabId? }` | `{ tabId, x, y, selector }` |
 | `selectOption` | `{ selector, value?, index?, text?, tabId? }` | `{ tabId, success, value, text }` |
 
-**Giải thích:**
-- `dispatchClick` — Click tại tọa độ (x, y) qua CDP `Input.dispatchMouseEvent`. Kết hợp với `getInteractiveElements` để biết tọa độ.
-- `moveMouse` — Di chuyển chuột mượt (nhiều steps). Dùng cho hover effects, tooltips.
-- `pressKey` — Nhấn phím. Hỗ trợ `modifiers: ['ctrl', 'shift', 'alt', 'meta']` cho shortcuts (Ctrl+C, Ctrl+A...). Hỗ trợ special keys: Enter, Tab, Escape, Backspace, Arrow keys, etc.
-- `typeText` — Gõ text nhanh qua CDP `Input.insertText`. Không cần focus trước.
-- `scroll` — Cuộn trang bằng mouse wheel event.
-- `hover` — Hover vào element (dùng CSS selector). Tự scroll-into-view trước.
-- `selectOption` — Chọn option trong `<select>` dropdown.
+**Explanation:**
+- `dispatchClick` — Clicks at coordinates (x, y) through CDP `Input.dispatchMouseEvent`. Combine with `getInteractiveElements` to get coordinates.
+- `moveMouse` — Moves the mouse smoothly in multiple steps. Useful for hover effects and tooltips.
+- `pressKey` — Presses keys. Supports `modifiers: ['ctrl', 'shift', 'alt', 'meta']` for shortcuts (Ctrl+C, Ctrl+A...). Supports special keys: Enter, Tab, Escape, Backspace, Arrow keys, etc.
+- `typeText` — Types text quickly through CDP `Input.insertText`. No need to focus first.
+- `scroll` — Scrolls the page through mouse wheel events.
+- `hover` — Hovers over an element using a CSS selector. Automatically scrolls it into view first.
+- `selectOption` — Selects an option in a `<select>` dropdown.
 
 ---
 
@@ -151,36 +151,36 @@ Click/type thật qua CDP — không bị block bởi anti-bot, hoạt động t
 
 ## Events (Extension → Server)
 
-Extension tự động gửi notifications khi có sự kiện:
+The extension automatically sends notifications when events occur:
 
-| Event | Params | Khi nào |
+| Event | Params | When |
 |-------|--------|---------|
-| `extensionReady` | `{ name, version, capabilities }` | Extension kết nối thành công |
-| `tabUpdated` | `{ tabId, url, title, status }` | Tab load xong |
-| `tabClosed` | `{ tabId }` | Tab bị đóng |
-| `tabCreated` | `{ tabId, url, windowId }` | Tab mới được tạo |
-| `tabActivated` | `{ tabId, windowId }` | Người dùng chuyển tab |
+| `extensionReady` | `{ name, version, capabilities }` | Extension connected successfully |
+| `tabUpdated` | `{ tabId, url, title, status }` | Tab finished loading |
+| `tabClosed` | `{ tabId }` | Tab was closed |
+| `tabCreated` | `{ tabId, url, windowId }` | New tab was created |
+| `tabActivated` | `{ tabId, windowId }` | User switched tabs |
 | `cdpEvent` | `{ tabId, method, params }` | CDP event (Network, DOM, etc.) |
-| `downloadStarted` | `{ id, url, filename, mime, fileSize }` | Bắt đầu download |
-| `downloadChanged` | `{ id, state, filename, error }` | Download thay đổi trạng thái |
-| `heartbeat` | `{ timestamp }` | Mỗi 20 giây |
+| `downloadStarted` | `{ id, url, filename, mime, fileSize }` | Download started |
+| `downloadChanged` | `{ id, state, filename, error }` | Download status changed |
+| `heartbeat` | `{ timestamp }` | Every 20 seconds |
 
 ---
 
 ## AI Automation Workflow
 
-Quy trình AI tự động hoá browser:
+AI browser automation flow:
 
 ```
-1. AI gọi getInteractiveElements() → biết được tất cả elements trên trang
-2. AI phân tích: "Tôi cần click vào nút Search tại (450, 320)"
-3. AI gọi dispatchClick({ x: 450, y: 320 })
-4. AI gọi typeText({ text: "hello world" })
-5. AI gọi pressKey({ key: "Enter" })
-6. AI chờ tabUpdated event → trang mới đã load
-7. AI gọi screenshot() → xem kết quả
-8. AI gọi getAccessibilityTree() → hiểu cấu trúc trang mới
-9. Lặp lại...
+1. AI calls getInteractiveElements() -> sees all elements on the page
+2. AI analyzes: "I need to click the Search button at (450, 320)"
+3. AI calls dispatchClick({ x: 450, y: 320 })
+4. AI calls typeText({ text: "hello world" })
+5. AI calls pressKey({ key: "Enter" })
+6. AI waits for the tabUpdated event -> the new page has loaded
+7. AI calls screenshot() -> sees the result
+8. AI calls getAccessibilityTree() -> understands the new page structure
+9. Repeat...
 ```
 
 ---
@@ -194,7 +194,7 @@ web-automation-extension/
 ├── server/
 │   └── gateway_server.js              # HTTP + WebSocket gateway
 ├── webmcp-extension/
-│   └── dist/                          # Extension files (load vào Chrome)
+│   └── dist/                          # Extension files (load into Chrome)
 │       ├── manifest.json              # Manifest V3
 │       ├── background.js              # WebSocket client + 36 command handlers
 │       └── content-scripts/
@@ -213,11 +213,11 @@ web-automation-extension/
 
 ## Chrome Permissions
 
-| Permission | Lý do |
+| Permission | Reason |
 |------------|-------|
-| `activeTab` | Truy cập tab hiện tại |
+| `activeTab` | Access the current tab |
 | `scripting` | Inject content scripts |
-| `storage` | Lưu extension state |
+| `storage` | Store extension state |
 | `debugger` | CDP commands (Runtime.evaluate, Input.dispatch, Accessibility, DOM, Network...) |
 | `tabs` | Tab management (query, create, update, remove) |
 | `downloads` | Monitor download events |

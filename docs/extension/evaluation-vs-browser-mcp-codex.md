@@ -1,155 +1,158 @@
-# Đánh giá Web-Automation-Extension vs Browser-MCP & Codex Extension
+# Evaluation: Web-Automation-Extension vs Browser-MCP & Codex Extension
 
-> File này chỉ chứa **phân tích & đánh giá**. Kế hoạch hành động đã tách sang
+> This file only contains **analysis & evaluation**. The action plan has been split into
 > [`implementation_plan.md`](implementation_plan.md).
 
-## Tổng quan
+## Overview
 
-So sánh kiến trúc, tính năng, và chất lượng triển khai của 3 extension:
+Comparison of architecture, features, and implementation quality across three extensions:
 
-| Tiêu chí | Web-Automation (Yours) | Browser-MCP | Codex |
+| Criterion | Web-Automation (Yours) | Browser-MCP | Codex |
 |---|---|---|---|
-| **Kiến trúc** | Extension ↔ WS Gateway ↔ MCP Server (3 layers) | Extension ↔ Built-in MCP (2 layers) | Extension ↔ Native Messaging (2 layers) |
-| **Giao tiếp** | WebSocket (ws://localhost:7865) | WebSocket (ws://localhost) | Chrome Native Messaging |
-| **Source code** | Readable ES modules, không bundled | Bundled/minified (~840KB bg.js) | Bundled/minified (~145KB bg.js) |
-| **MCP Protocol** | `@modelcontextprotocol/sdk` chuẩn | Custom implementation (Playwright-style tools) | Native Messaging (JSON-RPC) |
+| **Architecture** | Extension <-> WS Gateway <-> MCP Server (3 layers) | Extension <-> Built-in MCP (2 layers) | Extension <-> Native Messaging (2 layers) |
+| **Communication** | WebSocket (ws://localhost:7865) | WebSocket (ws://localhost) | Chrome Native Messaging |
+| **Source code** | Readable ES modules, not bundled | Bundled/minified (~840KB bg.js) | Bundled/minified (~145KB bg.js) |
+| **MCP Protocol** | Standard `@modelcontextprotocol/sdk` | Custom implementation (Playwright-style tools) | Native Messaging (JSON-RPC) |
 | **Multi-agent** | 5 agent installers (Claude, Codex, Copilot, Antigravity, Cursor) | VS Code / Cursor / Claude integration | Codex CLI only |
 | **npm package** | ✅ `@gyga-browser/webmcp-browser-automation-kit` | ❌ Chrome Web Store only | ❌ Chrome Web Store only |
 
 ---
 
-## ⭐ Lăng kính đánh giá: ba sản phẩm KHÁC bản chất
+## ⭐ Evaluation Lens: Three Fundamentally Different Products
 
-Đây là điểm then chốt mà mọi so sánh tính năng phải dựa vào. Ba extension không cùng
-một loại sản phẩm, nên không thể coi tính năng của extension này là "chuẩn" mà extension
-kia phải đuổi theo:
+This is the key point behind every feature comparison. The three extensions are not the
+same kind of product, so features in one extension cannot automatically be treated as a
+"standard" the others must chase:
 
-- **Codex extension** = sản phẩm tiêu dùng, chạy trong Chrome hàng ngày của user, nhiều
-  tab, có **human ngồi quan sát** → cần tab leasing, favicon badge, tab groups, graceful
+- **Codex extension** = consumer product, runs in the user's daily Chrome, many tabs,
+  with a **human observing** -> needs tab leasing, favicon badge, tab groups, graceful
   auto-update.
-- **Browser-MCP** = companion có **human-in-the-loop**, có popup React → cần visual cursor
-  cho người quan sát.
-- **Của bạn** = **kit MCP phân phối qua npm** (`npx … mcp`), được **AI agent** điều khiển
-  qua WS localhost. "Người dùng" trình duyệt là AI, không phải con người.
+- **Browser-MCP** = companion with a **human-in-the-loop** and a React popup -> needs a
+  visual cursor for the observer.
+- **Yours** = **MCP kit distributed through npm** (`npx ... mcp`), controlled by an
+  **AI agent** over localhost WS. The browser "user" is the AI, not a human.
 
-⇒ Phần lớn tính năng "thiếu" so với Codex/Browser-MCP thực ra là **đánh bóng cho sản phẩm
-tiêu dùng** — không khớp use-case của một automation kit. Đây là cơ sở để loại bỏ phần lớn
-Phase 2–4 trong plan cũ.
+Therefore, most "missing" features versus Codex/Browser-MCP are actually **consumer-product
+polish** and do not match the use case of an automation kit. This is the basis for removing
+most of Phases 2-4 from the old plan.
 
 ---
 
-## Điểm mạnh của Web-Automation-Extension
+## Strengths Of Web-Automation-Extension
 
-### ✅ Kiến trúc sạch & mở rộng tốt
-- **Modular handler system**: Tách rõ ràng thành `tab-management.js`, `high-level.js`,
+### ✅ Clean, Extensible Architecture
+- **Modular handler system**: Clearly split into `tab-management.js`, `high-level.js`,
   `cdp-actions.js`, `cdp-input.js`, `ai-vision.js`, `full-control.js`, `network-intercept.js`
-- **Gateway pattern**: Tách biệt transport (WS) khỏi business logic — dễ thay gateway bằng
-  protocol khác
-- **Publishable npm package**: Cài đặt 1 lệnh `npx -y @gyga-browser/webmcp-browser-automation-kit mcp`
+- **Gateway pattern**: Separates transport (WS) from business logic, making it easy to
+  replace the gateway with another protocol
+- **Publishable npm package**: One-command install with `npx -y @gyga-browser/webmcp-browser-automation-kit mcp`
 
 ### ✅ Page-level tool registration (navigator.modelContext)
-- Polyfill `navigator.modelContext` cho phép website tự đăng ký tools — unique feature mà
-  cả Browser-MCP lẫn Codex không có
-- Bridge architecture (ISOLATED ↔ MAIN world) rất đúng chuẩn Manifest V3
+- Polyfill `navigator.modelContext` lets websites register their own tools, a unique feature
+  that neither Browser-MCP nor Codex has
+- Bridge architecture (ISOLATED <-> MAIN world) follows Manifest V3 well
 
 ### ✅ Network interceptor best-in-class
-- Multiple concurrent patterns, event-driven waiters, ring buffer, proactive body capture —
-  production-grade hơn cả 2 reference extension
+- Multiple concurrent patterns, event-driven waiters, ring buffer, proactive body capture:
+  more production-grade than both reference extensions
 
 ### ✅ AI Vision capabilities
-- `getAccessibilityTree`, `getDOMSnapshot`, `getElementBounds`, `getInteractiveElements` —
-  đầy đủ bộ tools để AI "nhìn" trang web
+- `getAccessibilityTree`, `getDOMSnapshot`, `getElementBounds`, `getInteractiveElements`:
+  a complete tool set for the AI to "see" web pages
 
 ### ✅ Multi-agent installer
-- Script `install-agent.mjs` hỗ trợ 5 runtime (Claude, Codex, Copilot, Antigravity, Cursor) —
-  rất tiện cho distribution
+- `install-agent.mjs` supports five runtimes (Claude, Codex, Copilot, Antigravity, Cursor),
+  which is very convenient for distribution
 
 ---
 
-## Điểm mạnh của Browser-MCP (đã học được những gì)
+## Browser-MCP Strengths (What Was Learned)
 
-### 🏆 Accessibility Snapshot thay vì CSS Selector — ✅ ĐÃ TIẾP THU
-ARIA snapshot + ref-based interaction robust hơn CSS selector trên SPA. → Đã triển khai
-trong `aria-snapshot.js`.
+### 🏆 Accessibility Snapshot Instead Of CSS Selector — ✅ ADOPTED
+ARIA snapshot + ref-based interaction is more robust than CSS selectors on SPAs. Implemented
+in `aria-snapshot.js`.
 
-### 🏆 Page stability detection — ✅ ĐÃ TIẾP THU
-Auto-wait cho DOM ổn định sau mỗi action. → Đã triển khai trong `page-stability.js`.
+### 🏆 Page Stability Detection — ✅ ADOPTED
+Auto-wait for DOM stability after each action. Implemented in `page-stability.js`.
 
-### 🏆 Visual cursor feedback — ❌ KHÔNG ÁP DỤNG
-Animated cursor overlay cho **người quan sát**. Kit do AI điều khiển qua CLI đã có screenshot
-để thấy state. Thuần cosmetic.
+### 🏆 Visual Cursor Feedback — ❌ NOT APPLICABLE
+Animated cursor overlay is for **human observers**. This AI-controlled CLI kit already has
+screenshots for seeing state. Purely cosmetic.
 
-### 🏆 Rich popup UI (React) — 🔸 ÁP DỤNG MỘT PHẦN
-Popup đầy đủ là over-engineering. Chỉ cần popup **status** để chẩn đoán kết nối.
+### 🏆 Rich Popup UI (React) — 🔸 PARTIALLY APPLICABLE
+A full popup is over-engineering. Only a **status** popup is needed for connection diagnostics.
 
-### 🏆 Performance monitoring (Sentry / Web Vitals) — ❌ KHÔNG ÁP DỤNG
-Observability của sản phẩm tiêu dùng. Không phù hợp kit chạy local.
-
----
-
-## Điểm mạnh của Codex Extension (đã học được những gì)
-
-### 🏆 Native Messaging transport — ❌ KHÔNG ÁP DỤNG
-An toàn hơn vì không mở port, nhưng **mâu thuẫn với giá trị cốt lõi**: phân phối npm +
-`npx mcp` một lệnh. Native host cần manifest OS-specific, khó cài → phá vỡ ưu thế lớn nhất.
-WS-on-localhost là lựa chọn *đúng*. Thay vào đó nên hardening WS (bind 127.0.0.1 + token).
-
-### 🏆 Chrome Alarms (keepalive + reconnect) — ✅ ĐÃ TIẾP THU
-Đã thay `setInterval` bằng `chrome.alarms` + exponential backoff reconnect.
-
-### 🏆 CSP cho extension pages — ✅ ĐÃ TIẾP THU
-Đã thêm `content_security_policy` vào manifest.
-
-### 🏆 Session management & Tab leasing — ❌ HOÃN
-Effort cao nhất, chỉ giải quyết xung đột khi **nhiều agent điều khiển CÙNG một Chrome đồng
-thời** — chưa phải kịch bản thực. Multi-agent installer ≠ multi-agent concurrent. Premature.
-
-### 🏆 Favicon badge / Tab Group management — ❌ KHÔNG ÁP DỤNG
-Tính năng cho human quan sát nhiều tab trong browser hàng ngày. Không có bối cảnh đó.
-
-### 🏆 Update lifecycle management — ❌ KHÔNG ÁP DỤNG
-Codex auto-update từ Web Store giữa session end-user. Kit của bạn load unpacked/dev.
-
-### 🏆 Broader Chrome API (History, Bookmarks, Downloads…) — 🔸 OPTIONAL
-History/Bookmarks/TopSites là mở rộng capability thật, low-effort, additive. Nhưng thêm
-permission nhạy cảm về privacy → chỉ làm khi có task cụ thể cần.
+### 🏆 Performance Monitoring (Sentry / Web Vitals) — ❌ NOT APPLICABLE
+Consumer-product observability. Not appropriate for a local-running kit.
 
 ---
 
-## Đánh giá lại sự cần thiết của từng tính năng còn lại
+## Codex Extension Strengths (What Was Learned)
 
-| Tính năng (plan cũ) | Kết luận | Lý do |
+### 🏆 Native Messaging Transport — ❌ NOT APPLICABLE
+Safer because it does not open a port, but it **conflicts with the core value**: npm
+distribution + one-command `npx mcp`. Native hosts require OS-specific manifests and are
+hard to install, breaking the biggest advantage. WS-on-localhost is the *right* choice.
+Instead, harden WS (bind 127.0.0.1 + token).
+
+### 🏆 Chrome Alarms (keepalive + reconnect) — ✅ ADOPTED
+Replaced `setInterval` with `chrome.alarms` + exponential backoff reconnect.
+
+### 🏆 CSP For Extension Pages — ✅ ADOPTED
+Added `content_security_policy` to the manifest.
+
+### 🏆 Session Management & Tab Leasing — ❌ DEFERRED
+Highest effort, only solves conflicts when **multiple agents control the SAME Chrome
+concurrently**, which is not yet a real scenario. Multi-agent installer != multi-agent
+concurrency. Premature.
+
+### 🏆 Favicon Badge / Tab Group Management — ❌ NOT APPLICABLE
+Features for humans observing many tabs in their daily browser. That context does not exist here.
+
+### 🏆 Update Lifecycle Management — ❌ NOT APPLICABLE
+Codex auto-updates from the Web Store during end-user sessions. This kit is loaded unpacked/dev.
+
+### 🏆 Broader Chrome API (History, Bookmarks, Downloads...) — 🔸 OPTIONAL
+History/Bookmarks/TopSites is a real capability expansion: low-effort and additive. But it
+adds privacy-sensitive permissions, so only do it when a concrete task requires it.
+
+---
+
+## Re-evaluating The Necessity Of Each Remaining Feature
+
+| Feature (old plan) | Conclusion | Reason |
 |---|---|---|
-| ARIA snapshot interaction | ✅ **Đã xong** | Đóng đúng khoảng cách reliability quan trọng nhất |
-| Page stability detection | ✅ **Đã xong** | — |
-| Alarm-based reconnect | ✅ **Đã xong** | — |
-| Chrome Alarms keepalive | ✅ **Đã xong** | — |
-| CSP hardening | ✅ **Đã xong** | — |
-| Popup UI | 🟢 **Nên làm (thu hẹp)** | Chỉ cần status kết nối để debuggability, không cần full settings |
-| WS security hardening | 🟢 **Nên làm** | Thay cho Native Messaging — rẻ, đạt 80% lợi ích bảo mật |
-| History / Bookmarks / TopSites | 🟡 **Optional** | Mở rộng capability thật nhưng chỉ làm khi có nhu cầu |
-| Visual cursor overlay | 🔴 **Bỏ** | Tính năng cho người quan sát, AI đã có screenshot |
-| Favicon badge | 🔴 **Bỏ** | Không có bối cảnh browser hàng ngày của user |
-| Session management / tab leasing | 🔴 **Hoãn** | Premature — chưa có multi-agent concurrent thực sự |
-| Graceful update lifecycle | 🔴 **Bỏ** | Không auto-update từ Web Store |
-| Tab Groups | 🔴 **Bỏ** | Chỉ hữu ích cùng session management |
-| Notifications | 🔴 **Bỏ** | Dư thừa — AI trả lời qua kênh MCP rồi |
-| Native Messaging transport | 🔴 **Bỏ** | Phá vỡ mô hình phân phối npm một lệnh |
+| ARIA snapshot interaction | ✅ **Done** | Closes the most important reliability gap |
+| Page stability detection | ✅ **Done** | — |
+| Alarm-based reconnect | ✅ **Done** | — |
+| Chrome Alarms keepalive | ✅ **Done** | — |
+| CSP hardening | ✅ **Done** | — |
+| Popup UI | 🟢 **Should do (narrowed)** | Only connection status is needed for debuggability, not full settings |
+| WS security hardening | 🟢 **Should do** | Replacement for Native Messaging: cheap, captures 80% of the security benefit |
+| History / Bookmarks / TopSites | 🟡 **Optional** | Real capability expansion, but only when needed |
+| Visual cursor overlay | 🔴 **Remove** | Feature for human observers; AI already has screenshots |
+| Favicon badge | 🔴 **Remove** | No daily-browser user context |
+| Session management / tab leasing | 🔴 **Defer** | Premature; no real multi-agent concurrency yet |
+| Graceful update lifecycle | 🔴 **Remove** | No Web Store auto-update |
+| Tab Groups | 🔴 **Remove** | Only useful with session management |
+| Notifications | 🔴 **Remove** | Redundant; AI already responds through the MCP channel |
+| Native Messaging transport | 🔴 **Remove** | Breaks the one-command npm distribution model |
 
 ---
 
-## Kết luận
+## Conclusion
 
-Plan gốc đối xử với Codex/Browser-MCP như "chuẩn cần đuổi kịp". Đánh giá lại:
+The original plan treated Codex/Browser-MCP as the "standard to catch up with." After
+re-evaluation:
 
-1. **Bạn đã đuổi kịp ở đúng chỗ quan trọng** — reliability của tương tác (ARIA snapshot,
-   page stability, reconnect/keepalive, CSP) đã xong.
-2. **Phần lớn còn lại là tính năng sản phẩm tiêu dùng** mà kit này không phải → làm sẽ tăng
-   bề mặt bảo trì mà không phục vụ người dùng thực (AI agent).
-3. **Chỉ còn 2 việc thực sự đáng làm**: popup status (debuggability) và WS security
-   hardening (thay cho native messaging).
+1. **You have caught up in the right important areas**: interaction reliability (ARIA
+   snapshot, page stability, reconnect/keepalive, CSP) is done.
+2. **Most of the remaining work is consumer-product feature work**, which this kit is not.
+   Doing it would increase maintenance surface without serving the real user (the AI agent).
+3. **Only two items are genuinely worth doing**: popup status (debuggability) and WS security
+   hardening (replacement for Native Messaging).
 
 > [!TIP]
-> Extension của bạn vẫn có kiến trúc tốt nhất trong 3 extension — clean, modular, readable
-> source, npm-publishable. Hãy giữ sự tối giản đó: đừng thêm tính năng của sản phẩm tiêu
-> dùng vào một automation kit.
+> Your extension still has the best architecture of the three: clean, modular, readable
+> source, npm-publishable. Keep that simplicity; do not add consumer-product features to
+> an automation kit.

@@ -1,67 +1,70 @@
-# Implementation Plan — MCP Server Adapter cho WebMCP Gateway
+# Implementation Plan — MCP Server Adapter For The WebMCP Gateway
 
-> Mục tiêu: cho phép các MCP client chuẩn (Claude Desktop, Cursor, Claude Code, Cline...)
-> cắm thẳng vào hệ thống automation hiện có, **không phải tự viết code WebSocket/curl**.
-> Phạm vi: chỉ thêm khả năng MCP. **Không** xử lý auth/CORS trong đợt này.
+> Goal: allow standard MCP clients (Claude Desktop, Cursor, Claude Code, Cline, etc.)
+> to plug directly into the existing automation system **without writing WebSocket/curl code**.
+> Scope: only add MCP capability. **Do not** handle auth/CORS in this pass.
 
-## 1. Kiến trúc chọn
+## 1. Selected Architecture
 
-Giữ nguyên `gateway_server.js` làm hub duy nhất (WS server cho extension + HTTP `/api`).
-Thêm **một process MCP server riêng** đóng vai trò *adapter*: nói giao thức MCP với
-client qua **stdio**, và chuyển mỗi tool call thành `POST http://localhost:7865/api`.
+Keep `gateway_server.js` as the single hub (WS server for the extension + HTTP `/api`).
+Add **one separate MCP server process** as an *adapter*: it speaks the MCP protocol with
+clients over **stdio** and turns each tool call into `POST http://localhost:7865/api`.
 
 ```
 MCP Client (Claude Desktop / Cursor / Claude Code)
       │  MCP protocol (stdio: JSON-RPC over stdin/stdout)
       ▼
-server/mcp_server.mjs   ← FILE MỚI (adapter)
+server/mcp_server.mjs   ← NEW FILE (adapter)
       │  HTTP POST /api   { method, params }
       ▼
-server/gateway_server.js   ← GIỮ NGUYÊN
+server/gateway_server.js   ← UNCHANGED
       │  WebSocket ws://localhost:7865  (JSON-RPC 2.0)
       ▼
 Chrome Extension (background.js) → CDP / navigator.modelContext
 ```
 
-Lý do tách process thay vì nhồi MCP vào gateway:
-- Gateway không phải sửa gì → không rủi ro hồi quy cho scripts/CLI đang chạy.
-- Extension kết nối tới gateway như **WS client**, nên gateway **bắt buộc** là WS server.
-  MCP server chỉ cần là **HTTP client** của gateway — quan hệ sạch, một chiều.
-- Có thể chạy/không chạy MCP server độc lập với gateway.
+Why split the process instead of packing MCP into the gateway:
+- The gateway does not need changes -> no regression risk for running scripts/CLI.
+- The extension connects to the gateway as a **WS client**, so the gateway **must** be the
+  WS server. The MCP server only needs to be the gateway's **HTTP client**: a clean,
+  one-way relationship.
+- The MCP server can run independently from the gateway.
 
-## 2. Thiết kế tool
+## 2. Tool Design
 
-- **Nguồn sự thật:** tái dùng `COMMAND_DEFINITIONS` trong
-  `catalog/command-catalog.js` để **tự sinh** danh sách tool
-  + JSON Schema từ `requiredParams`/`optionalParams`. Không hard-code 36 tool bằng tay.
-- **Đặt tên:** MCP tool name không nên chứa dấu chấm. Map:
+- **Source of truth:** reuse `COMMAND_DEFINITIONS` in `catalog/command-catalog.js` to
+  **generate** the tool list and JSON Schema from `requiredParams`/`optionalParams`.
+  Do not hand-code 36 tools.
+- **Naming:** MCP tool names should not contain dots. Map:
   - `webmcp.listTools`  → tool `webmcp_list_tools`
   - `webmcp.invokeTool` → tool `webmcp_invoke_tool`
-  - các command còn lại giữ nguyên tên (`navigate`, `getInteractiveElements`, ...).
-  - Bỏ qua nhóm `runner` (pseudo-command `wait`/`delay`) và các lệnh trong
+  - Keep all other command names unchanged (`navigate`, `getInteractiveElements`, ...).
+  - Skip the `runner` group (pseudo-commands `wait`/`delay`) and commands in
     `UNSUPPORTED_COMMANDS`.
-- **Escape hatch:** thêm 1 tool `browser_raw_command` nhận `{ method, params }` tùy ý
-  để gọi bất kỳ command nào gateway hỗ trợ (kể cả command mới chưa kịp thêm vào catalog).
-- **Schema:** dùng JSON Schema thô (kiểu mặc định `string`, riêng `x/y/width/height/...`
-  để `number`, `params/input/modifiers` để `object`/`array`). Đủ tốt cho MVP; tinh chỉnh sau.
+- **Escape hatch:** add one `browser_raw_command` tool accepting arbitrary `{ method, params }`
+  to call any gateway-supported command, including a new command not yet added to the catalog.
+- **Schema:** use raw JSON Schema (default type `string`; map `x/y/width/height/...` to
+  `number`, and `params/input/modifiers` to `object`/`array`). Good enough for MVP;
+  refine later.
 
-## 3. Các file thay đổi
+## 3. Changed Files
 
-| File | Loại | Nội dung |
+| File | Type | Contents |
 |---|---|---|
-| `server/mcp_server.mjs` | MỚI | Stdio MCP server, sinh tool từ catalog, proxy sang `/api`. |
-| `server/mcp-tool-catalog.mjs` | MỚI (tùy chọn) | Hàm build danh sách tool MCP từ `command-catalog.js`. Có thể gộp luôn vào `mcp_server.mjs` cho gọn. |
-| `server/package.json` | SỬA | Thêm dep `@modelcontextprotocol/sdk`; thêm script `mcp`. |
-| `package.json` (root) | SỬA | Thêm script `mcp` proxy xuống `server`. |
-| `docs/mcp-server-plan.md` | MỚI | File này. |
+| `server/mcp_server.mjs` | NEW | Stdio MCP server, generate tools from catalog, proxy to `/api`. |
+| `server/mcp-tool-catalog.mjs` | NEW (optional) | Function that builds the MCP tool list from `command-catalog.js`. Can be folded into `mcp_server.mjs` for simplicity. |
+| `server/package.json` | MODIFY | Add dependency `@modelcontextprotocol/sdk`; add script `mcp`. |
+| `package.json` (root) | MODIFY | Add `mcp` script that proxies down to `server`. |
+| `docs/mcp-server-plan.md` | NEW | This file. |
 
-> Lưu ý ESM: `server/package.json` đang `"type": "commonjs"`, còn `@modelcontextprotocol/sdk`
-> là ESM-only. Vì vậy đặt tên file `.mjs` để ép ESM, không cần đổi `type` của package.
+> ESM note: `server/package.json` is currently `"type": "commonjs"`, while
+> `@modelcontextprotocol/sdk` is ESM-only. Name the file `.mjs` to force ESM without
+> changing the package `type`.
 
-## 4. Khung code `server/mcp_server.mjs`
+## 4. Code Skeleton For `server/mcp_server.mjs`
 
-Dùng API low-level của SDK (`Server` + `setRequestHandler`) để trả JSON Schema thô,
-khỏi cần `zod`.
+Use the SDK low-level API (`Server` + `setRequestHandler`) to return raw JSON Schema
+without needing `zod`.
 
 ```js
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -75,8 +78,8 @@ const GATEWAY = process.env.WEBMCP_GATEWAY_URL || 'http://localhost:7865';
 
 // --- 4.1 Build tool list from catalog ---------------------------------
 // import { COMMAND_DEFINITIONS } from '../catalog/command-catalog.js'
-// hoặc copy bảng tối thiểu. Mỗi tool:
-//   { name, description, inputSchema, _method } (_method = JSON-RPC method gốc)
+// or copy the minimal table. Each tool:
+//   { name, description, inputSchema, _method } (_method = original JSON-RPC method)
 const NUMERIC = new Set(['x','y','fromX','fromY','steps','width','height',
   'deltaX','deltaY','timeout','depth','clickCount','deviceScaleFactor']);
 const OBJECT  = new Set(['params','input']);
@@ -96,7 +99,7 @@ function buildTool(method, def) {
   const optional = def.optionalParams || [];
   const props = {};
   for (const p of [...required, ...optional]) props[p] = propType(p);
-  if (!('tabId' in props)) props.tabId = { type: 'number' }; // hầu hết command nhận tabId
+  if (!('tabId' in props)) props.tabId = { type: 'number' }; // most commands accept tabId
   return {
     name: method.replace('.', '_'),
     _method: method,
@@ -150,7 +153,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (!tool) throw new Error(`Unknown tool: ${req.params.name}`);
   const args = req.params.arguments || {};
 
-  const method = tool._method ?? args.method;       // raw command dùng args.method
+  const method = tool._method ?? args.method;       // raw command uses args.method
   const params = tool._method ? args : (args.params || {});
 
   try {
@@ -163,28 +166,28 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-// KHÔNG console.log ra stdout — stdio đang là kênh MCP. Dùng console.error nếu cần log.
+// Do NOT console.log to stdout; stdio is the MCP channel. Use console.error for logs.
 console.error(`[mcp] webmcp MCP server ready, gateway=${GATEWAY}`);
 ```
 
-Điểm cần làm khi code thật:
-1. Đổi `catalog/command-catalog.js` để **export** `COMMAND_DEFINITIONS`/`COMMAND_GROUPS`
-   (hiện đang là `const` nội bộ) — hoặc tạo một bản copy tối thiểu trong `mcp-tool-catalog.mjs`.
-   File runner là CommonJS, MCP là ESM → nếu import trực tiếp, cân nhắc dùng
-   `module.exports` + dynamic `import()` hoặc copy bảng. Cách an toàn nhất cho MVP: **copy**
-   bảng vào `mcp-tool-catalog.mjs`, sau này thống nhất một nguồn.
-2. `screenshot` trả base64 PNG lớn → cân nhắc trả `{ type: 'image', data, mimeType }` thay vì
-   nhồi vào text (cải tiến sau MVP).
-3. `webmcp_invoke_tool`: nhắc trong description rằng kết quả thật nằm ở
-   `result.result.content[0].text` (giống ghi chú trong SKILL.md).
+Items to handle in the real implementation:
+1. Change `catalog/command-catalog.js` to **export** `COMMAND_DEFINITIONS`/`COMMAND_GROUPS`
+   (currently internal `const`s), or create a minimal copy in `mcp-tool-catalog.mjs`.
+   The runner file is CommonJS and MCP is ESM; if importing directly, consider
+   `module.exports` + dynamic `import()` or copying the table. The safest MVP path:
+   **copy** the table into `mcp-tool-catalog.mjs`, then unify the source later.
+2. `screenshot` returns a large base64 PNG -> consider returning
+   `{ type: 'image', data, mimeType }` instead of stuffing it into text (post-MVP improvement).
+3. `webmcp_invoke_tool`: state in the description that the real result is in
+   `result.result.content[0].text`, matching the note in SKILL.md.
 
-## 4b. Gateway-first — đảm bảo AI luôn biết phải chạy gateway trước
+## 4b. Gateway-First — Ensure The AI Knows The Gateway Must Run First
 
-MCP server **vô dụng nếu gateway chưa chạy / extension chưa connect**. Dùng 4 lớp để AI
-không bao giờ "quên":
+The MCP server is **useless if the gateway is not running / the extension is not connected**.
+Use four layers so the AI never "forgets":
 
-1. **Tự khởi động gateway (tùy chọn, mặc định bật).** Khi MCP server start, gọi
-   `GET /health`; nếu không kết nối được thì `spawn` gateway như child process detached:
+1. **Auto-start gateway (optional, enabled by default).** When the MCP server starts, call
+   `GET /health`; if it cannot connect, `spawn` the gateway as a detached child process:
    ```js
    import { spawn } from 'node:child_process';
    async function ensureGateway() {
@@ -193,19 +196,20 @@ không bao giờ "quên":
      const child = spawn('node', [join(__dirname, 'gateway_server.js')],
        { detached: true, stdio: 'ignore' });
      child.unref();
-     // poll /health vài giây cho tới khi sẵn sàng
+     // poll /health for a few seconds until ready
    }
    ```
-   Lưu ý: việc này chỉ bật được gateway, **không** mở Chrome/extension hộ — phần đó vẫn cần user.
+   Note: this can only start the gateway; it **cannot** open Chrome/load the extension for the
+   user. That part still requires the user.
 
-2. **Tool `browser_status` / `ensure_ready`.** Trả trạng thái rõ ràng để AI tự gọi đầu tiên:
+2. **Tool `browser_status` / `ensure_ready`.** Return a clear status so the AI calls it first:
    ```jsonc
-   // gọi GET /health rồi map ra:
+   // call GET /health, then map the result:
    { "gatewayRunning": true, "extensionConnected": false,
-     "hint": "Mở Chrome đã load webmcp-extension/dist; extension tự connect trong ~3s." }
+     "hint": "Open Chrome with webmcp-extension/dist loaded; the extension auto-connects in ~3s." }
    ```
 
-3. **Mọi tool lỗi đều trả message hành động được**, không phải lỗi kỹ thuật trần:
+3. **Every tool error returns an actionable message**, not a raw technical error:
    ```js
    async function callGateway(method, params) {
      let res;
@@ -214,23 +218,23 @@ không bao giờ "quên":
          headers: { 'Content-Type': 'application/json' },
          body: JSON.stringify({ method, params: params || {} }) });
      } catch {
-       throw new Error('Gateway chưa chạy. Chạy `npm run gateway` rồi thử lại.');
+       throw new Error('Gateway is not running. Run `npm run gateway` and try again.');
      }
      const json = await res.json();
-     if (res.status === 503)                    // extension chưa connect
-       throw new Error('Extension chưa kết nối. Mở Chrome đã load webmcp-extension/dist (auto-connect ~3s).');
+     if (res.status === 503)                    // extension not connected yet
+       throw new Error('Extension is not connected. Open Chrome with webmcp-extension/dist loaded (auto-connect ~3s).');
      if (!res.ok) throw new Error(json.error || `Gateway HTTP ${res.status}`);
      return json.result;
    }
    ```
 
-4. **Description của server + SKILL.md nói rõ thứ tự.** Server instructions (field
-   `instructions` khi khởi tạo `Server`) ghi: *"Trước khi dùng bất kỳ tool nào, gọi
-   `browser_status`. Nếu gateway/extension chưa sẵn sàng, dừng và yêu cầu user chạy
-   `npm run gateway` + mở Chrome."* SKILL.md đã có bước health-check ở Run Loop — giữ và
-   trỏ về tool `ping`/`browser_status`.
+4. **Server description + SKILL.md state the order clearly.** Server instructions (the
+   `instructions` field when creating `Server`) should say: *"Before using any tool, call
+   `browser_status`. If the gateway/extension is not ready, stop and ask the user to run
+   `npm run gateway` + open Chrome."* SKILL.md already has a health-check step in the Run
+   Loop; keep it and point it to `ping`/`browser_status`.
 
-## 5. Phụ thuộc & scripts
+## 5. Dependencies & Scripts
 
 `server/package.json`:
 ```jsonc
@@ -246,8 +250,8 @@ không bao giờ "quên":
 }
 ```
 
-Root `package.json` — lệnh chung cài deps (gồm MCP SDK) + skill + MCP cho từng runtime.
-Mỗi `install:*` chạy `setup` trước rồi tới installer `scripts/install-agent.mjs`:
+Root `package.json` — common commands to install deps (including the MCP SDK) + skill + MCP
+for each runtime. Each `install:*` runs `setup` first, then `scripts/install-agent.mjs`:
 
 ```jsonc
 "scripts": {
@@ -260,56 +264,59 @@ Mỗi `install:*` chạy `setup` trước rồi tới installer `scripts/install
 }
 ```
 
-Installer cho mỗi runtime: copy skill từ `skills/<name>` vào skill-dir global của runtime
-(Claude Code `~/.claude/skills/`; Codex `~/.codex/skills/`; Copilot/Antigravity/Cursor
-không file-skill → dùng SKILL.md), tự ghi MCP config global chỗ an toàn (`claude mcp add -s user`,
-append `~/.codex/config.toml`, ghi `~/.cursor/mcp.json` nếu chưa có), in snippet cho config
-dùng chung (VS Code user settings), và luôn in reminder phải chạy gateway trước.
+Installer for each runtime: copy the skill from `skills/<name>` into the runtime's global
+skill directory (Claude Code `~/.claude/skills/`; Codex `~/.codex/skills/`;
+Copilot/Antigravity/Cursor do not support file-based skills, so use SKILL.md), write the
+global MCP config automatically where safe (`claude mcp add -s user`, append
+`~/.codex/config.toml`, write `~/.cursor/mcp.json` if absent), print a snippet for shared
+config (VS Code user settings), and always print a reminder to run the gateway first.
 
-Phần dưới là cấu hình script gốc của `server/package.json`:
+The section below is the original root `package.json` script config:
 ```jsonc
 "scripts": {
   "mcp": "npm --prefix server run mcp"
 }
 ```
 
-Cài: `npm --prefix server install`.
+Install: `npm --prefix server install`.
 
-## 6. Các bước thực thi (theo thứ tự)
+## 6. Implementation Steps (In Order)
 
 1. `npm --prefix server install @modelcontextprotocol/sdk`.
-2. Tạo `server/mcp-tool-catalog.mjs` (copy bảng command + helper `buildTool`).
-3. Tạo `server/mcp_server.mjs` theo khung mục 4.
-4. Thêm scripts `mcp` ở `server/package.json` và root.
-5. Test thủ công bằng MCP Inspector (mục 7) — verify `tools/list` ra ~35 tool và
-   gọi thử `ping`, `getActiveTab`, `getInteractiveElements`.
-6. Cấu hình một client thật (Claude Code / Cursor) và chạy end-to-end.
-7. Cập nhật `SKILL.md` + README: thêm mục "Dùng qua MCP server".
+2. Create `server/mcp-tool-catalog.mjs` (copy the command table + `buildTool` helper).
+3. Create `server/mcp_server.mjs` based on the section 4 skeleton.
+4. Add `mcp` scripts in `server/package.json` and root.
+5. Test manually with MCP Inspector (section 7): verify `tools/list` returns ~35 tools and
+   try calling `ping`, `getActiveTab`, `getInteractiveElements`.
+6. Configure one real client (Claude Code / Cursor) and run end-to-end.
+7. Update `SKILL.md` + README: add a "Use Through MCP Server" section.
 
-## 7. Test nhanh (không cần client thật)
+## 7. Quick Test (No Real Client Required)
 
-MCP Inspector của Anthropic chạy độc lập:
+Anthropic's MCP Inspector runs independently:
 
 ```bash
 # Terminal 1: extension hub
-npm run gateway          # (đảm bảo extension trong Chrome đã connect)
+npm run gateway          # (make sure the extension is connected in Chrome)
 
-# Terminal 2: soi MCP server
+# Terminal 2: inspect MCP server
 npx @modelcontextprotocol/inspector node server/mcp_server.mjs
 ```
 
-Inspector mở UI web → tab **Tools** → thấy danh sách tool → bấm `ping` → kỳ vọng `{ "ok": true }`.
+Inspector opens a web UI -> **Tools** tab -> tool list is visible -> click `ping` -> expect
+`{ "ok": true }`.
 
-## 8. Rủi ro / lưu ý
+## 8. Risks / Notes
 
-- **stdout là kênh MCP** — mọi log phải đi `console.error`, nếu in ra stdout sẽ làm hỏng
-  giao thức (client báo "invalid JSON").
-- MCP server **tự khởi động gateway** lúc startup nếu chưa có process nào nghe ở port
-  cấu hình (spawn detached, sống độc lập qua các lần MCP restart) và tái dùng gateway
-  sẵn có. Đặt `WEBMCP_NO_AUTOSTART=1` để tắt và tự chạy `npm run gateway`. Nếu `/api`
-  vẫn lỗi, message gợi ý phân biệt "gateway chưa tới được" với "extension chưa connect".
-- Event từ extension (`tabUpdated`...) **không** chuyển qua MCP trong MVP — tool là
-  request/response. Nếu cần, bổ sung sau bằng MCP notifications/resources.
-- Một extension = một connection (giới hạn hiện có của gateway) vẫn còn; MCP server
-  chỉ là client thứ N gọi HTTP nên không làm tệ hơn.
+- **stdout is the MCP channel**: all logs must go to `console.error`; printing to stdout
+  breaks the protocol and clients report "invalid JSON".
+- The MCP server **auto-starts the gateway** at startup if no process is listening on the
+  configured port (detached spawn, survives MCP restarts) and reuses an existing gateway
+  when present. Set `WEBMCP_NO_AUTOSTART=1` to disable this and run `npm run gateway`
+  manually. If `/api` still errors, the message should distinguish "gateway unreachable"
+  from "extension not connected".
+- Extension events (`tabUpdated`, etc.) are **not** forwarded through MCP in the MVP; tools
+  are request/response. If needed, add MCP notifications/resources later.
+- One extension = one connection, the gateway's current limit, remains true. The MCP server
+  is only the Nth HTTP client, so it does not make this worse.
 ```
