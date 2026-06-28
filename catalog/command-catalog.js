@@ -21,9 +21,10 @@ const COMMAND_DEFINITIONS = [
   ['type', { group: 'page', requiredParams: ['selector', 'text'] }],
   ['waitForSelector', { group: 'page', requiredParams: ['selector'], optionalParams: ['timeout'] }],
   ['getPageContent', { group: 'page', description: 'Get page title/url plus text and/or HTML. Supports pagination for large pages.', optionalParams: ['format', 'maxLength', 'offset'] }],
-  ['querySelectorAll', { group: 'page', description: 'Extract all elements matching a CSS selector as structured records, with limit/offset pagination. Use instead of stuffing data into HTML attributes when results exceed a single payload.', requiredParams: ['selector'], optionalParams: ['limit', 'offset', 'fields', 'textMaxLength'] }],
+  ['querySelectorAll', { group: 'page', description: 'Extract all elements matching a CSS selector as structured records, with limit/offset pagination. Pierces open Shadow DOM by default (pierceShadow). Use instead of stuffing data into HTML attributes when results exceed a single payload.', requiredParams: ['selector'], optionalParams: ['limit', 'offset', 'fields', 'textMaxLength', 'pierceShadow'] }],
   ['getWindowVariable', { group: 'page', description: 'Read a named window variable by dot-notation path (e.g. ytInitialData, __NEXT_DATA__, __NUXT__). Primary extraction strategy for SSR/hydrated SPAs — data is already rendered client-side and more stable than DOM selectors. Supports maxLength/offset pagination for large objects.', requiredParams: ['path'], optionalParams: ['maxLength', 'offset'] }],
-  ['findByText', { group: 'page', description: 'Find elements by visible text content using TreeWalker — no CSS class dependency. Returns bounds with centerX/Y for direct use with dispatchClick. More stable than class-based selectors on SPAs where class names change per build.', requiredParams: ['text'], optionalParams: ['exact', 'selector', 'maxResults'] }],
+  ['findByText', { group: 'page', description: 'Find elements by visible text content using TreeWalker — no CSS class dependency. Pierces open Shadow DOM by default (pierceShadow). Returns bounds with centerX/Y for direct use with dispatchClick. More stable than class-based selectors on SPAs where class names change per build.', requiredParams: ['text'], optionalParams: ['exact', 'selector', 'maxResults', 'pierceShadow'] }],
+  ['pageFetch', { group: 'page', description: 'Run fetch() inside the page (MAIN world) so it inherits the page cookies/origin/session. Returns a structured, size-bounded result (text/json/base64) with offset pagination. Use to call same-origin in-page APIs with the real logged-in session instead of hand-writing evaluateJS + fetch.', requiredParams: ['url'], optionalParams: ['method', 'headers', 'body', 'responseType', 'credentials', 'maxLength', 'offset'] }],
   ['evaluateJS', { group: 'cdp', requiredParams: ['code'] }],
 
   ['executeCDP', { group: 'cdp', requiredParams: ['method'], optionalParams: ['params'] }],
@@ -34,8 +35,8 @@ const COMMAND_DEFINITIONS = [
 
   ['getAccessibilityTree', { group: 'vision', optionalParams: ['depth', 'interestingOnly'] }],
   ['getDOMSnapshot', { group: 'vision', optionalParams: ['computedStyles'] }],
-  ['getElementBounds', { group: 'vision', requiredParams: ['selector'] }],
-  ['getInteractiveElements', { group: 'vision' }],
+  ['getElementBounds', { group: 'vision', requiredParams: ['selector'], optionalParams: ['pierceShadow'] }],
+  ['getInteractiveElements', { group: 'vision', optionalParams: ['pierceShadow'] }],
 
   ['getAriaSnapshot', { group: 'aria', description: 'Capture an accessibility snapshot of the page with ref IDs. Returns a readable tree with refs like ref=S1 that can be used with clickByRef, typeByRef, etc. More robust than CSS selectors for interacting with dynamic pages.', optionalParams: ['maxDepth'] }],
   ['clickByRef', { group: 'aria', description: 'Click an element using its ARIA snapshot ref (e.g. ref=S1). Run getAriaSnapshot first to get refs. More reliable than CSS selector click on SPAs.', requiredParams: ['ref'], optionalParams: ['element'] }],

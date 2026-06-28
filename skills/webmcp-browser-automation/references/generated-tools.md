@@ -4,7 +4,7 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (45)
+## Extension Commands (46)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
@@ -37,6 +37,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `moveMouse` | `{ x, y, steps?, fromX?, fromY?, tabId? }` | `cdp-input.js` |
 | `navigate` | `{ url, tabId? }` | `tab-management.js` |
 | `newTab` | `{ url? }` | `tab-management.js` |
+| `pageFetch` | `{ ... }` | `high-level.js` |
 | `ping` | `{}` | `full-control.js` |
 | `pressKey` | `{ key, text?, modifiers?, tabId? }` | `cdp-input.js` |
 | `querySelectorAll` | `{ ... }` | `high-level.js` |
@@ -79,8 +80,8 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 
 ## Capability Announcement Check
 
-- Announced capabilities: 45
-- Commands with handlers: 45
+- Announced capabilities: 46
+- Commands with handlers: 46
 - Announced without handler: none
 - Handler not announced: none
 

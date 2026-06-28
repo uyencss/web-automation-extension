@@ -1,6 +1,7 @@
 import { resolveTabId } from '../utils.js';
 import { evaluateInTab } from '../cdp-bridge.js';
 import { waitForPageStable } from './page-stability.js';
+import { DOM_DEEP_HELPERS } from './dom-helpers.js';
 
 export const highLevelHandlers = {
   async click(params) {
@@ -149,11 +150,15 @@ export const highLevelHandlers = {
       offset = 0,
       fields = ['text', 'href', 'src', 'value'],
       textMaxLength = 2000,
+      pierceShadow = true,
     } = params;
 
     const result = await evaluateInTab(tabId, `
       (() => {
-        const els = Array.from(document.querySelectorAll(${JSON.stringify(selector)}));
+        ${pierceShadow ? DOM_DEEP_HELPERS : ''}
+        const els = ${pierceShadow
+          ? `__webmcpQueryDeep(${JSON.stringify(selector)})`
+          : `Array.from(document.querySelectorAll(${JSON.stringify(selector)}))`};
         const total = els.length;
         const offset = ${Number(offset)};
         const limit = ${Number(limit)};
@@ -176,6 +181,7 @@ export const highLevelHandlers = {
           returned: page.length,
           truncated: offset + page.length < total,
           nextOffset: offset + page.length < total ? offset + page.length : null,
+          pierceShadow: ${pierceShadow},
           elements: page,
         };
       })()
@@ -257,43 +263,56 @@ export const highLevelHandlers = {
       exact = false,
       selector = '*',
       maxResults = 10,
+      pierceShadow = true,
     } = params;
 
     const result = await evaluateInTab(tabId, `
       (() => {
+        ${pierceShadow ? DOM_DEEP_HELPERS : ''}
         const needle = ${JSON.stringify(text)};
         const exact = ${JSON.stringify(exact)};
         const selector = ${JSON.stringify(selector)};
         const maxResults = ${Number(maxResults)};
+        const pierceShadow = ${pierceShadow};
 
         const matches = [];
-        // Use TreeWalker to find text nodes, then walk up to a visible element
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
         const seen = new Set();
 
-        let node;
-        while ((node = walker.nextNode()) && matches.length < maxResults) {
-          const raw = node.textContent || '';
-          const textContent = raw.trim();
-          if (!textContent) continue;
+        // Walk up to a real element matching the filter selector, crossing
+        // shadow boundaries (parentElement is null at a shadow root edge).
+        function ancestorMatch(node) {
+          let el = node.parentElement;
+          if (!el) {
+            const root = node.parentNode;
+            el = root && root.host ? root.host : null;
+          }
+          while (el) {
+            if (el.matches && el.matches(selector)) return el;
+            let next = el.parentElement;
+            if (!next) {
+              const root = el.getRootNode && el.getRootNode();
+              next = root && root.host ? root.host : null;
+            }
+            el = next;
+          }
+          return null;
+        }
 
+        function visit(node) {
+          if (matches.length >= maxResults) return;
+          const textContent = (node.textContent || '').trim();
+          if (!textContent) return;
           const hit = exact
             ? textContent === needle
             : textContent.toLowerCase().includes(needle.toLowerCase());
-          if (!hit) continue;
+          if (!hit) return;
 
-          // Walk up to a real element that matches the optional filter selector
-          let el = node.parentElement;
-          while (el && el !== document.body) {
-            if (el.matches && el.matches(selector)) break;
-            el = el.parentElement;
-          }
-          if (!el || seen.has(el)) continue;
+          const el = ancestorMatch(node);
+          if (!el || seen.has(el)) return;
           seen.add(el);
 
           const rect = el.getBoundingClientRect();
-          // Skip off-screen elements
-          if (rect.width === 0 && rect.height === 0) continue;
+          if (rect.width === 0 && rect.height === 0) return;
 
           matches.push({
             tag: el.tagName.toLowerCase(),
@@ -311,9 +330,102 @@ export const highLevelHandlers = {
           });
         }
 
-        return { total: matches.length, exact, needle, elements: matches };
+        if (pierceShadow) {
+          __webmcpWalkTextDeep(document.body, visit);
+        } else {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+          let node;
+          while ((node = walker.nextNode()) && matches.length < maxResults) visit(node);
+        }
+
+        return { total: matches.length, exact, needle, pierceShadow, elements: matches };
       })()
     `);
     return { tabId, ...result };
+  },
+
+  // pageFetch — run fetch() inside the page (MAIN world) so it inherits the
+  // page's cookies, origin, and credentials. Returns a structured, size-bounded
+  // result. Replaces hand-written evaluateJS + fetch boilerplate. The win is
+  // same-origin in-page APIs with the real session (CORS still applies as usual).
+  async pageFetch(params) {
+    const { url } = params;
+    if (!url) throw new Error('Missing required param: url');
+    const tabId = await resolveTabId(params);
+    const {
+      method = 'GET',
+      headers = {},
+      body = null,
+      responseType = 'auto', // 'text' | 'json' | 'base64' | 'auto'
+      credentials = 'include',
+      maxLength = 100000,
+      offset = 0,
+    } = params;
+
+    const result = await evaluateInTab(tabId, `
+      (async () => {
+        try {
+          const res = await fetch(${JSON.stringify(url)}, {
+            method: ${JSON.stringify(method)},
+            headers: ${JSON.stringify(headers)},
+            ${body != null ? `body: ${JSON.stringify(body)},` : ''}
+            credentials: ${JSON.stringify(credentials)},
+          });
+
+          const respHeaders = {};
+          res.headers.forEach((v, k) => { respHeaders[k] = v; });
+          const ct = res.headers.get('content-type') || '';
+
+          let rt = ${JSON.stringify(responseType)};
+          if (rt === 'auto') {
+            if (ct.includes('json')) rt = 'json';
+            else if (ct.startsWith('text/') || ct.includes('xml') || ct.includes('javascript')) rt = 'text';
+            else rt = 'base64';
+          }
+
+          const offset = ${Number(offset)};
+          const maxLength = ${Number(maxLength)};
+          let payload, total, truncated = false, parsed;
+
+          if (rt === 'base64') {
+            const buf = await res.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            total = bytes.length;
+            const slice = bytes.subarray(offset, offset + maxLength);
+            let bin = '';
+            for (let i = 0; i < slice.length; i++) bin += String.fromCharCode(slice[i]);
+            payload = btoa(bin);
+            truncated = offset + slice.length < total;
+          } else {
+            const textBody = await res.text();
+            total = textBody.length;
+            payload = textBody.slice(offset, offset + maxLength);
+            truncated = offset + payload.length < total;
+            if (rt === 'json' && !truncated && offset === 0) {
+              try { parsed = JSON.parse(payload); } catch (e) {}
+            }
+          }
+
+          return {
+            ok: res.ok,
+            status: res.status,
+            statusText: res.statusText,
+            responseType: rt,
+            contentType: ct,
+            headers: respHeaders,
+            totalLength: total,
+            offset,
+            returnedLength: payload.length,
+            truncated,
+            nextOffset: truncated ? offset + payload.length : null,
+            json: parsed,
+            body: parsed !== undefined ? undefined : payload,
+          };
+        } catch (e) {
+          return { error: true, message: String((e && e.message) || e) };
+        }
+      })()
+    `);
+    return { tabId, url, ...result };
   }
 };

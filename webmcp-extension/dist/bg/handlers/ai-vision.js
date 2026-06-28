@@ -1,5 +1,6 @@
 import { resolveTabId } from '../utils.js';
 import { sendCDPCommand, evaluateInTab } from '../cdp-bridge.js';
+import { DOM_DEEP_HELPERS } from './dom-helpers.js';
 
 export const aiVisionHandlers = {
   async getAccessibilityTree(params) {
@@ -63,10 +64,14 @@ export const aiVisionHandlers = {
     const { selector } = params;
     if (!selector) throw new Error('Missing required param: selector');
     const tabId = await resolveTabId(params);
+    const { pierceShadow = true } = params;
 
     const result = await evaluateInTab(tabId, `
       (() => {
-        const els = document.querySelectorAll(${JSON.stringify(selector)});
+        ${pierceShadow ? DOM_DEEP_HELPERS : ''}
+        const els = ${pierceShadow
+          ? `__webmcpQueryDeep(${JSON.stringify(selector)})`
+          : `document.querySelectorAll(${JSON.stringify(selector)})`};
         return Array.from(els).slice(0, 50).map((el, i) => {
           const rect = el.getBoundingClientRect();
           return {
@@ -96,11 +101,15 @@ export const aiVisionHandlers = {
 
   async getInteractiveElements(params) {
     const tabId = await resolveTabId(params);
+    const { pierceShadow = true } = params;
 
     const result = await evaluateInTab(tabId, `
       (() => {
+        ${pierceShadow ? DOM_DEEP_HELPERS : ''}
         const selectors = 'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="radio"],[role="switch"],[role="combobox"],[role="searchbox"],[contenteditable="true"]';
-        const els = document.querySelectorAll(selectors);
+        const els = ${pierceShadow
+          ? `__webmcpQueryDeep(selectors)`
+          : `document.querySelectorAll(selectors)`};
         return Array.from(els).slice(0, 200).map((el, i) => {
           const rect = el.getBoundingClientRect();
           if (rect.width === 0 || rect.height === 0) return null;
