@@ -7,8 +7,10 @@
     "type": "git",
     "url": "git+https://github.com/uyencss/web-automation-extension.git"
   },
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Reusable WebMCP Chrome extension, gateway, and agent skill kit for browser automation.",
+  "license": "MIT",
+  "author": "uyencss",
   "bin": {
     "webmcp": "bin/webmcp.mjs"
   },
@@ -20,7 +22,8 @@
     "catalog/command-catalog.js",
     "webmcp-extension/dist/",
     "skills/webmcp-browser-automation/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "setup": "npm --prefix server install",
@@ -29,6 +32,7 @@
     "cli": "node bin/webmcp.mjs",
     "link:local": "npm link",
     "pack:dry-run": "npm pack --dry-run",
+    "build:extension": "node scripts/build-extension-zip.mjs",
     "install:agent": "npm run setup && node scripts/install-agent.mjs",
     "install:claude": "npm run setup && node scripts/install-agent.mjs claude",
     "install:codex": "npm run setup && node scripts/install-agent.mjs codex",

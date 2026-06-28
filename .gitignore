@@ -45,5 +45,8 @@ docs/drafts/
 # Archived optional workflow runner
 .archive/runner/
 
+# Built Chrome Web Store upload packages
+webmcp-extension/build/
+
 # Local Claude Code config (per-machine, not shared)
 .claude/

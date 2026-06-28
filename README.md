@@ -323,3 +323,7 @@ webmcp -h
 | `navigator.modelContext not found`                 | Use a normal web page, wait for load, and reload the extension/page. Chrome internal pages are not supported. |
 | `Another debugger is already attached`             | Only one debugger client can attach to a tab. Use another tab or detach the conflicting extension.            |
 | Generated reference is stale                       | Run `npm run tools:generate`.                                                                                 |
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 uyencss.
