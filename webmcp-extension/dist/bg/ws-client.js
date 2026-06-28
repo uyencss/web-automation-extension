@@ -37,7 +37,7 @@ export function connectWebSocket() {
         'listTabs', 'navigate', 'newTab', 'closeTab', 'getActiveTab',
         // Page interaction (JS-based)
         'evaluateJS', 'executeCDP', 'screenshot',
-        'click', 'type', 'waitForSelector', 'getPageContent',
+        'click', 'type', 'waitForSelector', 'getPageContent', 'querySelectorAll',
         // WebMCP
         'webmcp.listTools', 'webmcp.invokeTool',
         // Phase 1: AI Vision

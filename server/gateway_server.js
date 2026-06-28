@@ -3,6 +3,11 @@ const { WebSocketServer } = require('ws');
 
 const PORT = Number(process.env.WEBMCP_GATEWAY_PORT || process.env.PORT || 7865);
 const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
+// Interval at which the gateway pings the extension. In Manifest V3, any
+// inbound WebSocket message resets the service-worker idle timer (~30s).
+// Pinging well under 30s keeps the extension's service worker alive so the
+// connection survives even when all tabs/windows are closed.
+const KEEPALIVE_PING_MS = Number(process.env.WEBMCP_GATEWAY_PING_MS || 15000);
 
 // ── State ────────────────────────────────────────────────────
 let extensionWs = null;
@@ -105,6 +110,16 @@ wss.on('connection', (ws, req) => {
   extensionWs = ws;
   console.log(`[Gateway] Chrome Extension connected from ${req.socket.remoteAddress}`);
 
+  // ── Keep the MV3 service worker alive ──────────────────────
+  // Send a lightweight ping notification on an interval. The extension does
+  // not need to reply — the mere act of receiving a message resets Chrome's
+  // service-worker idle timer, keeping the WebSocket connection alive.
+  const keepAliveTimer = setInterval(() => {
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'ping', params: { ts: Date.now() } }));
+    }
+  }, KEEPALIVE_PING_MS);
+
   ws.on('message', (data) => {
     let msg;
     try {
@@ -136,8 +151,8 @@ wss.on('connection', (ws, req) => {
       const { method, params = {} } = msg;
       if (method === 'extensionReady') {
         console.log(`[Gateway] Extension is ready: ${params.name} v${params.version}`);
-      } else if (method === 'heartbeat') {
-        // Silent heartbeat
+      } else if (method === 'heartbeat' || method === 'pong') {
+        // Silent keep-alive traffic
       } else {
         console.log(`[Gateway] Event from Extension: ${method}`, params);
       }
@@ -146,6 +161,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     console.log('[Gateway] Chrome Extension disconnected');
+    clearInterval(keepAliveTimer);
     extensionWs = null;
 
     // Fail all currently pending HTTP requests

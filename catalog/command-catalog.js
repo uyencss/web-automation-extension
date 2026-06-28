@@ -20,7 +20,8 @@ const COMMAND_DEFINITIONS = [
   ['click', { group: 'page', requiredParams: ['selector'] }],
   ['type', { group: 'page', requiredParams: ['selector', 'text'] }],
   ['waitForSelector', { group: 'page', requiredParams: ['selector'], optionalParams: ['timeout'] }],
-  ['getPageContent', { group: 'page' }],
+  ['getPageContent', { group: 'page', description: 'Get page title/url plus text and/or HTML. Supports pagination for large pages.', optionalParams: ['format', 'maxLength', 'offset'] }],
+  ['querySelectorAll', { group: 'page', description: 'Extract all elements matching a CSS selector as structured records, with limit/offset pagination. Use instead of stuffing data into HTML attributes when results exceed a single payload.', requiredParams: ['selector'], optionalParams: ['limit', 'offset', 'fields', 'textMaxLength'] }],
   ['evaluateJS', { group: 'cdp', requiredParams: ['code'] }],
 
   ['executeCDP', { group: 'cdp', requiredParams: ['method'], optionalParams: ['params'] }],
