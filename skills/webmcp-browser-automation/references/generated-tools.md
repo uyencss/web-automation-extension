@@ -4,7 +4,7 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (43)
+## Extension Commands (45)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
@@ -18,6 +18,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `dispatchClick` | `{ x, y, button?, clickCount?, tabId? }` | `cdp-input.js` |
 | `evaluateJS` | `{ code, tabId? }` | `cdp-actions.js` |
 | `executeCDP` | `{ method, params?, tabId? }` | `cdp-actions.js` |
+| `findByText` | `{ ... }` | `high-level.js` |
 | `getAccessibilityTree` | `{ interestingOnly?, depth?, tabId? }` | `ai-vision.js` |
 | `getActiveTab` | `{}` | `tab-management.js` |
 | `getAriaSnapshot` | `{ ... }` | `aria-snapshot.js` |
@@ -28,6 +29,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `getInteractiveElements` | `{ tabId? }` | `ai-vision.js` |
 | `getLocalStorage` | `{ tabId? }` | `full-control.js` |
 | `getPageContent` | `{ tabId? }` | `high-level.js` |
+| `getWindowVariable` | `{ ... }` | `high-level.js` |
 | `hover` | `{ selector, tabId? }` | `cdp-input.js` |
 | `hoverByRef` | `{ ... }` | `aria-snapshot.js` |
 | `listTabs` | `{}` | `tab-management.js` |
@@ -77,8 +79,8 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 
 ## Capability Announcement Check
 
-- Announced capabilities: 43
-- Commands with handlers: 43
+- Announced capabilities: 45
+- Commands with handlers: 45
 - Announced without handler: none
 - Handler not announced: none
 

@@ -38,6 +38,7 @@ export function connectWebSocket() {
         // Page interaction (JS-based)
         'evaluateJS', 'executeCDP', 'screenshot',
         'click', 'type', 'waitForSelector', 'getPageContent', 'querySelectorAll',
+        'getWindowVariable', 'findByText',
         // WebMCP
         'webmcp.listTools', 'webmcp.invokeTool',
         // Phase 1: AI Vision

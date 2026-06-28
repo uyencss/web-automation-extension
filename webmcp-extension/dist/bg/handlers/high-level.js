@@ -181,5 +181,139 @@ export const highLevelHandlers = {
       })()
     `);
     return { tabId, selector, ...result };
+  },
+
+  // P2 — Read a named window variable (e.g. ytInitialData, __NEXT_DATA__).
+  // Supports dot-notation path and pagination so large objects can be chunked.
+  // This is the primary extraction strategy for SSR/hydrated SPAs — data is
+  // already rendered client-side and far more stable than DOM selectors.
+  async getWindowVariable(params) {
+    const { path } = params;
+    if (!path) throw new Error('Missing required param: path');
+    const tabId = await resolveTabId(params);
+    const { maxLength = 50000, offset = 0 } = params;
+
+    const result = await evaluateInTab(tabId, `
+      (() => {
+        // Walk dot-notation path safely (e.g. "ytInitialData.contents.twoColumn...")
+        const parts = ${JSON.stringify(path)}.split('.');
+        let value = window;
+        for (const part of parts) {
+          if (value == null || typeof value !== 'object') {
+            return { found: false, reason: 'Path "' + parts.slice(0, parts.indexOf(part) + 1).join('.') + '" is ' + typeof value };
+          }
+          if (!(part in value)) {
+            return { found: false, reason: 'Key "' + part + '" not found at path "' + parts.slice(0, parts.indexOf(part)).join('.') + '"' };
+          }
+          value = value[part];
+        }
+
+        if (value === undefined) return { found: false, reason: 'Value is undefined' };
+
+        // Serialize and paginate
+        let serialized;
+        try {
+          serialized = JSON.stringify(value);
+        } catch (e) {
+          return { found: true, error: 'Value is not JSON-serializable: ' + e.message };
+        }
+
+        const total = serialized.length;
+        const offset = ${Number(offset)};
+        const maxLength = ${Number(maxLength)};
+        const chunk = serialized.slice(offset, offset + maxLength);
+        const truncated = offset + chunk.length < total;
+
+        // If the full value fits, parse it back so callers get an object, not a string
+        let parsedValue = undefined;
+        if (!truncated && offset === 0) {
+          try { parsedValue = JSON.parse(chunk); } catch {}
+        }
+
+        return {
+          found: true,
+          totalLength: total,
+          offset,
+          returnedLength: chunk.length,
+          truncated,
+          nextOffset: truncated ? offset + chunk.length : null,
+          // Prefer parsed object; fall back to raw string chunk for large paginated responses
+          value: parsedValue !== undefined ? parsedValue : chunk,
+          isString: parsedValue === undefined,
+        };
+      })()
+    `);
+    return { tabId, path, ...result };
+  },
+
+  // P3 — Find elements by visible text using TreeWalker (no CSS class dependency).
+  // Returns same bounds schema as getInteractiveElements so results can be used
+  // directly with dispatchClick { x: bounds.centerX, y: bounds.centerY }.
+  async findByText(params) {
+    const { text } = params;
+    if (!text) throw new Error('Missing required param: text');
+    const tabId = await resolveTabId(params);
+    const {
+      exact = false,
+      selector = '*',
+      maxResults = 10,
+    } = params;
+
+    const result = await evaluateInTab(tabId, `
+      (() => {
+        const needle = ${JSON.stringify(text)};
+        const exact = ${JSON.stringify(exact)};
+        const selector = ${JSON.stringify(selector)};
+        const maxResults = ${Number(maxResults)};
+
+        const matches = [];
+        // Use TreeWalker to find text nodes, then walk up to a visible element
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        const seen = new Set();
+
+        let node;
+        while ((node = walker.nextNode()) && matches.length < maxResults) {
+          const raw = node.textContent || '';
+          const textContent = raw.trim();
+          if (!textContent) continue;
+
+          const hit = exact
+            ? textContent === needle
+            : textContent.toLowerCase().includes(needle.toLowerCase());
+          if (!hit) continue;
+
+          // Walk up to a real element that matches the optional filter selector
+          let el = node.parentElement;
+          while (el && el !== document.body) {
+            if (el.matches && el.matches(selector)) break;
+            el = el.parentElement;
+          }
+          if (!el || seen.has(el)) continue;
+          seen.add(el);
+
+          const rect = el.getBoundingClientRect();
+          // Skip off-screen elements
+          if (rect.width === 0 && rect.height === 0) continue;
+
+          matches.push({
+            tag: el.tagName.toLowerCase(),
+            text: (el.textContent || '').trim().slice(0, 300),
+            matchedText: textContent.slice(0, 200),
+            bounds: {
+              x: Math.round(rect.left + window.scrollX),
+              y: Math.round(rect.top + window.scrollY),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+              centerX: Math.round(rect.left + window.scrollX + rect.width / 2),
+              centerY: Math.round(rect.top + window.scrollY + rect.height / 2),
+            },
+            visible: rect.top >= 0 && rect.top < window.innerHeight,
+          });
+        }
+
+        return { total: matches.length, exact, needle, elements: matches };
+      })()
+    `);
+    return { tabId, ...result };
   }
 };

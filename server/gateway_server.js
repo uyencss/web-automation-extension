@@ -9,6 +9,31 @@ const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000
 // connection survives even when all tabs/windows are closed.
 const KEEPALIVE_PING_MS = Number(process.env.WEBMCP_GATEWAY_PING_MS || 15000);
 
+// ── Result normalization ─────────────────────────────────────
+// P1: Page WebMCP tools return results nested as:
+//   result.result.content[0].text = '{"count":20,"elements":[...]}'
+// Auto-parse that text into result.parsedContent so callers never need
+// to unwrap manually. The original result.result is kept for compatibility.
+//
+// P4: If parsedContent indicates a page-tool error, mark it for HTTP 422.
+function normalizeResult(result) {
+  if (!result) return result;
+  try {
+    const text = result?.result?.content?.[0]?.text;
+    if (typeof text === 'string' && (text.trimStart().startsWith('{') || text.trimStart().startsWith('['))) {
+      const parsed = JSON.parse(text);
+      // P4: page tool signalled an error
+      if (parsed && typeof parsed === 'object' && parsed.error === true && parsed.message) {
+        return { ...result, parsedContent: parsed, _pageToolError: { message: parsed.message } };
+      }
+      return { ...result, parsedContent: parsed };
+    }
+  } catch {
+    // Not JSON or parse failed — return as-is
+  }
+  return result;
+}
+
 // ── State ────────────────────────────────────────────────────
 let extensionWs = null;
 let nextId = 1;
@@ -140,7 +165,16 @@ wss.on('connection', (ws, req) => {
           writeJson(pending.res, 500, { error: msg.error?.message || 'Execution error' });
         } else {
           console.log(`[Gateway] Success response received for ID=${msg.id}`);
-          writeJson(pending.res, 200, { result: msg.result });
+          // P1: auto-unwrap nested page-tool JSON so callers get parsedContent directly
+          // P4: surface page-tool errors at HTTP level (422) instead of burying in 200 body
+          const normalized = normalizeResult(msg.result);
+          if (normalized._pageToolError) {
+            const { _pageToolError, ...rest } = normalized;
+            console.log(`[Gateway] Page tool error for ID=${msg.id}: ${_pageToolError.message}`);
+            writeJson(pending.res, 422, { error: _pageToolError.message, errorType: 'pageToolError', raw: rest });
+          } else {
+            writeJson(pending.res, 200, { result: normalized });
+          }
         }
       }
       return;

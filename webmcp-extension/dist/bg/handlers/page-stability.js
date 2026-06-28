@@ -22,15 +22,22 @@ const POLL_INTERVAL_MS = 150;
  *
  * @param {number} tabId
  * @param {object} [options]
- * @param {number} [options.minStableMs=800]   — minimum quiet period
- * @param {number} [options.maxWaitMs=5000]    — maximum time to wait
- * @param {number} [options.maxMutations=2]    — mutation threshold per poll
+ * @param {number}   [options.minStableMs=800]        — minimum quiet period
+ * @param {number}   [options.maxWaitMs=5000]         — maximum time to wait
+ * @param {number}   [options.maxMutations=2]         — mutation threshold per poll
+ * @param {string}   [options.watchSelector=null]     — only observe this subtree (CSS selector)
+ * @param {string[]} [options.ignoreSelectors=[]]     — exclude these subtrees from mutation count
+ * @param {boolean}  [options.ignoreCharacterData=false] — ignore text-node mutations
+ *                    (useful for video pages where timestamp ticks every 250ms)
  */
 export async function waitForPageStable(tabId, options = {}) {
   const {
     minStableMs = DEFAULT_MIN_STABLE_MS,
     maxWaitMs = DEFAULT_MAX_WAIT_MS,
     maxMutations = DEFAULT_MAX_MUTATIONS,
+    watchSelector = null,
+    ignoreSelectors = [],
+    ignoreCharacterData = false,
   } = options;
 
   const startTime = Date.now();
@@ -48,12 +55,35 @@ export async function waitForPageStable(tabId, options = {}) {
         window.__webmcp_mutation_count = 0;
         window.__webmcp_last_mutation_time = Date.now();
 
+        // Resolve watch root: full document or a specific subtree
+        const watchSelector = ${JSON.stringify(watchSelector)};
+        const root = watchSelector
+          ? (document.querySelector(watchSelector) || document.documentElement)
+          : document.documentElement;
+
+        // Build a Set of ignored subtree roots for fast containment checks
+        const ignoreSelectors = ${JSON.stringify(ignoreSelectors)};
+        const ignoredRoots = ignoreSelectors.length
+          ? Array.from(document.querySelectorAll(ignoreSelectors.join(',')))
+          : [];
+
+        const ignoreCharacterData = ${JSON.stringify(ignoreCharacterData)};
+
+        function isIgnored(node) {
+          if (!ignoredRoots.length) return false;
+          return ignoredRoots.some(r => r.contains(node));
+        }
+
         const observer = new MutationObserver((mutations) => {
-          // Only count meaningful mutations (ignore attribute-only changes on scripts/styles)
           const meaningful = mutations.filter(m => {
-            if (m.type === 'childList') return true;
-            if (m.type === 'characterData') return true;
+            // Optional: skip text-node changes (e.g. video timestamp tick)
+            if (m.type === 'characterData') return !ignoreCharacterData;
+            if (m.type === 'childList') {
+              if (isIgnored(m.target)) return false;
+              return true;
+            }
             if (m.type === 'attributes') {
+              if (isIgnored(m.target)) return false;
               const tag = m.target.tagName?.toLowerCase();
               return tag !== 'script' && tag !== 'style' && tag !== 'link';
             }
@@ -65,16 +95,16 @@ export async function waitForPageStable(tabId, options = {}) {
           }
         });
 
-        observer.observe(document.documentElement, {
+        observer.observe(root, {
           childList: true,
           subtree: true,
           attributes: true,
-          characterData: true,
+          characterData: !ignoreCharacterData,
           attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'disabled', 'value', 'src', 'href'],
         });
 
         window.__webmcp_stability_observer = observer;
-        return { installed: true };
+        return { installed: true, watchRoot: root.tagName || 'document', ignoredCount: ignoredRoots.length };
       })()
     `);
 
@@ -156,7 +186,7 @@ export async function waitForPageStable(tabId, options = {}) {
 export const pageStabilityHandlers = {
   async waitForStable(params) {
     const tabId = await resolveTabId(params);
-    const { minStableMs, maxWaitMs, maxMutations } = params;
-    return await waitForPageStable(tabId, { minStableMs, maxWaitMs, maxMutations });
+    const { minStableMs, maxWaitMs, maxMutations, watchSelector, ignoreSelectors, ignoreCharacterData } = params;
+    return await waitForPageStable(tabId, { minStableMs, maxWaitMs, maxMutations, watchSelector, ignoreSelectors, ignoreCharacterData });
   },
 };

@@ -22,6 +22,8 @@ const COMMAND_DEFINITIONS = [
   ['waitForSelector', { group: 'page', requiredParams: ['selector'], optionalParams: ['timeout'] }],
   ['getPageContent', { group: 'page', description: 'Get page title/url plus text and/or HTML. Supports pagination for large pages.', optionalParams: ['format', 'maxLength', 'offset'] }],
   ['querySelectorAll', { group: 'page', description: 'Extract all elements matching a CSS selector as structured records, with limit/offset pagination. Use instead of stuffing data into HTML attributes when results exceed a single payload.', requiredParams: ['selector'], optionalParams: ['limit', 'offset', 'fields', 'textMaxLength'] }],
+  ['getWindowVariable', { group: 'page', description: 'Read a named window variable by dot-notation path (e.g. ytInitialData, __NEXT_DATA__, __NUXT__). Primary extraction strategy for SSR/hydrated SPAs — data is already rendered client-side and more stable than DOM selectors. Supports maxLength/offset pagination for large objects.', requiredParams: ['path'], optionalParams: ['maxLength', 'offset'] }],
+  ['findByText', { group: 'page', description: 'Find elements by visible text content using TreeWalker — no CSS class dependency. Returns bounds with centerX/Y for direct use with dispatchClick. More stable than class-based selectors on SPAs where class names change per build.', requiredParams: ['text'], optionalParams: ['exact', 'selector', 'maxResults'] }],
   ['evaluateJS', { group: 'cdp', requiredParams: ['code'] }],
 
   ['executeCDP', { group: 'cdp', requiredParams: ['method'], optionalParams: ['params'] }],
@@ -41,7 +43,7 @@ const COMMAND_DEFINITIONS = [
   ['hoverByRef', { group: 'aria', description: 'Hover over an element using its ARIA snapshot ref.', requiredParams: ['ref'] }],
   ['selectByRef', { group: 'aria', description: 'Select option(s) in a dropdown using its ARIA snapshot ref.', requiredParams: ['ref', 'values'] }],
 
-  ['waitForStable', { group: 'control', description: 'Wait for the page to stabilize (no DOM mutations for a quiet period). Useful after navigation or clicking dynamic elements.', optionalParams: ['minStableMs', 'maxWaitMs', 'maxMutations'] }],
+  ['waitForStable', { group: 'control', description: 'Wait for the page to stabilize (no DOM mutations for a quiet period). Useful after navigation or clicking dynamic elements. Use watchSelector to scope to a subtree, ignoreSelectors to exclude noisy elements (e.g. video player), and ignoreCharacterData to suppress text-node tick mutations on video/live pages.', optionalParams: ['minStableMs', 'maxWaitMs', 'maxMutations', 'watchSelector', 'ignoreSelectors', 'ignoreCharacterData'] }],
 
   ['dispatchClick', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['button', 'clickCount'] }],
   ['moveMouse', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['fromX', 'fromY', 'steps'] }],
