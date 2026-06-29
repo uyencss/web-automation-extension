@@ -48,6 +48,9 @@ export function connectWebSocket() {
         'getAriaSnapshot', 'clickByRef', 'typeByRef', 'hoverByRef', 'selectByRef',
         // Page Stability
         'waitForStable',
+        // Console observability
+        'startConsoleCapture', 'stopConsoleCapture',
+        'readConsoleMessages', 'clearConsoleMessages',
         // Phase 2: CDP Input
         'dispatchClick', 'moveMouse', 'pressKey', 'typeText', 'scroll', 'hover', 'selectOption',
         // Phase 3: Full Control

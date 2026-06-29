@@ -1,5 +1,6 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const { getCommandGroups, listCommands } = require('../catalog/command-catalog.js');
 
 const PORT = Number(process.env.WEBMCP_GATEWAY_PORT || process.env.PORT || 7865);
 const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
@@ -48,6 +49,19 @@ function writeJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function listGatewayCommands() {
+  return listCommands().filter((command) => command.group !== 'runner');
+}
+
+function getGatewayCommandGroups() {
+  return getCommandGroups()
+    .filter((group) => group.id !== 'runner')
+    .map((group) => ({
+      ...group,
+      commands: group.commands.filter((command) => command.group !== 'runner'),
+    }));
+}
+
 // ── HTTP Server ──────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   // CORS Headers to allow scripts/agents to query from anywhere
@@ -68,6 +82,8 @@ const server = http.createServer((req, res) => {
       wsUrl: `ws://localhost:${PORT}`,
       apiUrl: `http://localhost:${PORT}/api`,
       timeoutMs: COMMAND_TIMEOUT_MS,
+      commands: listGatewayCommands(),
+      commandGroups: getGatewayCommandGroups(),
     });
   }
 

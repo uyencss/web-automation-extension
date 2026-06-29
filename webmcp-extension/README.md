@@ -1,8 +1,8 @@
-# WebMCP Extension v2.1.0
+# WebMCP Extension v2.1.2
 
-Chrome extension for **AI-driven browser automation** over WebSocket. Provides **36 commands**
+Chrome extension for **AI-driven browser automation** over WebSocket. Provides **51 commands**
 so an AI model can fully control the browser: inspect page structure, click/type at
-coordinates, manage cookies/storage, take screenshots, and more.
+coordinates, capture console output, manage cookies/storage, take screenshots, and more.
 
 ## Architecture
 
@@ -58,12 +58,12 @@ The extension auto-connects within 3 seconds. The gateway logs:
 ```
 ✓ Extension connected
 ✓ Extension ready: WebMCP Tools Provider v2.1.0
-    36 capabilities registered
+    51 capabilities registered
 ```
 
 ---
 
-## All Commands (36)
+## All Commands (51)
 
 Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets the active tab.
 
@@ -77,15 +77,20 @@ Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets 
 | `closeTab`     | `{ tabId? }`      | Close a tab                            |
 | `getActiveTab` | `{}`              | Current active tab info                |
 
-### Page Interaction — JS-based (5)
+### Page Interaction — JS-based (10)
 
-| Method            | Params                           | Description                              |
-| ----------------- | -------------------------------- | ---------------------------------------- |
-| `click`           | `{ selector, tabId? }`           | Click an element by CSS selector         |
-| `type`            | `{ selector, text, tabId? }`     | Type text into an input (React/Vue compatible) |
-| `waitForSelector` | `{ selector, timeout?, tabId? }` | Wait for an element to appear            |
-| `getPageContent`  | `{ tabId? }`                     | Get page title + text + HTML             |
-| `evaluateJS`      | `{ code, tabId? }`               | Run arbitrary JavaScript                 |
+| Method              | Params                                          | Description                              |
+| ------------------- | ----------------------------------------------- | ---------------------------------------- |
+| `listFrames`        | `{ flat?, force?, tabId? }`                     | List iframe/frame contexts               |
+| `click`             | `{ selector, frame?, tabId? }`                  | Click an element by CSS selector         |
+| `type`              | `{ selector, text, frame?, tabId? }`            | Type text into an input (React/Vue compatible) |
+| `waitForSelector`   | `{ selector, timeout?, frame?, tabId? }`        | Wait for an element to appear            |
+| `getPageContent`    | `{ format?, maxLength?, offset?, frame?, tabId? }` | Get page title, text, and/or HTML     |
+| `querySelectorAll`  | `{ selector, limit?, offset?, fields?, pierceShadow?, frame?, tabId? }` | Extract elements as structured records |
+| `getWindowVariable` | `{ path, maxLength?, offset?, frame?, tabId? }` | Read globals like `__NEXT_DATA__`        |
+| `findByText`        | `{ text, exact?, selector?, pierceShadow?, frame?, tabId? }` | Find elements by visible text |
+| `pageFetch`         | `{ url, method?, headers?, body?, responseType?, frame?, tabId? }` | Fetch from page origin/session |
+| `evaluateJS`        | `{ code, frame?, tabId? }`                      | Run arbitrary JavaScript                 |
 
 ### CDP — Chrome DevTools Protocol (2)
 
@@ -100,6 +105,22 @@ Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets 
 | ------------------- | ------------------------------ | ------------------------------- |
 | `webmcp.listTools`  | `{ tabId? }`                   | List WebMCP tools on the page   |
 | `webmcp.invokeTool` | `{ toolName, input?, tabId? }` | Invoke one WebMCP tool          |
+
+### ARIA Snapshot Interaction (5)
+
+| Method            | Params                         | Description                              |
+| ----------------- | ------------------------------ | ---------------------------------------- |
+| `getAriaSnapshot` | `{ maxDepth?, tabId? }`        | Capture semantic tree with stable refs   |
+| `clickByRef`      | `{ ref, element?, tabId? }`    | Click using an ARIA snapshot ref         |
+| `typeByRef`       | `{ ref, text, submit?, tabId? }` | Type using an ARIA snapshot ref        |
+| `hoverByRef`      | `{ ref, tabId? }`              | Hover using an ARIA snapshot ref         |
+| `selectByRef`     | `{ ref, values, tabId? }`      | Select option values by ARIA ref         |
+
+### Page Stability (1)
+
+| Method          | Params                                          | Description                              |
+| --------------- | ----------------------------------------------- | ---------------------------------------- |
+| `waitForStable` | `{ minStableMs?, maxWaitMs?, maxMutations?, watchSelector?, tabId? }` | Wait until DOM mutations quiet down |
 
 ### 🆕 AI Vision — Page Structure (4)
 
@@ -148,6 +169,23 @@ The AI needs to "see" the page structure to know where to click.
     }
   ]
 }
+```
+
+### Console Observability (4)
+
+Capture console output and uncaught exceptions with explicit start/read/clear/stop control.
+
+| Method                 | Params                                          | Description                                      |
+| ---------------------- | ----------------------------------------------- | ------------------------------------------------ |
+| `startConsoleCapture`  | `{ tabId? }`                                    | Start buffering console calls and exceptions     |
+| `readConsoleMessages`  | `{ level?, pattern?, limit?, since?, clear?, tabId? }` | Read buffered messages with filters       |
+| `clearConsoleMessages` | `{ tabId? }`                                    | Clear the buffer while capture remains active    |
+| `stopConsoleCapture`   | `{ tabId? }`                                    | Stop capture and release the Runtime listener    |
+
+Example:
+
+```json
+{ "method": "readConsoleMessages", "params": { "level": "error", "limit": 20 } }
 ```
 
 ### 🆕 CDP Input Dispatch (7)
@@ -322,7 +360,7 @@ web-automation-extension/
 │   ├── README.md                      # This file
 │   └── dist/                          # ← Load this directory into Chrome
 │       ├── manifest.json              # Manifest V3
-│       ├── background.js              # WebSocket client + 36 command handlers
+│       ├── background.js              # WebSocket client + 51 command handlers
 │       ├── content-scripts/
 │       │   ├── bridge.js              # Isolated-world bridge
 │       │   └── register-tools.js      # Inject 13 WebMCP tools into every page

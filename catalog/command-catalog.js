@@ -4,6 +4,7 @@ const COMMAND_GROUPS = [
   { id: 'cdp', label: 'Chrome DevTools Protocol' },
   { id: 'webmcp', label: 'Page WebMCP tools' },
   { id: 'vision', label: 'AI observation' },
+  { id: 'observability', label: 'Runtime observability' },
   { id: 'aria', label: 'ARIA snapshot interaction' },
   { id: 'input', label: 'CDP input' },
   { id: 'control', label: 'Full browser control' },
@@ -47,6 +48,11 @@ const COMMAND_DEFINITIONS = [
 
   ['waitForStable', { group: 'control', description: 'Wait for the page to stabilize (no DOM mutations for a quiet period). Useful after navigation or clicking dynamic elements. Use watchSelector to scope to a subtree, ignoreSelectors to exclude noisy elements (e.g. video player), and ignoreCharacterData to suppress text-node tick mutations on video/live pages.', optionalParams: ['minStableMs', 'maxWaitMs', 'maxMutations', 'watchSelector', 'ignoreSelectors', 'ignoreCharacterData'] }],
 
+  ['startConsoleCapture', { group: 'observability', description: 'Start capturing Runtime console API calls and uncaught exceptions for a tab. Uses CDP Runtime events and a bounded per-tab buffer.', optionalParams: ['tabId'] }],
+  ['stopConsoleCapture', { group: 'observability', description: 'Stop console capture for a tab and clear its buffered messages.', optionalParams: ['tabId'] }],
+  ['readConsoleMessages', { group: 'observability', description: 'Read captured console messages with optional level, substring pattern, timestamp, limit, and consume-on-read filtering.', optionalParams: ['level', 'pattern', 'limit', 'since', 'clear', 'tabId'] }],
+  ['clearConsoleMessages', { group: 'observability', description: 'Clear the captured console message buffer while keeping capture active.', optionalParams: ['tabId'] }],
+
   ['dispatchClick', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['button', 'clickCount', 'frame'] }],
   ['moveMouse', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['fromX', 'fromY', 'steps', 'frame'] }],
   ['pressKey', { group: 'input', requiredParams: ['key'], optionalParams: ['text', 'modifiers'] }],
@@ -65,6 +71,7 @@ const COMMAND_DEFINITIONS = [
   ['setViewport', { group: 'control', requiredParams: ['width', 'height'], optionalParams: ['deviceScaleFactor', 'mobile'] }],
   ['resetViewport', { group: 'control' }],
   ['ping', { group: 'control' }],
+  ['getExtensionInfo', { group: 'control', description: 'Return extension manifest version, attached debugger tabs, and gateway WebSocket URL.' }],
 
   ['wait', { group: 'runner', optionalParams: ['ms', 'timeout'] }],
   ['delay', { group: 'runner', optionalParams: ['ms', 'timeout'] }],

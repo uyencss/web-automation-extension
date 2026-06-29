@@ -21,6 +21,8 @@ const NUMERIC_PARAMS = new Set([
   'maxWaitMs',
   'minStableMs',
   'ms',
+  'limit',
+  'since',
   'steps',
   'tabId',
   'timeout',
@@ -33,6 +35,7 @@ const BOOLEAN_PARAMS = new Set([
   'fullPage',
   'interestingOnly',
   'mobile',
+  'clear',
   'submit',
 ]);
 

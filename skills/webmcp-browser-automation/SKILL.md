@@ -220,6 +220,11 @@ These are background commands registered in
 | `selectByRef` | Select dropdown option(s) by ARIA ref | `{ ref, values, tabId? }` |
 | **Page Stability** | | |
 | `waitForStable` | Wait for page DOM to settle (no mutations) | `{ minStableMs?, maxWaitMs?, maxMutations?, tabId? }` |
+| **Console Observability** | | |
+| `startConsoleCapture` | Start buffering console calls and uncaught exceptions | `{ tabId? }` |
+| `readConsoleMessages` | Read captured console output with filters | `{ level?, pattern?, limit?, since?, clear?, tabId? }` |
+| `clearConsoleMessages` | Clear the console buffer without stopping capture | `{ tabId? }` |
+| `stopConsoleCapture` | Stop console capture and release Runtime capture state | `{ tabId? }` |
 | **CDP Input** | | |
 | `dispatchClick` | Real CDP click at coordinates | `{ x, y, button?, clickCount?, tabId? }` |
 | `moveMouse` | Real CDP mouse move | `{ x, y, steps?, fromX?, fromY?, tabId? }` |
@@ -311,6 +316,7 @@ Use standard CSS selectors only. Playwright-only selectors such as
 | Infinite scroll | `scroll` or `scroll_page`, then query count again |
 | Table extraction | `webmcp.invokeTool` -> `extract_table_data` |
 | Need XHR/fetch body | `start_network_capture`, trigger action, `wait_for_network_response`, `stop_network_capture` |
+| Need console errors/logs | `startConsoleCapture`, trigger action, `readConsoleMessages`, `stopConsoleCapture` |
 | Need app state/local globals | `evaluateJS` or `execute_javascript` |
 | Need visual verification | `screenshot` |
 

@@ -4,12 +4,13 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (47)
+## Extension Commands (51)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
 | Command | Params | Handler |
 |---|---|---|
+| `clearConsoleMessages` | `{ tabId? }` | `console-capture.js` |
 | `click` | `{ selector, frame?, tabId? }` | `high-level.js` |
 | `clickByRef` | `{ ... }` | `aria-snapshot.js` |
 | `closeTab` | `{ tabId? }` | `tab-management.js` |
@@ -42,6 +43,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `ping` | `{}` | `full-control.js` |
 | `pressKey` | `{ key, text?, modifiers?, tabId? }` | `cdp-input.js` |
 | `querySelectorAll` | `{ selector, limit?, offset?, fields?, textMaxLength?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
+| `readConsoleMessages` | `{ level?, pattern?, limit?, since?, clear?, tabId? }` | `console-capture.js` |
 | `resetViewport` | `{ tabId? }` | `full-control.js` |
 | `screenshot` | `{ fullPage?, tabId? }` | `cdp-actions.js` |
 | `scroll` | `{ deltaX?, deltaY?, x?, y?, tabId? }` | `cdp-input.js` |
@@ -50,11 +52,13 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `setCookie` | `{ name, value, domain?, path?, tabId? }` | `full-control.js` |
 | `setLocalStorage` | `{ key, value, tabId? }` | `full-control.js` |
 | `setViewport` | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` | `full-control.js` |
+| `startConsoleCapture` | `{ tabId? }` | `console-capture.js` |
+| `stopConsoleCapture` | `{ tabId? }` | `console-capture.js` |
 | `type` | `{ selector, text, frame?, tabId? }` | `high-level.js` |
 | `typeByRef` | `{ ... }` | `aria-snapshot.js` |
 | `typeText` | `{ text, tabId? }` | `cdp-input.js` |
 | `waitForSelector` | `{ selector, timeout?, frame?, tabId? }` | `high-level.js` |
-| `waitForStable` | `{ ... }` | `page-stability.js` |
+| `waitForStable` | `{ minStableMs?, maxWaitMs?, maxMutations?, watchSelector?, ignoreSelectors?, ignoreCharacterData?, tabId? }` | `page-stability.js` |
 | `webmcp.invokeTool` | `{ toolName, input?, frame?, tabId? }` | `webmcp.js` |
 | `webmcp.listTools` | `{ frame?, tabId? }` | `webmcp.js` |
 
@@ -81,8 +85,8 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 
 ## Capability Announcement Check
 
-- Announced capabilities: 47
-- Commands with handlers: 47
+- Announced capabilities: 51
+- Commands with handlers: 51
 - Announced without handler: none
 - Handler not announced: none
 

@@ -9,7 +9,7 @@ The kit has three layers:
    - Chrome unpacked extension.
    - Injects `register-tools.js` into pages.
    - Exposes background commands for tabs, CDP input, screenshots, cookies,
-     storage, viewport control, and WebMCP page-tool bridging.
+     storage, viewport control, console capture, and WebMCP page-tool bridging.
 2. Gateway server: `server/gateway_server.js`
    - WebSocket endpoint for the extension at `ws://localhost:7865`.
    - HTTP endpoint for agents/scripts at `POST http://localhost:7865/api`.
@@ -67,6 +67,15 @@ Call any extension command:
 npx -y @gyga-browser/webmcp-browser-automation-kit call getActiveTab
 npx -y @gyga-browser/webmcp-browser-automation-kit call newTab '{"url":"https://example.com"}'
 npx -y @gyga-browser/webmcp-browser-automation-kit call webmcp.listTools '{"tabId":123}'
+```
+
+Capture page console output around an automation step:
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit call startConsoleCapture '{"tabId":123}'
+npx -y @gyga-browser/webmcp-browser-automation-kit call evaluateJS '{"tabId":123,"code":"console.log(\"hello\"); console.error(\"fail\")"}'
+npx -y @gyga-browser/webmcp-browser-automation-kit call readConsoleMessages '{"tabId":123,"level":"error"}'
+npx -y @gyga-browser/webmcp-browser-automation-kit call stopConsoleCapture '{"tabId":123}'
 ```
 
 Invoke a page-registered WebMCP tool:

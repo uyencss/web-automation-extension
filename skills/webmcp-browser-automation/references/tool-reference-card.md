@@ -83,6 +83,12 @@ selectByRef             { ref, values, tabId? }
 ## Page Stability
 waitForStable           { minStableMs?, maxWaitMs?, maxMutations?, tabId? }
 
+## Console Observability
+startConsoleCapture     { tabId? }
+readConsoleMessages     { level?, pattern?, limit?, since?, clear?, tabId? }
+clearConsoleMessages    { tabId? }
+stopConsoleCapture      { tabId? }
+
 ## CDP Input
 dispatchClick           { x, y, button?, clickCount?, frame?, tabId? }
 moveMouse               { x, y, steps?, fromX?, fromY?, frame?, tabId? }
@@ -121,6 +127,7 @@ submit_form              { form_selector?, fields?, submit_button_selector? }
 execute_javascript       { code }
 start_network_capture    { url_pattern }
 wait_for_network_response { url_pattern, timeout_ms? }
+get_captured_requests    { url_pattern?, include_bodies?, include_headers?, limit? }
 stop_network_capture     {}
 ```
 
@@ -170,6 +177,12 @@ Need network response body?
   -> trigger action
   -> webmcp.invokeTool(wait_for_network_response)
   -> webmcp.invokeTool(stop_network_capture)
+
+Need console errors/logs?
+  -> startConsoleCapture
+  -> trigger action
+  -> readConsoleMessages { level?: "error" | "exception" }
+  -> stopConsoleCapture
 
 Need arbitrary page JS?
   -> evaluateJS, or webmcp.invokeTool(execute_javascript)

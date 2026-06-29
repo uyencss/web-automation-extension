@@ -2,6 +2,19 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.12 - 2026-06-29
+
+### Added
+
+- Added extension-level console capture commands: `startConsoleCapture`, `readConsoleMessages`, `clearConsoleMessages`, and `stopConsoleCapture`.
+- Added CDP Runtime event buffering for `Runtime.consoleAPICalled` and `Runtime.exceptionThrown`, with per-tab ring buffers and detach cleanup.
+- Added console capture command metadata to the MCP/command catalog and gateway `/health` discovery payload.
+
+### Changed
+
+- Updated package and extension READMEs with console capture examples and refreshed capability counts.
+- Bumped the npm package to `1.0.12` and the unpacked extension manifest to `2.1.2`.
+
 ## 1.0.11 - 2026-06-28
 
 ### Added

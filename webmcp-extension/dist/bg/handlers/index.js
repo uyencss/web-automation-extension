@@ -8,6 +8,7 @@ import { fullControlHandlers } from './full-control.js';
 import { ariaSnapshotHandlers } from './aria-snapshot.js';
 import { pageStabilityHandlers } from './page-stability.js';
 import { frameManagementHandlers } from './frame-management.js';
+import { consoleCaptureHandlers } from './console-capture.js';
 
 export const commandHandlers = {
   ...tabHandlers,
@@ -20,4 +21,5 @@ export const commandHandlers = {
   ...fullControlHandlers,
   ...ariaSnapshotHandlers,
   ...pageStabilityHandlers,
+  ...consoleCaptureHandlers,
 };
