@@ -44,6 +44,7 @@ docs/drafts/
 
 # Archived optional workflow runner
 .archive/runner/
+.archive/docs/
 
 # Built Chrome Web Store upload packages
 webmcp-extension/build/
