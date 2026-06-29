@@ -20,12 +20,13 @@ The WebMCP extension exposes three different tool layers. Do not mix them up.
    viewport control.
 2. **ARIA snapshot commands** (extension layer) provide ref-based element
    interaction. Call `getAriaSnapshot` to capture a fast viewport-first
-   accessibility-like tree with persistent content-script refs (e.g.
-   `ref=F0:R1`), then use `clickByRef`, `typeByRef`, `hoverByRef`, or
-   `selectByRef` to interact using those refs. `mode: "native"` uses the CDP
-   Accessibility fallback with `ref=S1` style refs. This is **more robust than
-   CSS selectors** on SPAs and dynamic pages — prefer this approach whenever
-   possible.
+   accessibility-like tree with compact persistent content-script refs (e.g.
+   `ref=r1` in the main frame or `ref=f3r1` in an iframe), then use
+   `clickByRef`, `typeByRef`, `hoverByRef`, or `selectByRef` to interact using
+   those refs. Legacy fast refs like `F0:R1` are still accepted. `mode:
+   "native"` uses the CDP Accessibility fallback with `ref=S1` style refs. This
+   is **more robust than CSS selectors** on SPAs and dynamic pages — prefer this
+   approach whenever possible.
 3. **Page WebMCP tools** are registered by
    `webmcp-extension/dist/content-scripts/register-tools.js` into
    `navigator.modelContext`. These are page-local tools. You must discover them
@@ -215,7 +216,7 @@ These are background commands registered in
 | `getElementBounds` | Get selector bounds | `{ selector, tabId? }` |
 | `getInteractiveElements` | List clickable/focusable elements with centers | `{ tabId? }` |
 | **ARIA Snapshot** | | |
-| `getAriaSnapshot` | Capture fast viewport-first tree with ref IDs (e.g. `ref=F0:R1`; native fallback uses `ref=S1`) | `{ maxDepth?, mode?, scope?, maxNodes?, viewportMargin?, frameId?, tabId? }` |
+| `getAriaSnapshot` | Capture fast viewport-first tree with compact ref IDs (e.g. `ref=r1`, iframe `ref=f3r1`; native fallback uses `ref=S1`) | `{ maxDepth?, mode?, scope?, maxNodes?, maxChars?, includeOptions?, maxOptions?, refFormat?, viewportMargin?, frameId?, tabId? }` |
 | `clickByRef` | Click element by ARIA ref — more robust than CSS selector | `{ ref, element?, frameId?, tabId? }` |
 | `typeByRef` | Type into element by ARIA ref, optionally submit | `{ ref, text, submit?, frameId?, tabId? }` |
 | `hoverByRef` | Hover over element by ARIA ref | `{ ref, frameId?, tabId? }` |
@@ -352,11 +353,11 @@ Use standard CSS selectors only. Playwright-only selectors such as
 ### Click and type with ARIA refs (preferred)
 
 1. Call `getAriaSnapshot` to see the page structure with ref IDs.
-2. Identify the target element by its role and name (e.g. `ref=S5 button "Sign In"`).
-3. Call `clickByRef` with `{ "ref": "S5" }`.
+2. Identify the target element by its role and name (e.g. `ref=r5 button "Sign In"`).
+3. Call `clickByRef` with `{ "ref": "r5" }`.
 4. The extension auto-waits for page stability after clicking.
 5. Call `getAriaSnapshot` again to see updated state.
-6. To type, call `typeByRef` with `{ "ref": "S3", "text": "hello", "submit": true }`.
+6. To type, call `typeByRef` with `{ "ref": "r3", "text": "hello", "submit": true }`.
 
 ### Real click and type (CDP coordinates)
 

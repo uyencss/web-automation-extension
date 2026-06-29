@@ -22,7 +22,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `findByText` | `{ text, exact?, selector?, maxResults?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
 | `getAccessibilityTree` | `{ interestingOnly?, depth?, tabId? }` | `ai-vision.js` |
 | `getActiveTab` | `{}` | `tab-management.js` |
-| `getAriaSnapshot` | `{ maxDepth?, mode?, scope?, maxNodes?, viewportMargin?, frameId?, tabId? }` | `aria-snapshot.js` |
+| `getAriaSnapshot` | `{ maxDepth?, mode?, scope?, maxNodes?, maxChars?, includeOptions?, maxOptions?, refFormat?, viewportMargin?, frameId?, tabId? }` | `aria-snapshot.js` |
 | `getCookies` | `{ tabId? }` | `full-control.js` |
 | `getDOMSnapshot` | `{ computedStyles?, tabId? }` | `ai-vision.js` |
 | `getElementBounds` | `{ selector, pierceShadow?, frame?, tabId? }` | `ai-vision.js` |

@@ -110,7 +110,7 @@ Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets 
 
 | Method            | Params                         | Description                              |
 | ----------------- | ------------------------------ | ---------------------------------------- |
-| `getAriaSnapshot` | `{ maxDepth?, mode?, scope?, maxNodes?, viewportMargin?, frameId?, tabId? }` | Capture fast viewport-first semantic tree with persistent refs |
+| `getAriaSnapshot` | `{ maxDepth?, mode?, scope?, maxNodes?, maxChars?, includeOptions?, maxOptions?, refFormat?, viewportMargin?, frameId?, tabId? }` | Capture fast viewport-first semantic tree with compact persistent refs |
 | `clickByRef`      | `{ ref, element?, frameId?, tabId? }` | Click using an ARIA snapshot ref |
 | `typeByRef`       | `{ ref, text, submit?, frameId?, tabId? }` | Type using an ARIA snapshot ref |
 | `hoverByRef`      | `{ ref, frameId?, tabId? }`    | Hover using an ARIA snapshot ref         |

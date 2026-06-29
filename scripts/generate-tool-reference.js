@@ -42,7 +42,7 @@ const COMMAND_PARAM_HINTS = {
   getDOMSnapshot: '{ computedStyles?, tabId? }',
   getElementBounds: '{ selector, pierceShadow?, frame?, tabId? }',
   getInteractiveElements: '{ pierceShadow?, frame?, tabId? }',
-  getAriaSnapshot: '{ maxDepth?, mode?, scope?, maxNodes?, viewportMargin?, frameId?, tabId? }',
+  getAriaSnapshot: '{ maxDepth?, mode?, scope?, maxNodes?, maxChars?, includeOptions?, maxOptions?, refFormat?, viewportMargin?, frameId?, tabId? }',
   clickByRef: '{ ref, element?, frameId?, tabId? }',
   typeByRef: '{ ref, text, submit?, frameId?, tabId? }',
   hoverByRef: '{ ref, frameId?, tabId? }',

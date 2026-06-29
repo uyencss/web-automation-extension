@@ -59,32 +59,61 @@ function sendContentAriaMessage(tabId, method, params, frameId = 0) {
   });
 }
 
-function qualifyFastRefs(snapshot, frameId) {
-  return String(snapshot || '').replace(/\bref=(R\d+)\b/g, `ref=F${frameId}:$1`);
+function formatFastRef(localRef, frameId, refFormat = 'compact') {
+  const match = /^R(\d+)$/i.exec(localRef);
+  if (!match) return localRef;
+  if (refFormat === 'qualified') return `F${frameId}:R${match[1]}`;
+  return frameId === 0 ? `r${match[1]}` : `f${frameId}r${match[1]}`;
+}
+
+function qualifyFastRefs(snapshot, frameId, refFormat = 'compact') {
+  return String(snapshot || '').replace(/\bref=(R\d+)\b/gi, (_match, localRef) =>
+    `ref=${formatFastRef(localRef.toUpperCase(), frameId, refFormat)}`
+  );
 }
 
 function rememberFastRefs(tabId, frameId, snapshot) {
   const refMap = getContentRefMap(tabId);
-  const regex = /\bref=(F\d+:R\d+)\b/g;
+  const regex = /\bref=(F\d+:R\d+|f\d+r\d+|R\d+|r\d+)\b/gi;
   for (const match of String(snapshot || '').matchAll(regex)) {
-    refMap.set(match[1], { frameId });
-    const localRef = match[1].split(':')[1];
-    if (localRef) refMap.set(localRef, { frameId });
+    const parsed = parseFastRefToken(match[1], frameId);
+    if (!parsed) continue;
+    refMap.set(match[1], { frameId: parsed.frameId });
+    refMap.set(parsed.ref, { frameId: parsed.frameId });
   }
 }
 
-function parseFastRef(tabId, ref, params = {}) {
-  const qualified = /^F(\d+):(R\d+)$/.exec(ref);
+function parseFastRefToken(rawRef, defaultFrameId = 0) {
+  const ref = String(rawRef || '').replace(/^ref=/i, '');
+
+  const qualified = /^F(\d+):R(\d+)$/i.exec(ref);
   if (qualified) {
-    return { frameId: Number(qualified[1]), ref: qualified[2], qualifiedRef: ref };
+    return { frameId: Number(qualified[1]), ref: `R${qualified[2]}`, qualifiedRef: `F${qualified[1]}:R${qualified[2]}` };
   }
 
-  if (/^R\d+$/.test(ref)) {
-    const frameId = getContentRefMap(tabId).get(ref)?.frameId ?? getChromeFrameId(params);
-    return { frameId, ref, qualifiedRef: `F${frameId}:${ref}` };
+  const compactQualified = /^f(\d+)r(\d+)$/i.exec(ref);
+  if (compactQualified) {
+    return { frameId: Number(compactQualified[1]), ref: `R${compactQualified[2]}`, qualifiedRef: `f${compactQualified[1]}r${compactQualified[2]}` };
+  }
+
+  const compactLocal = /^r(\d+)$/i.exec(ref);
+  if (compactLocal) {
+    return { frameId: defaultFrameId, ref: `R${compactLocal[1]}`, qualifiedRef: `r${compactLocal[1]}` };
+  }
+
+  const local = /^R(\d+)$/i.exec(ref);
+  if (local) {
+    return { frameId: defaultFrameId, ref: `R${local[1]}`, qualifiedRef: `R${local[1]}` };
   }
 
   return null;
+}
+
+function parseFastRef(tabId, ref, params = {}) {
+  const rawRef = String(ref || '').replace(/^ref=/i, '');
+  const rememberedFrameId = getContentRefMap(tabId).get(rawRef)?.frameId;
+  const defaultFrameId = rememberedFrameId ?? getChromeFrameId(params);
+  return parseFastRefToken(rawRef, defaultFrameId);
 }
 
 async function runFastRefAction(tabId, action, params) {
@@ -142,6 +171,10 @@ export const ariaSnapshotHandlers = {
       mode = 'auto',
       scope = 'auto',
       maxNodes = 250,
+      maxOptions,
+      maxChars,
+      includeOptions,
+      refFormat = 'compact',
       viewportMargin = 32,
     } = params;
     const frameId = getChromeFrameId(params);
@@ -152,10 +185,17 @@ export const ariaSnapshotHandlers = {
           maxDepth,
           scope,
           maxNodes,
+          maxOptions,
+          maxChars,
+          includeOptions,
           viewportMargin,
         }, frameId);
 
-        fastSnapshot.snapshot = qualifyFastRefs(fastSnapshot.snapshot, frameId);
+        if (fastSnapshot.tooLarge) {
+          throw new Error(fastSnapshot.error || 'SNAPSHOT_TOO_LARGE: fast ARIA snapshot exceeded maxChars.');
+        }
+
+        fastSnapshot.snapshot = qualifyFastRefs(fastSnapshot.snapshot, frameId, refFormat);
         rememberFastRefs(tabId, frameId, fastSnapshot.snapshot);
 
         if (mode === 'fast' || fastSnapshot.nodeCount > 1) {
@@ -163,10 +203,14 @@ export const ariaSnapshotHandlers = {
             tabId,
             frameId,
             ...fastSnapshot,
-            usage: 'Use ref values (e.g. ref=F0:R1) with clickByRef, typeByRef, hoverByRef, or selectByRef to interact with elements. Re-run getAriaSnapshot if a ref is stale.',
+            refFormat,
+            usage: 'Use ref values (e.g. ref=r1, ref=f3r1, or native ref=S1) with clickByRef, typeByRef, hoverByRef, or selectByRef. Re-run getAriaSnapshot if a ref is stale.',
           };
         }
       } catch (error) {
+        if (String(error.message || error).startsWith('SNAPSHOT_TOO_LARGE:')) {
+          throw error;
+        }
         if (mode === 'fast') {
           throw new Error(`Fast ARIA snapshot failed: ${error.message || String(error)}`);
         }
@@ -316,12 +360,19 @@ export const ariaSnapshotHandlers = {
     }
 
     const snapshot = lines.join('\n');
+    if (Number.isFinite(maxChars) && maxChars > 0 && snapshot.length > maxChars) {
+      throw new Error(
+        `SNAPSHOT_TOO_LARGE: native ARIA snapshot is ${snapshot.length} characters, ` +
+        `above maxChars=${maxChars}. Lower maxDepth, use fast scope="viewport", or raise maxChars.`
+      );
+    }
 
     return {
       tabId,
       source: 'cdp',
       mode: 'native',
       snapshot,
+      actualChars: snapshot.length,
       refCount: refMap.size,
       totalNodes: tree.nodes.length,
       usage: 'Use ref values (e.g. ref=S1) with clickByRef, typeByRef, hoverByRef, or selectByRef to interact with elements.',

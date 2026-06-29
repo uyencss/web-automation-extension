@@ -15,6 +15,7 @@
   const MAX_VISITED_ELEMENTS = 10000;
   const DEFAULT_MAX_DEPTH = 8;
   const DEFAULT_MAX_NODES = 250;
+  const DEFAULT_MAX_OPTIONS = 50;
   const DEFAULT_VIEWPORT_MARGIN = 32;
   const documentId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
@@ -270,6 +271,33 @@
     return `- ${parts.join(' ')}`;
   }
 
+  function makeOptionLine(option) {
+    const name = collapseText(option.textContent, 80);
+    const value = collapseText(option.value, 80);
+    const parts = ['option'];
+    if (name) parts.push(`"${name.replace(/"/g, '\\"')}"`);
+    if (value && value !== name) parts.push(`value="${value.replace(/"/g, '\\"')}"`);
+    if (option.selected) parts.push('[selected]');
+    if (option.disabled) parts.push('[disabled]');
+    return `- ${parts.join(' ')}`;
+  }
+
+  function optionEntriesForSelect(element, maxOptions) {
+    if (!(element instanceof HTMLSelectElement) || maxOptions <= 0) return [];
+    const options = Array.from(element.options);
+    const entries = options.slice(0, maxOptions).map((option) => ({
+      indent: 0,
+      line: makeOptionLine(option),
+    }));
+    if (options.length > maxOptions) {
+      entries.push({
+        indent: 0,
+        line: `- note "${options.length - maxOptions} more options truncated"`,
+      });
+    }
+    return entries;
+  }
+
   function getChildElements(element) {
     const children = Array.from(element.children || []);
     if (element.shadowRoot) {
@@ -313,7 +341,10 @@
 
     const maxDepth = Number.isFinite(params.maxDepth) ? params.maxDepth : DEFAULT_MAX_DEPTH;
     const maxNodes = Number.isFinite(params.maxNodes) ? params.maxNodes : DEFAULT_MAX_NODES;
+    const maxOptions = Number.isFinite(params.maxOptions) ? Math.max(0, params.maxOptions) : DEFAULT_MAX_OPTIONS;
+    const maxChars = Number.isFinite(params.maxChars) && params.maxChars > 0 ? params.maxChars : null;
     const viewportMargin = Number.isFinite(params.viewportMargin) ? params.viewportMargin : DEFAULT_VIEWPORT_MARGIN;
+    const includeOptions = params.includeOptions !== false;
     const requestedScope = params.scope || 'auto';
     const scope = requestedScope === 'full' ? 'full' : 'viewport';
     const root = document.body || document.documentElement;
@@ -331,6 +362,7 @@
       const childEntries = [];
       if (depth < maxDepth) {
         for (const child of getChildElements(element)) {
+          if (element instanceof HTMLSelectElement && child.localName === 'option') continue;
           if (childEntries.length > maxNodes * 4) {
             truncated = true;
             break;
@@ -355,8 +387,10 @@
       const bounds = getBounds(element);
       const ref = isInteractive ? ensureRef(element, { role, name, bounds, documentId }) : null;
       const line = makeLine(element, role, name, value, ref);
+      const inlineOptionEntries = includeOptions ? optionEntriesForSelect(element, maxOptions) : [];
       return [
         { indent: 0, line },
+        ...inlineOptionEntries.map((entry) => ({ indent: entry.indent + 1, line: entry.line })),
         ...childEntries.map((entry) => ({ indent: entry.indent + 1, line: entry.line })),
       ];
     }
@@ -370,6 +404,26 @@
       rootLine,
       ...visibleEntries.map((entry) => `${'  '.repeat(entry.indent + 1)}${entry.line}`),
     ].join('\n');
+    const actualChars = snapshot.length;
+
+    if (maxChars !== null && actualChars > maxChars) {
+      return {
+        source: 'content-script',
+        documentId,
+        url: location.href,
+        title: document.title,
+        scope,
+        tooLarge: true,
+        error: `SNAPSHOT_TOO_LARGE: snapshot is ${actualChars} characters, above maxChars=${maxChars}. Lower maxNodes/maxDepth, use scope="viewport", or raise maxChars.`,
+        actualChars,
+        maxChars,
+        refCount: refToElement.size,
+        nodeCount: visibleEntries.length + 1,
+        totalCandidates: entries.length + 1,
+        visited,
+        truncated,
+      };
+    }
 
     return {
       source: 'content-script',
@@ -381,6 +435,7 @@
       refCount: refToElement.size,
       nodeCount: visibleEntries.length + 1,
       totalCandidates: entries.length + 1,
+      actualChars,
       visited,
       truncated,
       viewport: {
