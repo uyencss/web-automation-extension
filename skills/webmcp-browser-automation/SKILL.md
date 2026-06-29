@@ -19,11 +19,13 @@ The WebMCP extension exposes three different tool layers. Do not mix them up.
    element discovery, real CDP mouse/keyboard input, storage, cookies, and
    viewport control.
 2. **ARIA snapshot commands** (extension layer) provide ref-based element
-   interaction. Call `getAriaSnapshot` to capture the page's accessibility tree
-   with unique ref IDs (e.g. `ref=S1`), then use `clickByRef`, `typeByRef`,
-   `hoverByRef`, or `selectByRef` to interact using those refs. This is **more
-   robust than CSS selectors** on SPAs and dynamic pages — prefer this approach
-   whenever possible.
+   interaction. Call `getAriaSnapshot` to capture a fast viewport-first
+   accessibility-like tree with persistent content-script refs (e.g.
+   `ref=F0:R1`), then use `clickByRef`, `typeByRef`, `hoverByRef`, or
+   `selectByRef` to interact using those refs. `mode: "native"` uses the CDP
+   Accessibility fallback with `ref=S1` style refs. This is **more robust than
+   CSS selectors** on SPAs and dynamic pages — prefer this approach whenever
+   possible.
 3. **Page WebMCP tools** are registered by
    `webmcp-extension/dist/content-scripts/register-tools.js` into
    `navigator.modelContext`. These are page-local tools. You must discover them
@@ -213,11 +215,11 @@ These are background commands registered in
 | `getElementBounds` | Get selector bounds | `{ selector, tabId? }` |
 | `getInteractiveElements` | List clickable/focusable elements with centers | `{ tabId? }` |
 | **ARIA Snapshot** | | |
-| `getAriaSnapshot` | Capture accessibility tree with ref IDs (e.g. `ref=S1`) | `{ maxDepth?, tabId? }` |
-| `clickByRef` | Click element by ARIA ref — more robust than CSS selector | `{ ref, element?, tabId? }` |
-| `typeByRef` | Type into element by ARIA ref, optionally submit | `{ ref, text, submit?, tabId? }` |
-| `hoverByRef` | Hover over element by ARIA ref | `{ ref, tabId? }` |
-| `selectByRef` | Select dropdown option(s) by ARIA ref | `{ ref, values, tabId? }` |
+| `getAriaSnapshot` | Capture fast viewport-first tree with ref IDs (e.g. `ref=F0:R1`; native fallback uses `ref=S1`) | `{ maxDepth?, mode?, scope?, maxNodes?, viewportMargin?, frameId?, tabId? }` |
+| `clickByRef` | Click element by ARIA ref — more robust than CSS selector | `{ ref, element?, frameId?, tabId? }` |
+| `typeByRef` | Type into element by ARIA ref, optionally submit | `{ ref, text, submit?, frameId?, tabId? }` |
+| `hoverByRef` | Hover over element by ARIA ref | `{ ref, frameId?, tabId? }` |
+| `selectByRef` | Select dropdown option(s) by ARIA ref | `{ ref, values, frameId?, tabId? }` |
 | **Page Stability** | | |
 | `waitForStable` | Wait for page DOM to settle (no mutations) | `{ minStableMs?, maxWaitMs?, maxMutations?, tabId? }` |
 | **Console Observability** | | |

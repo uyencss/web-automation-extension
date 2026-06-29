@@ -8,12 +8,13 @@
 // ============================================================
 
 import { resolveTabId } from '../utils.js';
-import { sendCDPCommand, evaluateInTab } from '../cdp-bridge.js';
+import { sendCDPCommand } from '../cdp-bridge.js';
 import { waitForPageStable } from './page-stability.js';
 
 // ── In-memory ref map per tab ──────────────────────────────
 // Maps ref string → { backendNodeId, tabId } for resolving refs to elements.
 const refMaps = new Map();
+const contentRefMaps = new Map();
 
 function getRefMap(tabId) {
   if (!refMaps.has(tabId)) {
@@ -22,9 +23,108 @@ function getRefMap(tabId) {
   return refMaps.get(tabId);
 }
 
+function getContentRefMap(tabId) {
+  if (!contentRefMaps.has(tabId)) {
+    contentRefMaps.set(tabId, new Map());
+  }
+  return contentRefMaps.get(tabId);
+}
+
+function getChromeFrameId(params) {
+  if (Number.isInteger(params.frameId)) return params.frameId;
+  if (Number.isInteger(params.frame?.frameId)) return params.frame.frameId;
+  if (Number.isInteger(params.frame?.chromeFrameId)) return params.frame.chromeFrameId;
+  return 0;
+}
+
+function sendContentAriaMessage(tabId, method, params, frameId = 0) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      { type: 'WEBMCP_FAST_ARIA', method, params },
+      { frameId },
+      (response) => {
+        const lastError = chrome.runtime.lastError;
+        if (lastError) {
+          reject(new Error(lastError.message));
+          return;
+        }
+        if (!response?.ok) {
+          reject(new Error(response?.error || 'Content script ARIA command failed.'));
+          return;
+        }
+        resolve(response.result);
+      }
+    );
+  });
+}
+
+function qualifyFastRefs(snapshot, frameId) {
+  return String(snapshot || '').replace(/\bref=(R\d+)\b/g, `ref=F${frameId}:$1`);
+}
+
+function rememberFastRefs(tabId, frameId, snapshot) {
+  const refMap = getContentRefMap(tabId);
+  const regex = /\bref=(F\d+:R\d+)\b/g;
+  for (const match of String(snapshot || '').matchAll(regex)) {
+    refMap.set(match[1], { frameId });
+    const localRef = match[1].split(':')[1];
+    if (localRef) refMap.set(localRef, { frameId });
+  }
+}
+
+function parseFastRef(tabId, ref, params = {}) {
+  const qualified = /^F(\d+):(R\d+)$/.exec(ref);
+  if (qualified) {
+    return { frameId: Number(qualified[1]), ref: qualified[2], qualifiedRef: ref };
+  }
+
+  if (/^R\d+$/.test(ref)) {
+    const frameId = getContentRefMap(tabId).get(ref)?.frameId ?? getChromeFrameId(params);
+    return { frameId, ref, qualifiedRef: `F${frameId}:${ref}` };
+  }
+
+  return null;
+}
+
+async function runFastRefAction(tabId, action, params) {
+  const parsed = parseFastRef(tabId, params.ref, params);
+  if (!parsed) return null;
+
+  const result = await sendContentAriaMessage(tabId, 'action', {
+    ...params,
+    ref: parsed.ref,
+    action,
+  }, parsed.frameId);
+
+  if (!result?.success) {
+    const staleHint = result?.stale ? ' Run getAriaSnapshot again to refresh refs.' : '';
+    throw new Error((result?.error || `Failed to ${action} ref "${params.ref}".`) + staleHint);
+  }
+
+  return {
+    tabId,
+    ref: params.ref,
+    frameId: parsed.frameId,
+    source: 'content-script',
+    ...result,
+  };
+}
+
+const sensitiveValuePattern = /password|passcode|passwd|pwd|secret|token|access[_ -]?token|refresh[_ -]?token|api[_ -]?key|otp|one[- ]?time[- ]?code|verification code|2fa|mfa|cvv|cvc|security code|card number|credit card|cc-|ssn/i;
+
+function redactSnapshotValue(role, name, value) {
+  if (!value) return value;
+  if ((role === 'textbox' || role === 'searchbox' || role === 'spinbutton') && sensitiveValuePattern.test(name || '')) {
+    return '[value redacted]';
+  }
+  return value;
+}
+
 // Clean up ref maps when tabs close
 chrome.tabs.onRemoved.addListener((tabId) => {
   refMaps.delete(tabId);
+  contentRefMaps.delete(tabId);
 });
 
 export const ariaSnapshotHandlers = {
@@ -37,7 +137,42 @@ export const ariaSnapshotHandlers = {
    */
   async getAriaSnapshot(params) {
     const tabId = await resolveTabId(params);
-    const { maxDepth = 8 } = params;
+    const {
+      maxDepth = 8,
+      mode = 'auto',
+      scope = 'auto',
+      maxNodes = 250,
+      viewportMargin = 32,
+    } = params;
+    const frameId = getChromeFrameId(params);
+
+    if (mode !== 'native') {
+      try {
+        const fastSnapshot = await sendContentAriaMessage(tabId, 'snapshot', {
+          maxDepth,
+          scope,
+          maxNodes,
+          viewportMargin,
+        }, frameId);
+
+        fastSnapshot.snapshot = qualifyFastRefs(fastSnapshot.snapshot, frameId);
+        rememberFastRefs(tabId, frameId, fastSnapshot.snapshot);
+
+        if (mode === 'fast' || fastSnapshot.nodeCount > 1) {
+          return {
+            tabId,
+            frameId,
+            ...fastSnapshot,
+            usage: 'Use ref values (e.g. ref=F0:R1) with clickByRef, typeByRef, hoverByRef, or selectByRef to interact with elements. Re-run getAriaSnapshot if a ref is stale.',
+          };
+        }
+      } catch (error) {
+        if (mode === 'fast') {
+          throw new Error(`Fast ARIA snapshot failed: ${error.message || String(error)}`);
+        }
+        // In auto mode, fall through to the native CDP accessibility snapshot.
+      }
+    }
 
     // Enable accessibility domain
     await sendCDPCommand(tabId, 'Accessibility.enable', {});
@@ -82,7 +217,8 @@ export const ariaSnapshotHandlers = {
 
       const role = (node.role?.value || '').toLowerCase();
       const name = (node.name?.value || '').trim();
-      const value = (node.value?.value || '').trim();
+      const rawValue = (node.value?.value || '').trim();
+      const value = redactSnapshotValue(role, name, rawValue);
       const description = (node.description?.value || '').trim();
 
       // Skip ignored/none nodes
@@ -183,6 +319,8 @@ export const ariaSnapshotHandlers = {
 
     return {
       tabId,
+      source: 'cdp',
+      mode: 'native',
       snapshot,
       refCount: refMap.size,
       totalNodes: tree.nodes.length,
@@ -197,6 +335,15 @@ export const ariaSnapshotHandlers = {
     const { ref, element } = params;
     if (!ref) throw new Error('Missing required param: ref');
     const tabId = await resolveTabId(params);
+
+    const fastResult = await runFastRefAction(tabId, 'click', params);
+    if (fastResult) {
+      return {
+        ...fastResult,
+        element: element || fastResult.element,
+      };
+    }
+
     const refMap = getRefMap(tabId);
     const refEntry = refMap.get(ref);
 
@@ -214,18 +361,6 @@ export const ariaSnapshotHandlers = {
     if (!object || !object.objectId) {
       throw new Error(`Could not resolve ref "${ref}" to a DOM element. The element may have been removed.`);
     }
-
-    // Scroll into view, get coordinates, and click
-    const coords = await evaluateInTab(tabId, `
-      (() => {
-        const el = document.querySelector('[data-webmcp-ref="${ref}"]') ||
-          (() => {
-            // Find element by backendNodeId via CDP resolved object
-            return null;
-          })();
-        return null; // Will use CDP approach below
-      })()
-    `);
 
     // Use CDP to scroll into view and get box model
     try {
@@ -285,6 +420,10 @@ export const ariaSnapshotHandlers = {
     if (!ref) throw new Error('Missing required param: ref');
     if (text === undefined) throw new Error('Missing required param: text');
     const tabId = await resolveTabId(params);
+
+    const fastResult = await runFastRefAction(tabId, 'type', params);
+    if (fastResult) return fastResult;
+
     const refMap = getRefMap(tabId);
     const refEntry = refMap.get(ref);
 
@@ -377,6 +516,10 @@ export const ariaSnapshotHandlers = {
     const { ref } = params;
     if (!ref) throw new Error('Missing required param: ref');
     const tabId = await resolveTabId(params);
+
+    const fastResult = await runFastRefAction(tabId, 'hover', params);
+    if (fastResult) return fastResult;
+
     const refMap = getRefMap(tabId);
     const refEntry = refMap.get(ref);
 
@@ -419,6 +562,10 @@ export const ariaSnapshotHandlers = {
     if (!ref) throw new Error('Missing required param: ref');
     if (!values || !Array.isArray(values)) throw new Error('Missing required param: values (array)');
     const tabId = await resolveTabId(params);
+
+    const fastResult = await runFastRefAction(tabId, 'select', params);
+    if (fastResult) return fastResult;
+
     const refMap = getRefMap(tabId);
     const refEntry = refMap.get(ref);
 

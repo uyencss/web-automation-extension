@@ -40,11 +40,11 @@ const COMMAND_DEFINITIONS = [
   ['getElementBounds', { group: 'vision', requiredParams: ['selector'], optionalParams: ['pierceShadow', 'frame'] }],
   ['getInteractiveElements', { group: 'vision', optionalParams: ['pierceShadow', 'frame'] }],
 
-  ['getAriaSnapshot', { group: 'aria', description: 'Capture an accessibility snapshot of the page with ref IDs. Returns a readable tree with refs like ref=S1 that can be used with clickByRef, typeByRef, etc. More robust than CSS selectors for interacting with dynamic pages.', optionalParams: ['maxDepth'] }],
-  ['clickByRef', { group: 'aria', description: 'Click an element using its ARIA snapshot ref (e.g. ref=S1). Run getAriaSnapshot first to get refs. More reliable than CSS selector click on SPAs.', requiredParams: ['ref'], optionalParams: ['element'] }],
-  ['typeByRef', { group: 'aria', description: 'Type text into an element using its ARIA snapshot ref. Run getAriaSnapshot first. Supports optional submit (press Enter after typing).', requiredParams: ['ref', 'text'], optionalParams: ['submit'] }],
-  ['hoverByRef', { group: 'aria', description: 'Hover over an element using its ARIA snapshot ref.', requiredParams: ['ref'] }],
-  ['selectByRef', { group: 'aria', description: 'Select option(s) in a dropdown using its ARIA snapshot ref.', requiredParams: ['ref', 'values'] }],
+  ['getAriaSnapshot', { group: 'aria', description: 'Capture an accessibility snapshot with ref IDs. Defaults to a fast content-script, viewport-first snapshot with persistent refs like ref=F0:R1; use mode="native" for the CDP Accessibility fallback with refs like ref=S1.', optionalParams: ['maxDepth', 'mode', 'scope', 'maxNodes', 'viewportMargin', 'frameId'] }],
+  ['clickByRef', { group: 'aria', description: 'Click an element using an ARIA snapshot ref (e.g. ref=F0:R1 or ref=S1). Run getAriaSnapshot first to get refs. Fast refs are handled in the content script; native refs use CDP.', requiredParams: ['ref'], optionalParams: ['element', 'frameId'] }],
+  ['typeByRef', { group: 'aria', description: 'Type text into an element using an ARIA snapshot ref. Run getAriaSnapshot first. Supports optional submit (press Enter after typing).', requiredParams: ['ref', 'text'], optionalParams: ['submit', 'frameId'] }],
+  ['hoverByRef', { group: 'aria', description: 'Hover over an element using its ARIA snapshot ref.', requiredParams: ['ref'], optionalParams: ['frameId'] }],
+  ['selectByRef', { group: 'aria', description: 'Select option(s) in a dropdown using its ARIA snapshot ref.', requiredParams: ['ref', 'values'], optionalParams: ['frameId'] }],
 
   ['waitForStable', { group: 'control', description: 'Wait for the page to stabilize (no DOM mutations for a quiet period). Useful after navigation or clicking dynamic elements. Use watchSelector to scope to a subtree, ignoreSelectors to exclude noisy elements (e.g. video player), and ignoreCharacterData to suppress text-node tick mutations on video/live pages.', optionalParams: ['minStableMs', 'maxWaitMs', 'maxMutations', 'watchSelector', 'ignoreSelectors', 'ignoreCharacterData'] }],
 

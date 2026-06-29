@@ -74,11 +74,11 @@ getElementBounds        { selector, pierceShadow?, frame?, tabId? }
 getInteractiveElements  { pierceShadow?, frame?, tabId? }
 
 ## ARIA Snapshot (preferred for interaction)
-getAriaSnapshot         { maxDepth?, tabId? }
-clickByRef              { ref, element?, tabId? }
-typeByRef               { ref, text, submit?, tabId? }
-hoverByRef              { ref, tabId? }
-selectByRef             { ref, values, tabId? }
+getAriaSnapshot         { maxDepth?, mode?, scope?, maxNodes?, viewportMargin?, frameId?, tabId? }
+clickByRef              { ref, element?, frameId?, tabId? }
+typeByRef               { ref, text, submit?, frameId?, tabId? }
+hoverByRef              { ref, frameId?, tabId? }
+selectByRef             { ref, values, frameId?, tabId? }
 
 ## Page Stability
 waitForStable           { minStableMs?, maxWaitMs?, maxMutations?, tabId? }

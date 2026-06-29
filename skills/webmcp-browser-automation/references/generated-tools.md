@@ -12,7 +12,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 |---|---|---|
 | `clearConsoleMessages` | `{ tabId? }` | `console-capture.js` |
 | `click` | `{ selector, frame?, tabId? }` | `high-level.js` |
-| `clickByRef` | `{ ... }` | `aria-snapshot.js` |
+| `clickByRef` | `{ ref, element?, frameId?, tabId? }` | `aria-snapshot.js` |
 | `closeTab` | `{ tabId? }` | `tab-management.js` |
 | `createWindow` | `{ url?, width?, height?, type? }` | `full-control.js` |
 | `deleteCookies` | `{ name, domain?, url?, tabId? }` | `full-control.js` |
@@ -22,7 +22,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `findByText` | `{ text, exact?, selector?, maxResults?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
 | `getAccessibilityTree` | `{ interestingOnly?, depth?, tabId? }` | `ai-vision.js` |
 | `getActiveTab` | `{}` | `tab-management.js` |
-| `getAriaSnapshot` | `{ ... }` | `aria-snapshot.js` |
+| `getAriaSnapshot` | `{ maxDepth?, mode?, scope?, maxNodes?, viewportMargin?, frameId?, tabId? }` | `aria-snapshot.js` |
 | `getCookies` | `{ tabId? }` | `full-control.js` |
 | `getDOMSnapshot` | `{ computedStyles?, tabId? }` | `ai-vision.js` |
 | `getElementBounds` | `{ selector, pierceShadow?, frame?, tabId? }` | `ai-vision.js` |
@@ -32,7 +32,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `getPageContent` | `{ format?, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
 | `getWindowVariable` | `{ path, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
 | `hover` | `{ selector, frame?, tabId? }` | `cdp-input.js` |
-| `hoverByRef` | `{ ... }` | `aria-snapshot.js` |
+| `hoverByRef` | `{ ref, frameId?, tabId? }` | `aria-snapshot.js` |
 | `listFrames` | `{ flat?, force?, tabId? }` | `frame-management.js` |
 | `listTabs` | `{}` | `tab-management.js` |
 | `listWindows` | `{}` | `full-control.js` |
@@ -47,7 +47,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `resetViewport` | `{ tabId? }` | `full-control.js` |
 | `screenshot` | `{ fullPage?, tabId? }` | `cdp-actions.js` |
 | `scroll` | `{ deltaX?, deltaY?, x?, y?, tabId? }` | `cdp-input.js` |
-| `selectByRef` | `{ ... }` | `aria-snapshot.js` |
+| `selectByRef` | `{ ref, values, frameId?, tabId? }` | `aria-snapshot.js` |
 | `selectOption` | `{ selector, value?, index?, text?, frame?, tabId? }` | `cdp-input.js` |
 | `setCookie` | `{ name, value, domain?, path?, tabId? }` | `full-control.js` |
 | `setLocalStorage` | `{ key, value, tabId? }` | `full-control.js` |
@@ -55,7 +55,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `startConsoleCapture` | `{ tabId? }` | `console-capture.js` |
 | `stopConsoleCapture` | `{ tabId? }` | `console-capture.js` |
 | `type` | `{ selector, text, frame?, tabId? }` | `high-level.js` |
-| `typeByRef` | `{ ... }` | `aria-snapshot.js` |
+| `typeByRef` | `{ ref, text, submit?, frameId?, tabId? }` | `aria-snapshot.js` |
 | `typeText` | `{ text, tabId? }` | `cdp-input.js` |
 | `waitForSelector` | `{ selector, timeout?, frame?, tabId? }` | `high-level.js` |
 | `waitForStable` | `{ minStableMs?, maxWaitMs?, maxMutations?, watchSelector?, ignoreSelectors?, ignoreCharacterData?, tabId? }` | `page-stability.js` |
