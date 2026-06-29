@@ -1,13 +1,10 @@
 {
   "manifest_version": 3,
   "name": "WebMCP Tools Provider",
-  "version": "2.1.6",
+  "version": "2.1.7",
   "description": "Browser automation extension with WebSocket bridge. Exposes custom tools via WebMCP and accepts commands from external AI programs.",
   "permissions": [
-    "activeTab",
     "alarms",
-    "scripting",
-    "storage",
     "debugger",
     "tabs",
     "webNavigation",

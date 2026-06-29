@@ -7,6 +7,38 @@ const pageEnabledTabs = new Set();
 const frameTreeCache = new Map();
 const isolatedWorldCache = new Map();
 
+// MAIN-world execution contexts, tracked via Runtime domain events so we can
+// evaluate in a sub-frame's page world without chrome.scripting. Keyed by
+// tabId -> Map(cdpFrameId -> executionContextId).
+const runtimeEnabledTabs = new Set();
+const mainWorldContexts = new Map();
+
+function getFrameContextMap(tabId) {
+  let map = mainWorldContexts.get(tabId);
+  if (!map) {
+    map = new Map();
+    mainWorldContexts.set(tabId, map);
+  }
+  return map;
+}
+
+function recordExecutionContext(tabId, context) {
+  const aux = context?.auxData || {};
+  // Only the per-frame MAIN (default) world; ignore isolated/worker contexts.
+  if (!aux.frameId) return;
+  if (aux.type === 'isolated' || aux.type === 'worker') return;
+  if (aux.isDefault === false && aux.type !== 'default') return;
+  getFrameContextMap(tabId).set(aux.frameId, context.id);
+}
+
+function removeExecutionContext(tabId, executionContextId) {
+  const map = mainWorldContexts.get(tabId);
+  if (!map) return;
+  for (const [frameId, id] of map.entries()) {
+    if (id === executionContextId) map.delete(frameId);
+  }
+}
+
 export async function ensureDebuggerAttached(tabId) {
   if (attachedTabs.has(tabId)) return;
   try {
@@ -62,6 +94,8 @@ chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId) {
     attachedTabs.delete(source.tabId);
     pageEnabledTabs.delete(source.tabId);
+    runtimeEnabledTabs.delete(source.tabId);
+    mainWorldContexts.delete(source.tabId);
     invalidateFrameCaches(source.tabId);
   }
 });
@@ -74,6 +108,12 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     method === 'Page.frameStartedNavigating'
   ) {
     invalidateFrameCaches(source.tabId, params?.frame?.id || params?.frameId);
+  } else if (method === 'Runtime.executionContextCreated') {
+    recordExecutionContext(source.tabId, params?.context);
+  } else if (method === 'Runtime.executionContextDestroyed') {
+    removeExecutionContext(source.tabId, params?.executionContextId);
+  } else if (method === 'Runtime.executionContextsCleared') {
+    mainWorldContexts.delete(source.tabId);
   }
 });
 
@@ -457,44 +497,65 @@ export async function evaluateInFrame(tabId, frameSpec, expression, awaitPromise
   return result.result?.value;
 }
 
-function executeScriptInFrame(tabId, frameId, func, args = [], world = 'MAIN') {
-  return new Promise((resolve, reject) => {
-    chrome.scripting.executeScript({
-      target: { tabId, frameIds: [frameId] },
-      world,
-      func,
-      args,
-    }, (results) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      resolve(results?.[0]?.result);
-    });
-  });
+async function ensureRuntimeEnabled(tabId) {
+  if (runtimeEnabledTabs.has(tabId)) return;
+  // Enabling the Runtime domain makes Chrome replay executionContextCreated
+  // events for every existing context, populating mainWorldContexts.
+  await sendCDPCommand(tabId, 'Runtime.enable', {});
+  runtimeEnabledTabs.add(tabId);
+}
+
+async function getMainWorldContextId(tabId, cdpFrameId, timeoutMs = 2000) {
+  await ensureRuntimeEnabled(tabId);
+
+  const existing = mainWorldContexts.get(tabId)?.get(cdpFrameId);
+  if (existing) return existing;
+
+  // The executionContextCreated events arrive asynchronously after
+  // Runtime.enable; poll briefly for the target frame's context.
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const id = mainWorldContexts.get(tabId)?.get(cdpFrameId);
+    if (id) return id;
+  }
+
+  throw new Error(
+    `FRAME_UNSUPPORTED_FOR_HANDLER: Could not resolve a MAIN-world execution context for frame ${cdpFrameId}. ` +
+    'Run listFrames and retry with an exact frame.'
+  );
 }
 
 export async function evaluateInFrameMainWorld(tabId, frameSpec, expression, awaitPromise = true) {
   const frameTarget = frameSpec?.cdpFrameId ? frameSpec : await resolveFrameTarget(tabId, frameSpec);
-  if (typeof frameTarget?.frameId !== 'number') {
-    throw new Error(
-      'FRAME_UNSUPPORTED_FOR_HANDLER: Chrome frameId is required for MAIN-world frame execution. Run listFrames and retry with an exact frameId.'
-    );
+  if (!frameTarget?.cdpFrameId) {
+    throw new Error('FRAME_UNSUPPORTED_FOR_HANDLER: CDP frame ID is required for MAIN-world frame execution.');
   }
 
-  return executeScriptInFrame(
-    tabId,
-    frameTarget.frameId,
-    async (source, shouldAwait) => {
-      const value = (0, eval)(source);
-      if (shouldAwait && value && typeof value.then === 'function') {
-        return await value;
-      }
-      return value;
-    },
-    [expression, awaitPromise],
-    'MAIN'
-  );
+  const evalParams = {
+    expression,
+    awaitPromise,
+    returnByValue: true,
+    userGesture: true,
+  };
+
+  // The root frame's MAIN world is the default Runtime context, so no
+  // contextId is needed (same path as evaluateInTab). Sub-frames require the
+  // explicit MAIN-world execution context id for that frame.
+  if (frameTarget.parentCdpFrameId) {
+    evalParams.contextId = await getMainWorldContextId(tabId, frameTarget.cdpFrameId);
+  }
+
+  const result = await sendCDPCommand(tabId, 'Runtime.evaluate', evalParams);
+
+  if (result.exceptionDetails) {
+    const errMsg = result.exceptionDetails.text ||
+      result.exceptionDetails.exception?.description ||
+      'JS evaluation error';
+    throw new Error(errMsg);
+  }
+
+  return result.result?.value;
 }
 
 async function getFrameChain(tabId, frameSpec) {
