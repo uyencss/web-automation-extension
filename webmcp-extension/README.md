@@ -1,8 +1,9 @@
-# WebMCP Extension v2.1.2
+# WebMCP Extension v2.1.3
 
 Chrome extension for **AI-driven browser automation** over WebSocket. Provides **51 commands**
 so an AI model can fully control the browser: inspect page structure, click/type at
-coordinates, capture console output, manage cookies/storage, take screenshots, and more.
+coordinates, capture console output, read fast ARIA snapshots, manage cookies/storage,
+take screenshots, and more.
 
 ## Architecture
 
@@ -115,6 +116,12 @@ Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets 
 | `typeByRef`       | `{ ref, text, submit?, frameId?, tabId? }` | Type using an ARIA snapshot ref |
 | `hoverByRef`      | `{ ref, frameId?, tabId? }`    | Hover using an ARIA snapshot ref         |
 | `selectByRef`     | `{ ref, values, frameId?, tabId? }` | Select option values by ARIA ref     |
+
+`getAriaSnapshot` defaults to `mode: "auto"`: it first tries the fast
+content-script snapshot, then falls back to the native CDP Accessibility tree.
+The fast path filters to the viewport, redacts sensitive form values, keeps
+stable compact refs such as `r1` and iframe refs such as `f3r1`, renders native
+select options inline, and supports `maxChars` for graceful context limits.
 
 ### Page Stability (1)
 

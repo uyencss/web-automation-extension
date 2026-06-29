@@ -9,7 +9,8 @@ The kit has three layers:
    - Chrome unpacked extension.
    - Injects `register-tools.js` into pages.
    - Exposes background commands for tabs, CDP input, screenshots, cookies,
-     storage, viewport control, console capture, and WebMCP page-tool bridging.
+     storage, viewport control, console capture, fast ARIA snapshots, and
+     WebMCP page-tool bridging.
 2. Gateway server: `server/gateway_server.js`
    - WebSocket endpoint for the extension at `ws://localhost:7865`.
    - HTTP endpoint for agents/scripts at `POST http://localhost:7865/api`.
@@ -84,6 +85,19 @@ Invoke a page-registered WebMCP tool:
 npx -y @gyga-browser/webmcp-browser-automation-kit call webmcp.invokeTool \
   '{"tabId":123,"toolName":"get_page_metadata","input":{"include_headings":true}}'
 ```
+
+Read the visible page structure with compact persistent refs:
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit call getAriaSnapshot \
+  '{"tabId":123,"scope":"viewport","maxNodes":120,"maxChars":12000}'
+```
+
+Fast ARIA snapshots run in the content script by default, filter to the
+viewport, redact sensitive form values, keep refs stable across repeated reads,
+inline native select options, and fall back to the native CDP Accessibility tree
+when needed. Use refs like `r1` or iframe refs like `f3r1` with `clickByRef`,
+`typeByRef`, `hoverByRef`, and `selectByRef`.
 
 ## MCP Server
 
@@ -287,6 +301,9 @@ webmcp -h
   `npx -y @gyga-browser/webmcp-browser-automation-kit gateway start` and reload
   the unpacked extension. In a local checkout, `npm run gateway` is equivalent.
 - Use `getActiveTab`, `newTab`, or `navigate` to select the target tab.
+- Prefer `getAriaSnapshot` for page structure. It defaults to the fast
+  content-script snapshot with compact persistent refs, viewport filtering,
+  option rendering, and `maxChars` protection.
 - Call `webmcp.listTools` before using any page tool.
 - Call page tools only through `webmcp.invokeTool` with `params.toolName`.
 - Parse nested MCP text from `response.result.result.content[0].text` when using

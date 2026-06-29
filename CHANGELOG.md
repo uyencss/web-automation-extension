@@ -2,6 +2,27 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.13 - 2026-06-29
+
+### Added
+
+- Added a fast content-script ARIA snapshot path for `getAriaSnapshot`, with automatic fallback to the native CDP Accessibility tree.
+- Added viewport-first snapshot filtering, output node caps, explicit `maxChars` protection, and snapshot size metadata for token-bounded page reads.
+- Added persistent content-script refs backed by `WeakMap`/`WeakRef`, TTL pruning, and compact frame-aware refs such as `ref=r1` and `ref=f3r1`.
+- Added inline native `<select>` option rendering with `includeOptions` and `maxOptions` controls.
+- Added broader sensitive form value redaction for password, OTP, token, card, CVV/CVC, API key, and related field hints.
+- Added detailed implementation plans for the fast ARIA snapshot architecture and final output polish.
+
+### Changed
+
+- Updated `clickByRef`, `typeByRef`, `hoverByRef`, and `selectByRef` to route fast refs through in-page content-script actions while preserving the CDP path for native refs.
+- Updated command catalog, generated skill references, root README, extension README, and packaged docs for the new ARIA snapshot parameters.
+- Bumped the npm package to `1.0.13` and the unpacked extension manifest to `2.1.3`.
+
+### Fixed
+
+- Prevented large ARIA snapshots from silently flooding model context by returning a structured `SNAPSHOT_TOO_LARGE` error when `maxChars` is exceeded.
+
 ## 1.0.12 - 2026-06-29
 
 ### Added
