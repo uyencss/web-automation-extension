@@ -203,7 +203,9 @@ These are background commands registered in
 | `navigate` | Navigate active or selected tab | `{ url, tabId? }` |
 | `closeTab` | Close a tab | `{ tabId? }` |
 | `waitForSelector` | Wait for a CSS selector in page JS | `{ selector, timeout?, tabId? }` |
-| `getPageContent` | Read title/text/html snapshot | `{ tabId? }` |
+| `getPageContent` | Read raw title/text/html snapshot | `{ format?, maxLength?, offset?, tabId? }` |
+| `getPageText` | Smart readable article text (semantic container + cleanup) | `{ maxLength?, offset?, frame?, tabId? }` |
+| `readPage` | One-shot open+read: navigate, wait, return smart text | `{ url?, maxLength?, offset?, frame?, tabId? }` |
 | `click` | JS selector click | `{ selector, tabId? }` |
 | `type` | JS selector value set | `{ selector, text, tabId? }` |
 | `evaluateJS` | Execute page JavaScript | `{ code, tabId? }` |
@@ -336,6 +338,7 @@ Use standard CSS selectors only. Playwright-only selectors such as
 | Need | Best action |
 |---|---|
 | Open or change page | `newTab` or `navigate` |
+| Read an article/page as clean text | `getPageText` (or `readPage` to navigate+read in one call) |
 | Understand page structure (preferred) | `getAriaSnapshot` — returns semantic tree with ref IDs |
 | Know what can be clicked/typed | `getAriaSnapshot` or `getInteractiveElements` |
 | Click a button/link on SPA | `getAriaSnapshot` → `clickByRef` (robust) |

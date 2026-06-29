@@ -4,7 +4,7 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (51)
+## Extension Commands (53)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
@@ -30,6 +30,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `getInteractiveElements` | `{ pierceShadow?, frame?, tabId? }` | `ai-vision.js` |
 | `getLocalStorage` | `{ tabId? }` | `full-control.js` |
 | `getPageContent` | `{ format?, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
+| `getPageText` | `{ maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
 | `getWindowVariable` | `{ path, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
 | `hover` | `{ selector, frame?, tabId? }` | `cdp-input.js` |
 | `hoverByRef` | `{ ref, frameId?, tabId? }` | `aria-snapshot.js` |
@@ -44,6 +45,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `pressKey` | `{ key, text?, modifiers?, tabId? }` | `cdp-input.js` |
 | `querySelectorAll` | `{ selector, limit?, offset?, fields?, textMaxLength?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
 | `readConsoleMessages` | `{ level?, pattern?, limit?, since?, clear?, tabId? }` | `console-capture.js` |
+| `readPage` | `{ url?, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
 | `resetViewport` | `{ tabId? }` | `full-control.js` |
 | `screenshot` | `{ fullPage?, tabId? }` | `cdp-actions.js` |
 | `scroll` | `{ deltaX?, deltaY?, x?, y?, tabId? }` | `cdp-input.js` |
@@ -85,8 +87,8 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 
 ## Capability Announcement Check
 
-- Announced capabilities: 51
-- Commands with handlers: 51
+- Announced capabilities: 53
+- Commands with handlers: 53
 - Announced without handler: none
 - Handler not announced: none
 

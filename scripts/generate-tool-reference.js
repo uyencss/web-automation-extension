@@ -27,6 +27,8 @@ const COMMAND_PARAM_HINTS = {
   listFrames: '{ flat?, force?, tabId? }',
   waitForSelector: '{ selector, timeout?, frame?, tabId? }',
   getPageContent: '{ format?, maxLength?, offset?, frame?, tabId? }',
+  getPageText: '{ maxLength?, offset?, frame?, tabId? }',
+  readPage: '{ url?, maxLength?, offset?, frame?, tabId? }',
   click: '{ selector, frame?, tabId? }',
   type: '{ selector, text, frame?, tabId? }',
   querySelectorAll: '{ selector, limit?, offset?, fields?, textMaxLength?, pierceShadow?, frame?, tabId? }',

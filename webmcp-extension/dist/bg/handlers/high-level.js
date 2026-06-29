@@ -7,6 +7,7 @@ import {
 } from '../cdp-bridge.js';
 import { waitForPageStable } from './page-stability.js';
 import { DOM_DEEP_HELPERS } from './dom-helpers.js';
+import { buildTextExtractionExpr } from './page-text-extract.js';
 
 async function getEvaluator(tabId, frameSpec) {
   if (!frameSpec) {
@@ -21,6 +22,14 @@ async function getEvaluator(tabId, frameSpec) {
 
 function framePayload(frameTarget) {
   return frameTarget ? { frame: formatFrameTarget(frameTarget) } : {};
+}
+
+// Smart "readable text" extraction, modeled on the experience of Claude's
+// get_page_text but kept inside the existing CDP evaluate path (no extra
+// permissions, no second execution model). The page-side expression lives in
+// page-text-extract.js so it can be unit-tested without a `chrome` stub.
+function runTextExtraction(evaluate, maxLength, offset) {
+  return evaluate(buildTextExtractionExpr(maxLength, offset));
 }
 
 export const highLevelHandlers = {
@@ -160,6 +169,54 @@ export const highLevelHandlers = {
       })()
     `);
     return { tabId, ...framePayload(frameTarget), ...result };
+  },
+
+  // getPageText — smart "readable content" extraction in one call. Unlike
+  // getPageContent (raw document.body.innerText), this picks the dominant
+  // semantic content container, normalizes whitespace, and returns clean
+  // article-like text. Supports offset/maxLength pagination and iframe
+  // targeting via frame.
+  async getPageText(params) {
+    const tabId = await resolveTabId(params);
+    const { maxLength = 50000, offset = 0 } = params;
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
+    const result = await runTextExtraction(evaluate, maxLength, offset);
+    return { tabId, ...framePayload(frameTarget), ...result };
+  },
+
+  // readPage — one-shot "open and read" that mirrors the single-call ergonomics
+  // of Claude's get_page_text. Optionally navigates first, waits for the page to
+  // settle, then returns smart readable text. Collapses the common
+  // navigate -> waitForStable -> extract sequence into a single tool call.
+  async readPage(params) {
+    const { url, maxLength = 50000, offset = 0 } = params;
+    const tabId = await resolveTabId(params);
+
+    if (url) {
+      await chrome.tabs.update(tabId, { url });
+      // Wait for the load to complete (bounded), then for the DOM to settle so
+      // lazy-hydrated SPAs/feeds have content before we read.
+      await new Promise((resolve) => {
+        const listener = (updatedTabId, changeInfo) => {
+          if (updatedTabId === tabId && changeInfo.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        setTimeout(() => {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }, 30000);
+      });
+    }
+
+    await waitForPageStable(tabId, { minStableMs: 600, maxWaitMs: 8000 });
+
+    const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
+    const result = await runTextExtraction(evaluate, maxLength, offset);
+    const tab = await chrome.tabs.get(tabId);
+    return { tabId, navigatedTo: url ? tab.url : undefined, ...framePayload(frameTarget), ...result };
   },
 
   // Paginated DOM extraction — replaces the "stuff data into HTML attributes"

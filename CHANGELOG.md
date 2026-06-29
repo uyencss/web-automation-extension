@@ -2,6 +2,22 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.16 - 2026-06-29
+
+### Added
+
+- Added a `getPageText` command: smart "readable content" extraction in one call. It probes a priority list of semantic content containers (`article`, `main`, `[role=main]`, common `post-content`/`entry-content`/`articleBody` patterns), picks the container with the **most** text (more robust than "first selector wins", which can latch onto a tiny related-article card), normalizes whitespace/blank lines, and falls back to `<body>` for SPAs/feeds. Returns the matched `source` plus `offset`/`maxLength` pagination and a short-content guard. This closes most of the gap with Claude's `get_page_text` for "just read the page" tasks without changing WebMCP's architecture or adding permissions.
+- Added a `readPage` command: one-shot "open and read" that optionally navigates to `url`, waits for load + DOM stability, then returns the same smart text — collapsing `navigate → waitForStable → getPageText` into a single tool call.
+- Extracted the page-side extraction expression into a dependency-free `webmcp-extension/dist/bg/handlers/page-text-extract.js` with a Node unit test (`tests/unit/page-text-extraction.test.mjs`) covering container selection, whitespace cleanup, pagination, body fallback, and the empty-page guard.
+
+### Changed
+
+- Documented in the skill/tool-selection guidance that `getPageText`/`readPage` are the preferred path for reading a page as clean text, while `querySelectorAll`/`evaluateJS` remain the path for structured bulk extraction. Background: [docs/extension/20260629_getpagetext_analysis_claude_vs_webmcp.md](docs/extension/20260629_getpagetext_analysis_claude_vs_webmcp.md) (records why P2/P4/P5 were deliberately not implemented).
+
+### Extension
+
+- Announced the new `getPageText`/`readPage` capabilities to the gateway and bumped the extension manifest to `2.1.6`.
+
 ## 1.0.15 - 2026-06-29
 
 ### Changed

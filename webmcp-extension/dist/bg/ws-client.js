@@ -38,7 +38,7 @@ export function connectWebSocket() {
         // Page interaction (JS-based)
         'listFrames',
         'evaluateJS', 'executeCDP', 'screenshot',
-        'click', 'type', 'waitForSelector', 'getPageContent', 'querySelectorAll',
+        'click', 'type', 'waitForSelector', 'getPageContent', 'getPageText', 'readPage', 'querySelectorAll',
         'getWindowVariable', 'findByText', 'pageFetch',
         // WebMCP
         'webmcp.listTools', 'webmcp.invokeTool',

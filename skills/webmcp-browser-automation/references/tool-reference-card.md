@@ -58,6 +58,8 @@ closeTab                { tabId? }
 listFrames              { flat?, force?, tabId? }
 waitForSelector         { selector, timeout?, frame?, tabId? }
 getPageContent          { format?, maxLength?, offset?, frame?, tabId? }
+getPageText             { maxLength?, offset?, frame?, tabId? }   # smart readable text (semantic container + cleanup)
+readPage                { url?, maxLength?, offset?, frame?, tabId? }   # navigate + wait + getPageText in one call
 click                   { selector, frame?, tabId? }
 type                    { selector, text, frame?, tabId? }
 evaluateJS              { code, frame?, tabId? }   # single expression auto-returned; multi-statement body needs explicit return
