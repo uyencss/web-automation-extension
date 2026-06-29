@@ -60,7 +60,7 @@ waitForSelector         { selector, timeout?, frame?, tabId? }
 getPageContent          { format?, maxLength?, offset?, frame?, tabId? }
 click                   { selector, frame?, tabId? }
 type                    { selector, text, frame?, tabId? }
-evaluateJS              { code, frame?, tabId? }
+evaluateJS              { code, frame?, tabId? }   # single expression auto-returned; multi-statement body needs explicit return
 
 executeCDP              { method, params?, tabId? }
 screenshot              { fullPage?, tabId? }

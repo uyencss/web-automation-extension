@@ -263,6 +263,37 @@ Use `selectOption` for native `<select>` elements when CDP/background control is
 preferred. Use `selectByRef` when you already have an ARIA ref. Use page tool
 `fill_form_field` when staying in the WebMCP page-tool layer is simpler.
 
+### evaluateJS return values and bulk extraction
+
+`evaluateJS` runs your code inside an async IIFE — `(async () => { CODE })()` —
+so `await` always works and the result is returned to you.
+
+- **A single expression is auto-returned.** `document.title`,
+  `[...document.querySelectorAll("table tr")].map(tr => tr.innerText)`, or a
+  nested `(() => { ... })()` resolve to their value with no explicit `return`.
+- **A multi-statement body needs an explicit top-level `return`.** Once you use
+  declarations, loops, or `if`/`try` at the top level, add `return <value>` at
+  the end — otherwise the call resolves to `undefined` (you'll only see
+  `tabId` come back). This is the classic gotcha; the auto-return above covers
+  the common single-expression case, but bodies are still yours to return from.
+- **Prefer `evaluateJS` / `query_selector_all` / `extract_table_data` over ARIA
+  snapshots for bulk row/table/data extraction.** ARIA snapshots are optimized
+  for interactive controls and may omit dense tabular rows, hidden tooltips, or
+  chart/SVG internals. Use the snapshot to *navigate and click*; use a DOM query
+  to *pull structured data out in bulk*.
+
+```js
+// Good — single expression, auto-returned
+[...document.querySelectorAll("#trends li")].map(li => ({
+  rank: li.querySelector(".rank")?.textContent?.trim(),
+  label: li.querySelector(".label")?.textContent?.trim(),
+}))
+
+// Good — multi-statement body, explicit return
+const rows = [...document.querySelectorAll("table tbody tr")];
+return rows.map(tr => [...tr.cells].map(td => td.innerText.trim()));
+```
+
 ## Page-Registered Tools
 
 These tools are registered by `register-tools.js` and should be called only via

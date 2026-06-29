@@ -6,6 +6,7 @@ import {
   resolveFrameTarget,
   sendCDPCommand,
 } from '../cdp-bridge.js';
+import { wrapEvaluateCode } from './evaluate-wrap.js';
 
 export const cdpActionHandlers = {
   async evaluateJS(params) {
@@ -14,8 +15,10 @@ export const cdpActionHandlers = {
     const tabId = await resolveTabId(params);
     const frameTarget = params.frame ? await resolveFrameTarget(tabId, params.frame) : null;
 
-    // Wrap in an async IIFE so users can use `return` and `await`
-    const wrapped = `(async () => { ${code} })()`;
+    // Wrap in an async IIFE so users can use `return` and `await`. Single
+    // expressions are auto-returned (see wrapEvaluateCode) so bare-expression
+    // and nested-IIFE snippets return their value instead of undefined.
+    const wrapped = wrapEvaluateCode(code);
     const result = frameTarget
       ? await evaluateInFrameMainWorld(tabId, frameTarget, wrapped)
       : await evaluateInTab(tabId, wrapped);

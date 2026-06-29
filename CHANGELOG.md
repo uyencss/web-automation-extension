@@ -2,6 +2,21 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.15 - 2026-06-29
+
+### Changed
+
+- `evaluateJS` now **auto-returns single expressions**. Your code still runs inside `(async () => { … })()`, but a single expression — `document.title`, `[...document.querySelectorAll("tr")].map(…)`, or a nested `(() => {…})()` — now resolves to its value without an explicit `return`. This removes the long-standing "I ran evaluateJS and only got `tabId` back" gotcha. Multi-statement bodies (declarations, loops, control flow) still require an explicit top-level `return`. Detection is brace/string/comment-aware, so semicolons or keywords inside nested scopes, strings, or `${…}` interpolations are not mistaken for top-level statements.
+- Documented in `evaluateJS`'s catalog description and the agent skill that bulk row/table/data extraction should use `evaluateJS` / `query_selector_all` / `extract_table_data` rather than ARIA snapshots, which target interactive controls and may omit dense tabular rows, hidden tooltips, or chart/SVG internals.
+
+### Added
+
+- Extracted the wrapping logic into a dependency-free `webmcp-extension/dist/bg/handlers/evaluate-wrap.js` module with a Node unit test (`tests/unit/evaluate-wrap.test.mjs`, run via `npm test`) covering bare expressions, nested IIFEs, trailing semicolons, strings containing `;`, and multi-statement bodies.
+
+### Extension
+
+- Bumped the extension manifest to `2.1.5`.
+
 ## 1.0.14 - 2026-06-29
 
 ### Changed
