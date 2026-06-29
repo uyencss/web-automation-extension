@@ -13,7 +13,13 @@
   const REF_TTL_MS = 10 * 60 * 1000;
   const MAX_STORED_REFS = 1000;
   const MAX_VISITED_ELEMENTS = 10000;
-  const DEFAULT_MAX_DEPTH = 8;
+  // Accessibility depth budget: only meaningful, visible nodes consume a level,
+  // so it counts the depth of the *rendered* a11y tree, not raw DOM nesting.
+  const DEFAULT_MAX_DEPTH = 15;
+  // Hard ceiling on raw DOM recursion, independent of accessibility depth.
+  // Guards against stack overflow on pathologically nested wrapper markup that
+  // never advances the accessibility depth.
+  const MAX_RAW_DEPTH = 200;
   const DEFAULT_MAX_NODES = 250;
   const DEFAULT_MAX_OPTIONS = 50;
   const DEFAULT_VIEWPORT_MARGIN = 32;
@@ -345,6 +351,8 @@
     const maxChars = Number.isFinite(params.maxChars) && params.maxChars > 0 ? params.maxChars : null;
     const viewportMargin = Number.isFinite(params.viewportMargin) ? params.viewportMargin : DEFAULT_VIEWPORT_MARGIN;
     const includeOptions = params.includeOptions !== false;
+    const includeText = params.includeText === true;
+    const maxTextLength = Number.isFinite(params.maxTextLength) ? Math.max(0, params.maxTextLength) : 200;
     const requestedScope = params.scope || 'auto';
     const scope = requestedScope === 'full' ? 'full' : 'viewport';
     const root = document.body || document.documentElement;
@@ -352,12 +360,42 @@
     let visited = 0;
     let truncated = false;
 
-    function walk(element, depth) {
-      if (!element || visited >= MAX_VISITED_ELEMENTS) {
+    function walk(element, depth, rawDepth) {
+      if (!element || visited >= MAX_VISITED_ELEMENTS || rawDepth > MAX_RAW_DEPTH) {
         truncated = true;
         return [];
       }
       visited++;
+
+      // Resolve this node's own semantics first. None of these depend on the
+      // children, so we can decide whether the node occupies an accessibility
+      // level *before* descending into it.
+      const role = getRole(element);
+      const isInteractive = interactiveRoles.has(role);
+      const isLandmark = landmarkRoles.has(role);
+      const isStructural = structuralRoles.has(role);
+      const name = role ? getAccessibleName(element, role) : '';
+      const value = role ? getValue(element, role, name) : '';
+      const roleMeaningful = Boolean(role && (isInteractive || isLandmark || isStructural || name || value));
+      // Optional: surface visible own-text from role-less containers (post
+      // bodies, captions, paragraphs) so the snapshot can be read like an
+      // article instead of only listing interactive controls.
+      const ownText = includeText && !roleMeaningful ? getOwnText(element, maxTextLength) : '';
+      // Drop 1-char fragments: sites like Facebook scramble timestamps into
+      // per-character spans as an anti-scrape measure, which would otherwise
+      // explode the snapshot into dozens of single-letter text lines. Real
+      // content is always longer.
+      const textOnly = ownText.length >= 2;
+      const meaningful = roleMeaningful || textOnly;
+      const visible = meaningful && isVisible(element);
+
+      // Accessibility depth: only meaningful, visible nodes spend the budget.
+      // Semantically empty wrapper <div>s are traversed "for free" (childDepth
+      // stays put), so deeply nested SPA markup (Facebook, Salesforce, …) still
+      // reaches real content at a sane maxDepth instead of being cut off by
+      // dozens of layout wrappers.
+      const selfCounts = meaningful && visible;
+      const childDepth = selfCounts ? depth + 1 : depth;
 
       const childEntries = [];
       if (depth < maxDepth) {
@@ -367,18 +405,10 @@
             truncated = true;
             break;
           }
-          childEntries.push(...walk(child, depth + 1));
+          childEntries.push(...walk(child, childDepth, rawDepth + 1));
         }
       }
 
-      const role = getRole(element);
-      const isInteractive = interactiveRoles.has(role);
-      const isLandmark = landmarkRoles.has(role);
-      const isStructural = structuralRoles.has(role);
-      const name = role ? getAccessibleName(element, role) : '';
-      const value = role ? getValue(element, role, name) : '';
-      const meaningful = Boolean(role && (isInteractive || isLandmark || isStructural || name || value));
-      const visible = meaningful && isVisible(element);
       const inScope = scope === 'full' || isInViewport(element, viewportMargin);
       const includeSelf = meaningful && visible && (inScope || childEntries.length > 0);
 
@@ -386,7 +416,9 @@
 
       const bounds = getBounds(element);
       const ref = isInteractive ? ensureRef(element, { role, name, bounds, documentId }) : null;
-      const line = makeLine(element, role, name, value, ref);
+      const line = roleMeaningful
+        ? makeLine(element, role, name, value, ref)
+        : `- text "${ownText.replace(/"/g, '\\"')}"`;
       const inlineOptionEntries = includeOptions ? optionEntriesForSelect(element, maxOptions) : [];
       return [
         { indent: 0, line },
@@ -395,7 +427,7 @@
       ];
     }
 
-    const entries = root ? walk(root, 0) : [];
+    const entries = root ? walk(root, 0, 0) : [];
     if (entries.length > maxNodes) truncated = true;
 
     const visibleEntries = entries.slice(0, maxNodes);

@@ -167,29 +167,59 @@ export const ariaSnapshotHandlers = {
   async getAriaSnapshot(params) {
     const tabId = await resolveTabId(params);
     const {
-      maxDepth = 8,
+      maxDepth = 15,
       mode = 'auto',
       scope = 'auto',
       maxNodes = 250,
       maxOptions,
       maxChars,
       includeOptions,
+      includeText,
+      maxTextLength,
       refFormat = 'compact',
       viewportMargin = 32,
+      waitStable = false,
     } = params;
     const frameId = getChromeFrameId(params);
 
+    // Optionally let the page settle (lazy-hydrated feeds, route changes, …)
+    // before snapshotting so freshly rendered content is actually present.
+    if (waitStable) {
+      try {
+        await waitForPageStable(tabId, typeof waitStable === 'object' ? waitStable : {});
+      } catch { /* best-effort: snapshot whatever is there */ }
+    }
+
     if (mode !== 'native') {
       try {
-        const fastSnapshot = await sendContentAriaMessage(tabId, 'snapshot', {
+        const runFast = (useScope) => sendContentAriaMessage(tabId, 'snapshot', {
           maxDepth,
-          scope,
+          scope: useScope,
           maxNodes,
           maxOptions,
           maxChars,
           includeOptions,
+          includeText,
+          maxTextLength,
           viewportMargin,
         }, frameId);
+
+        let fastSnapshot = await runFast(scope);
+
+        // Smart escalation: a viewport-scoped pass on a heavy SPA can come back
+        // essentially empty — the meaningful content sits just below the fold or
+        // is still hydrating. When the caller left scope on "auto", retry once
+        // with full-document scope before giving up to the slower CDP path. The
+        // accessibility-depth walk keeps this cheap and usually surfaces the
+        // real tree.
+        const degenerate = !fastSnapshot.tooLarge && fastSnapshot.nodeCount <= 1;
+        if (degenerate && scope === 'auto' && fastSnapshot.scope !== 'full') {
+          const fullSnapshot = await runFast('full');
+          if (!fullSnapshot.tooLarge && fullSnapshot.nodeCount > fastSnapshot.nodeCount) {
+            fullSnapshot.escalatedFrom = fastSnapshot.scope;
+            fastSnapshot = fullSnapshot;
+          }
+        }
 
         if (fastSnapshot.tooLarge) {
           throw new Error(fastSnapshot.error || 'SNAPSHOT_TOO_LARGE: fast ARIA snapshot exceeded maxChars.');

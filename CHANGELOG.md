@@ -2,6 +2,24 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.14 - 2026-06-29
+
+### Changed
+
+- Reworked the fast ARIA snapshot to count **accessibility depth** instead of raw DOM depth: semantically empty wrapper elements no longer consume the depth budget, so `getAriaSnapshot` reaches real content on deeply nested SPAs (Facebook, Salesforce, …) at the default depth.
+- Raised the default `maxDepth` from `8` to `15` for both the fast content-script path and the native CDP fallback.
+
+### Added
+
+- Added smart scope escalation: when `scope` is left on `auto` and a viewport-scoped fast snapshot comes back essentially empty (`nodeCount <= 1`), `getAriaSnapshot` now automatically retries once with full-document scope before falling back to the slower CDP path, reporting `escalatedFrom` when it does.
+- Added an `includeText` option (with `maxTextLength`, default 200) that surfaces visible own-text from role-less containers — post bodies, captions, paragraphs — as `text "..."` lines, so the snapshot can be read like an article instead of only listing controls. Single-character fragments are dropped to avoid exploding on anti-scrape per-character timestamp spans.
+- Added a `waitStable` option that lets the page settle (lazy-hydrated feeds, route changes) via the existing page-stability watcher before the snapshot is captured; pass `true` or a stability options object.
+- Added a `MAX_RAW_DEPTH` recursion safety ceiling (200) to guard against stack overflow on pathologically nested wrapper markup.
+
+### Fixed
+
+- Fixed the "empty `main`" symptom where heavily wrapped pages returned only a handful of header/navigation refs under the default snapshot configuration.
+
 ## 1.0.13 - 2026-06-29
 
 ### Added
