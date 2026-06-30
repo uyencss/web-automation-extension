@@ -1,9 +1,16 @@
-# WebMCP Extension v2.1.3
+# WebMCP Extension v2.1.7
 
-Chrome extension for **AI-driven browser automation** over WebSocket. Provides **51 commands**
+Chrome extension for **AI-driven browser automation** over WebSocket. Provides **53 commands**
 so an AI model can fully control the browser: inspect page structure, click/type at
 coordinates, capture console output, read fast ARIA snapshots, manage cookies/storage,
 take screenshots, and more.
+
+> **Note on the MCP surface.** These 53 commands are the full extension/gateway
+> layer (always available over WebSocket and via `browser_raw_command`). The MCP
+> server adapter exposes a trimmed subset by default — a lean **"minimal"** set
+> (~26 tools) — to keep the per-request tool schema small. Switch with
+> `WEBMCP_TOOLS=core` (~46) or `WEBMCP_TOOLS=full` (all 53). See the root
+> [README](../README.md#choosing-how-many-tools-are-exposed-webmcp_tools).
 
 ## Architecture
 
@@ -58,13 +65,13 @@ The extension auto-connects within 3 seconds. The gateway logs:
 
 ```
 ✓ Extension connected
-✓ Extension ready: WebMCP Tools Provider v2.1.0
-    51 capabilities registered
+✓ Extension ready: WebMCP Tools Provider v2.1.7
+    53 capabilities registered
 ```
 
 ---
 
-## All Commands (51)
+## All Commands (53)
 
 Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets the active tab.
 
@@ -78,7 +85,7 @@ Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets 
 | `closeTab`     | `{ tabId? }`      | Close a tab                            |
 | `getActiveTab` | `{}`              | Current active tab info                |
 
-### Page Interaction — JS-based (10)
+### Page Interaction — JS-based (12)
 
 | Method              | Params                                          | Description                              |
 | ------------------- | ----------------------------------------------- | ---------------------------------------- |
@@ -87,6 +94,8 @@ Send as JSON-RPC 2.0 over WebSocket. If `tabId` is omitted, the command targets 
 | `type`              | `{ selector, text, frame?, tabId? }`            | Type text into an input (React/Vue compatible) |
 | `waitForSelector`   | `{ selector, timeout?, frame?, tabId? }`        | Wait for an element to appear            |
 | `getPageContent`    | `{ format?, maxLength?, offset?, frame?, tabId? }` | Get page title, text, and/or HTML     |
+| `getPageText`       | `{ maxLength?, offset?, frame?, tabId? }`       | Smart readable article text (semantic container + cleanup) |
+| `readPage`          | `{ url?, maxLength?, offset?, frame?, tabId? }` | One-shot open+read: navigate, wait, return smart text |
 | `querySelectorAll`  | `{ selector, limit?, offset?, fields?, pierceShadow?, frame?, tabId? }` | Extract elements as structured records |
 | `getWindowVariable` | `{ path, maxLength?, offset?, frame?, tabId? }` | Read globals like `__NEXT_DATA__`        |
 | `findByText`        | `{ text, exact?, selector?, pierceShadow?, frame?, tabId? }` | Find elements by visible text |
@@ -367,10 +376,10 @@ web-automation-extension/
 │   ├── README.md                      # This file
 │   └── dist/                          # ← Load this directory into Chrome
 │       ├── manifest.json              # Manifest V3
-│       ├── background.js              # WebSocket client + 51 command handlers
+│       ├── background.js              # WebSocket client + 53 command handlers
 │       ├── content-scripts/
 │       │   ├── bridge.js              # Isolated-world bridge
-│       │   └── register-tools.js      # Inject 13 WebMCP tools into every page
+│       │   └── register-tools.js      # Inject 14 WebMCP tools into every page
 │       └── icons/
 ├── skills/
 │   └── webmcp-browser-automation/     # Agent skill source (installed globally)

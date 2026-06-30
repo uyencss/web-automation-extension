@@ -131,22 +131,22 @@ npx -y @gyga-browser/webmcp-browser-automation-kit gateway start
 
 #### Choosing how many tools are exposed (`WEBMCP_TOOLS`)
 
-By default the MCP server exposes a lean **"minimal" set** (~25 tools) covering
+By default the MCP server exposes a lean **"minimal" set** (~26 tools) covering
 the common loop — tabs, smart page reads, ARIA ref-based interaction, a
-coordinate-click fallback, waits, and screenshots — to keep the per-request tool
-schema small and reduce tool-selection ambiguity. Lower-frequency commands
-(cookies/storage, windows/viewport, console capture, low-level input, raw CDP,
-`pageFetch`, `listFrames`, diagnostics, and superseded commands like
-`getPageContent` or the CSS-selector variants `click`/`type`/`hover`/`selectOption`)
-are hidden from the first-class list but **remain fully callable** via
-`browser_raw_command`, so nothing is lost.
+coordinate-click fallback (`getElementBounds` → `dispatchClick`), waits, and
+screenshots — to keep the per-request tool schema small and reduce tool-selection
+ambiguity. Lower-frequency commands (cookies/storage, windows/viewport, console
+capture, low-level input, raw CDP, `pageFetch`, `listFrames`, diagnostics, and
+superseded commands like `getPageContent` or the CSS-selector variants
+`click`/`type`/`hover`/`selectOption`) are hidden from the first-class list but
+**remain fully callable** via `browser_raw_command`, so nothing is lost.
 
 Set the `WEBMCP_TOOLS` environment variable to change this:
 
 | Value | Effect |
 |---|---|
-| _unset_ or `minimal` | Leanest set (~25 tools, default). Hidden tools still reachable via `browser_raw_command`. |
-| `core` | Broader lean set (~45 tools): only the superseded/CSS-variant commands are hidden. |
+| _unset_ or `minimal` | Leanest set (~26 tools, default). Hidden tools still reachable via `browser_raw_command`. |
+| `core` | Broader lean set (~46 tools): only the superseded/CSS-variant commands are hidden. |
 | `full` | Expose every supported command as its own MCP tool. |
 | `getAriaSnapshot,clickByRef,evaluateJS` | Custom allowlist (comma/space separated gateway methods or `snake_case` tool names). `browser_raw_command` is always included. |
 
@@ -341,8 +341,9 @@ webmcp -h
 - Call page tools only through `webmcp.invokeTool` with `params.toolName`.
 - Parse nested MCP text from `response.result.result.content[0].text` when using
   the HTTP gateway.
-- After each action, verify with a wait, query, screenshot, accessibility tree,
-  or `getInteractiveElements`.
+- After each action, verify with a wait, query, screenshot, or another
+  `getAriaSnapshot` (`getInteractiveElements` works too but is hidden on the
+  default minimal surface — reach it via `browser_raw_command` or `WEBMCP_TOOLS=core`).
 
 ## Scripts
 

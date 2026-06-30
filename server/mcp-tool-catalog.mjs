@@ -101,8 +101,10 @@ function toolNameForMethod(method) {
 //   Group A — a strictly better / more specific tool already exists:
 //     getPageContent       -> getPageText (text); raw_command for raw HTML
 //     getAccessibilityTree -> getAriaSnapshot (faster, ref-based)
-//     getDOMSnapshot, getInteractiveElements, getElementBounds -> niche, mainly
-//       the coordinate-click fallback flow
+//     getDOMSnapshot, getInteractiveElements -> niche, token-heavy whole-page
+//       dumps. getElementBounds stays exposed (cheap, targeted) so the
+//       coordinate-click fallback getElementBounds -> dispatchClick is complete
+//       even on the minimal surface.
 //   Group B — CSS-selector variants of the preferred *ByRef actions:
 //     click -> clickByRef, type -> typeByRef, hover -> hoverByRef,
 //     selectOption -> selectByRef
@@ -112,7 +114,6 @@ export const CORE_HIDDEN_METHODS = new Set([
   'getAccessibilityTree',
   'getDOMSnapshot',
   'getInteractiveElements',
-  'getElementBounds',
   // Group B
   'click',
   'type',
@@ -121,8 +122,9 @@ export const CORE_HIDDEN_METHODS = new Set([
 ]);
 
 // Methods hidden from the default ("minimal") MCP surface. A strict superset of
-// CORE_HIDDEN_METHODS: minimal keeps only the ~24 tools that cover the common
-// navigate -> read -> ARIA-interact loop, and pushes lower-frequency commands
+// CORE_HIDDEN_METHODS: minimal keeps only the ~25 tools that cover the common
+// navigate -> read -> ARIA-interact loop (plus getElementBounds for the
+// coordinate-click fallback), and pushes lower-frequency commands
 // (cookies/storage, windows/viewport, low-level input, console capture, frame
 // tree, diagnostics, raw CDP, page-side fetch) out of the first-class list.
 // Everything here stays fully callable through browser_raw_command, so trimming

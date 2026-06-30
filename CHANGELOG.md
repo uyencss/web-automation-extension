@@ -2,6 +2,13 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.20 - 2026-06-30
+
+### Changed
+
+- Exposed `getElementBounds` on the default `minimal` (and `core`) surface so the coordinate-click fallback `getElementBounds` → `dispatchClick` is complete without dropping to `browser_raw_command`. It is cheap and targeted (you already have the selector), unlike the token-heavy `getInteractiveElements`, which stays hidden. Counts: minimal ~26, core ~46, full 54.
+- Reconciled the docs with the `minimal` default. `SKILL.md` now flags the minimal-hidden tools (`getInteractiveElements`, `click`/`type`, `typeText`) inline in the run loop, tool-selection table, and coordinate-click workflow, and points the coordinate fallback at `getElementBounds`. The root `README.md` Agent Usage Contract no longer assumes `getInteractiveElements` is first-class. `webmcp-extension/README.md` was refreshed (v2.1.7, 53 commands, added `getPageText`/`readPage`, 14 page tools) and now points to the `WEBMCP_TOOLS` preset docs.
+
 ## 1.0.19 - 2026-06-30
 
 ### Changed

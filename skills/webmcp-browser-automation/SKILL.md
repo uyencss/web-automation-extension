@@ -146,9 +146,14 @@ For every browser automation task:
      `selectByRef` with refs from `getAriaSnapshot`. These are robust against
      DOM changes and work reliably on SPAs.
    - Page structure/data: use page WebMCP tools.
-   - Real browser input: use `getInteractiveElements` plus `dispatchClick`,
-     `typeText`, `pressKey`, or `scroll`.
-   - CSS selector interaction: use `click`, `type` for simple pages.
+   - Real browser input (coordinate fallback): get a target's box with
+     `getElementBounds` (in the minimal surface) and click its center with
+     `dispatchClick`, then `pressKey`/`scroll`. `getInteractiveElements` is a
+     richer discovery dump but is **hidden on the minimal surface** — reach it via
+     `browser_raw_command` or `WEBMCP_TOOLS=core`.
+   - CSS selector interaction (`click`, `type`) is also **hidden on minimal**
+     (the `*ByRef` actions are preferred); use `browser_raw_command` or
+     `WEBMCP_TOOLS=core`/`full` if you specifically need it.
    - Last-resort DOM/API logic: use `evaluateJS` or page tool
      `execute_javascript`.
 6. Invoke one action. The extension **automatically waits for page stability**
@@ -219,16 +224,17 @@ inspect the parsed WebMCP payload.
 These are background commands registered in
 `webmcp-extension/dist/bg/handlers/index.js`.
 
-> Tool exposure: by default the MCP server exposes a lean "minimal" set (~25
+> Tool exposure: by default the MCP server exposes a lean "minimal" set (~26
 > tools) covering tabs, smart reads, ARIA ref interaction, a coordinate-click
-> fallback, waits, and screenshots. Many commands listed below — cookies/storage,
-> windows/viewport, console capture, `moveMouse`/`typeText`, `executeCDP`,
-> `pageFetch`, `listFrames`, `ping`/`getExtensionInfo`, plus the superseded
-> `getPageContent`/`getAccessibilityTree`/`getDOMSnapshot`/`getInteractiveElements`/`getElementBounds`
-> and the CSS-selector variants `click`/`type`/`hover`/`selectOption` — may not
-> appear as their own MCP tool. They are still callable via `browser_raw_command`
-> (`{ method, params }`). Set `WEBMCP_TOOLS=core` for the broader lean set, or
-> `WEBMCP_TOOLS=full` to expose every command as its own tool.
+> fallback (`getElementBounds` → `dispatchClick`), waits, and screenshots. Many
+> commands listed below — cookies/storage, windows/viewport, console capture,
+> `moveMouse`/`typeText`, `executeCDP`, `pageFetch`, `listFrames`,
+> `ping`/`getExtensionInfo`, plus the superseded
+> `getPageContent`/`getAccessibilityTree`/`getDOMSnapshot`/`getInteractiveElements`
+> and the CSS-selector variants `click`/`type`/`hover`/`selectOption` — do **not**
+> appear as their own MCP tool on the minimal surface. They are still callable via
+> `browser_raw_command` (`{ method, params }`). Set `WEBMCP_TOOLS=core` for the
+> broader lean set, or `WEBMCP_TOOLS=full` to expose every command as its own tool.
 
 | Command | Use for | Params |
 |---|---|---|
@@ -377,7 +383,7 @@ Use standard CSS selectors only. Playwright-only selectors such as
 | Open or change page | `newTab` or `navigate` |
 | Read / answer from a text page (do this first) | `getPageText` (or `readPage` to navigate+read in one call) — fast, clean, low-token; prefer over a snapshot when you only need to read |
 | Understand page structure **to interact** | `getAriaSnapshot` — returns semantic tree with ref IDs |
-| Know what can be clicked/typed | `getAriaSnapshot` or `getInteractiveElements` |
+| Know what can be clicked/typed | `getAriaSnapshot` (minimal); `getInteractiveElements` for a richer dump (hidden on minimal — use `browser_raw_command`/`core`) |
 | Click a button/link on SPA | `getAriaSnapshot` → `clickByRef` (robust) |
 | Fill a text field on SPA | `getAriaSnapshot` → `typeByRef` (robust) |
 | Select a dropdown option | `getAriaSnapshot` → `selectByRef` (robust) |
@@ -385,7 +391,7 @@ Use standard CSS selectors only. Playwright-only selectors such as
 | Extract page title/meta/headings/links | `webmcp.invokeTool` -> `get_page_metadata` |
 | Fill ordinary form field (simple page) | `webmcp.invokeTool` -> `fill_form_field` |
 | Submit form | `webmcp.invokeTool` -> `submit_form`, then wait |
-| Anti-bot/framework requires real input | `getInteractiveElements`, `dispatchClick`, `typeText`, `pressKey` |
+| Anti-bot/framework requires real input | `getElementBounds` → `dispatchClick`, then `pressKey` (minimal-friendly). `getInteractiveElements`/`typeText` are hidden on minimal — use `browser_raw_command`/`core` |
 | Wait for page to settle | `waitForStable` (auto-applied after click/type/clickByRef/typeByRef) |
 | Infinite scroll | `scroll` or `scroll_page`, then query count again |
 | Table extraction | `webmcp.invokeTool` -> `extract_table_data` |
@@ -432,13 +438,15 @@ Use standard CSS selectors only. Playwright-only selectors such as
 
 ### Real click and type (CDP coordinates)
 
-1. Call `getInteractiveElements`.
-2. Choose an element by text/name/placeholder and use its `bounds.centerX` and
-   `bounds.centerY`.
+1. Get the target's box with `getElementBounds` (in the minimal surface). For a
+   whole-page discovery dump use `getInteractiveElements` instead — it is hidden
+   on minimal, so call it via `browser_raw_command` or `WEBMCP_TOOLS=core`.
+2. Use the box's `centerX`/`centerY`.
 3. Call `dispatchClick` with those coordinates.
-4. Call `typeText`.
+4. Type: `typeText` inserts into the focused element (hidden on minimal — use
+   `browser_raw_command`/`core`); otherwise prefer `typeByRef` from a snapshot.
 5. Call `pressKey` with `Enter` if needed.
-6. Verify with `waitForSelector`, `getInteractiveElements`, or `screenshot`.
+6. Verify with `waitForSelector`, `getAriaSnapshot`, or `screenshot`.
 
 ### Form fill with ARIA refs (preferred for SPAs)
 
@@ -487,8 +495,10 @@ Captured records include `method`, `status`, `mimeType`, `durationMs`,
 - **Prefer ARIA ref-based interaction** (`getAriaSnapshot` → `clickByRef` /
   `typeByRef`) over CSS selectors for clicking and typing. ARIA refs are stable
   across DOM re-renders.
-- Fall back to `getInteractiveElements` plus CDP input when ARIA refs are not
-  available or JS clicks/synthetic events fail.
+- Fall back to a coordinate click (`getElementBounds` → `dispatchClick`) when
+  ARIA refs are not available or JS clicks/synthetic events fail. The richer
+  `getInteractiveElements` dump is hidden on the minimal surface — reach it via
+  `browser_raw_command` or `WEBMCP_TOOLS=core`.
 - The extension **auto-waits for page stability** after `click`, `type`,
   `clickByRef`, `typeByRef`, and `selectByRef`. For other actions, use
   `waitForStable` explicitly after navigation, form submits, route changes,

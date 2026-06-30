@@ -37,7 +37,7 @@ for (const m of MINIMAL_HIDDEN_METHODS) {
 }
 
 // The minimal surface must still cover the core navigate -> read -> interact loop.
-for (const m of ['navigate', 'getPageText', 'getAriaSnapshot', 'clickByRef', 'typeByRef', 'evaluateJS', 'screenshot']) {
+for (const m of ['navigate', 'getPageText', 'getAriaSnapshot', 'clickByRef', 'typeByRef', 'evaluateJS', 'screenshot', 'dispatchClick', 'getElementBounds']) {
   assert(minimal.includes(m), `minimal keeps essential tool ${m}`);
 }
 
