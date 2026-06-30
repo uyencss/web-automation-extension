@@ -193,6 +193,13 @@ inspect the parsed WebMCP payload.
 These are background commands registered in
 `webmcp-extension/dist/bg/handlers/index.js`.
 
+> Tool exposure: by default the MCP server exposes a lean "core" set. A few
+> commands listed below (`getPageContent`, `getAccessibilityTree`,
+> `getDOMSnapshot`, `getInteractiveElements`, `getElementBounds`, and the
+> CSS-selector variants `click`/`type`/`hover`/`selectOption`) may not appear as
+> their own MCP tool. They are still callable via `browser_raw_command`
+> (`{ method, params }`), or set `WEBMCP_TOOLS=full` to expose everything.
+
 | Command | Use for | Params |
 |---|---|---|
 | `ping` | Health check | `{}` |

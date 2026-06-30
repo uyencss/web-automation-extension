@@ -7,7 +7,7 @@
     "type": "git",
     "url": "git+https://github.com/uyencss/web-automation-extension.git"
   },
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Reusable WebMCP Chrome extension, gateway, and agent skill kit for browser automation.",
   "license": "MIT",
   "author": "uyencss",
@@ -45,7 +45,7 @@
     "call": "node scripts/webmcp-call.js",
     "tools:generate": "node scripts/generate-tool-reference.js",
     "tools:check": "node scripts/generate-tool-reference.js --check",
-    "test": "node tests/unit/evaluate-wrap.test.mjs && node tests/unit/page-text-extraction.test.mjs"
+    "test": "node tests/unit/evaluate-wrap.test.mjs && node tests/unit/page-text-extraction.test.mjs && node tests/unit/tool-filter.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

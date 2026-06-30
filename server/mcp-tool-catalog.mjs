@@ -93,6 +93,51 @@ function toolNameForMethod(method) {
   return method.replaceAll('.', '_');
 }
 
+// Methods hidden from the default ("core") MCP surface. They stay fully
+// reachable through browser_raw_command, so trimming them is lossless — it only
+// shrinks the first-class tool list to cut per-request token cost and reduce
+// tool-selection ambiguity between overlapping tools.
+//
+//   Group A — a strictly better / more specific tool already exists:
+//     getPageContent       -> getPageText (text); raw_command for raw HTML
+//     getAccessibilityTree -> getAriaSnapshot (faster, ref-based)
+//     getDOMSnapshot, getInteractiveElements, getElementBounds -> niche, mainly
+//       the coordinate-click fallback flow
+//   Group B — CSS-selector variants of the preferred *ByRef actions:
+//     click -> clickByRef, type -> typeByRef, hover -> hoverByRef,
+//     selectOption -> selectByRef
+export const CORE_HIDDEN_METHODS = new Set([
+  // Group A
+  'getPageContent',
+  'getAccessibilityTree',
+  'getDOMSnapshot',
+  'getInteractiveElements',
+  'getElementBounds',
+  // Group B
+  'click',
+  'type',
+  'hover',
+  'selectOption',
+]);
+
+// Resolve which gateway methods are exposed as first-class MCP tools based on
+// the WEBMCP_TOOLS env var:
+//   unset | 'core'  -> full minus CORE_HIDDEN_METHODS (default, leaner surface)
+//   'full'          -> every supported command
+//   'a,b,c'         -> explicit allowlist of gateway methods or snake_case tool
+//                      names (space/comma separated)
+// browser_raw_command is always added afterwards as the escape hatch.
+export function resolveToolFilter(rawValue) {
+  const value = (rawValue || '').trim();
+  const mode = value.toLowerCase();
+  if (mode === 'full') return () => true;
+  if (value === '' || mode === 'core') {
+    return (method) => !CORE_HIDDEN_METHODS.has(method);
+  }
+  const allow = new Set(value.split(/[,\s]+/).filter(Boolean));
+  return (method) => allow.has(method) || allow.has(toolNameForMethod(method));
+}
+
 function buildTool(method, definition) {
   const requiredParams = definition.requiredParams || [];
   const optionalParams = definition.optionalParams || [];
@@ -108,17 +153,21 @@ function buildTool(method, definition) {
   };
 }
 
-export function buildMcpTools() {
+export function buildMcpTools({ toolsEnv = process.env.WEBMCP_TOOLS } = {}) {
   const unsupportedMethods = new Set(Object.keys(UNSUPPORTED_COMMANDS));
+  const allow = resolveToolFilter(toolsEnv);
   const catalogTools = COMMAND_DEFINITIONS
-    .filter(([method, definition]) => definition.group !== 'runner' && !unsupportedMethods.has(method))
+    .filter(([method, definition]) =>
+      definition.group !== 'runner' &&
+      !unsupportedMethods.has(method) &&
+      allow(method))
     .map(([method, definition]) => buildTool(method, definition));
 
   catalogTools.push({
     name: 'browser_raw_command',
     method: null,
     group: 'control',
-    description: 'Send any raw gateway command. Use this when a command is not exposed as its own MCP tool.',
+    description: 'Send any raw gateway command — including tools not exposed as their own MCP tool (e.g. getPageContent, click, getAccessibilityTree when WEBMCP_TOOLS=core). Pass the gateway method name in `method`. Set WEBMCP_TOOLS=full to expose every command as a first-class tool.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -2,6 +2,16 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.17 - 2026-06-30
+
+### Changed
+
+- The MCP server now exposes a **lean "core" tool set by default** (~45 first-class tools instead of 54) to cut per-request tool-schema tokens and reduce tool-selection ambiguity between overlapping commands. The hidden commands remain **fully callable via `browser_raw_command`**, so the change is lossless. Hidden by default: superseded/niche readers (`getPageContent`, `getAccessibilityTree`, `getDOMSnapshot`, `getInteractiveElements`, `getElementBounds`) and the CSS-selector action variants (`click`, `type`, `hover`, `selectOption`) whose `*ByRef` counterparts are already preferred.
+
+### Added
+
+- Added the `WEBMCP_TOOLS` environment variable to control MCP tool exposure: unset/`core` (default lean set), `full` (every supported command), or a comma/space-separated custom allowlist of gateway methods / `snake_case` tool names (`browser_raw_command` is always included). Covered by a Node unit test (`tests/unit/tool-filter.test.mjs`).
+
 ## 1.0.16 - 2026-06-29
 
 ### Added
