@@ -2,6 +2,16 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.19 - 2026-06-30
+
+### Changed
+
+- The default MCP tool surface is now an even leaner **"minimal" set** (~25 first-class tools instead of ~45). `WEBMCP_TOOLS` unset now resolves to `minimal`, keeping the common loop — tabs, smart reads (`getPageText`/`readPage`/`querySelectorAll`/`findByText`/`evaluateJS`/`getWindowVariable`), ARIA ref interaction (`getAriaSnapshot`/`clickByRef`/`typeByRef`/`selectByRef`/`hoverByRef`), a coordinate-click fallback (`dispatchClick`/`scroll`/`pressKey`), waits, and `screenshot`. Lower-frequency commands (cookies/storage, windows/viewport, console capture, `moveMouse`/`typeText`, `executeCDP`, `pageFetch`, `listFrames`, `ping`/`getExtensionInfo`) are hidden but **fully callable via `browser_raw_command`**, so the change is lossless.
+
+### Added
+
+- Added the `minimal` preset and a `core` opt-in to `WEBMCP_TOOLS`: `minimal` (default, leanest), `core` (broader lean set, hides only superseded/CSS-variant commands), `full` (every command), or a custom allowlist. `MINIMAL_HIDDEN_METHODS` is a strict superset of `CORE_HIDDEN_METHODS`. Extended `tests/unit/tool-filter.test.mjs` to cover the new tier and assert the minimal surface still includes the essential navigate→read→interact tools.
+
 ## 1.0.18 - 2026-06-30
 
 ### Changed

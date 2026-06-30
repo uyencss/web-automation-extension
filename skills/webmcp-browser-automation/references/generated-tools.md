@@ -85,6 +85,19 @@ Call these only through `webmcp.invokeTool` after `webmcp.listTools` has confirm
 | `get_captured_requests` | - | `url_pattern`, `include_bodies`, `include_headers`, `limit` | List all network requests captured so far (across all active patterns), without consuming them. Returns metadata for each; optionally response bodies and headers. Ideal when a page fires many requests matching the same pattern. |
 | `stop_network_capture` | - | `url_pattern` | Stop capturing and clean up. Pass a url_pattern to remove only that one pattern (if others remain active); omit it to stop all capture on the tab. |
 
+## MCP Tool Exposure Presets (`WEBMCP_TOOLS`)
+
+First-class MCP tool counts per preset. Every preset also always includes `browser_raw_command`, through which any hidden command stays fully callable, so trimming is lossless.
+
+| Preset | First-class tools | Hidden (via `browser_raw_command`) |
+|---|---|---|
+| `minimal` (default) | 25 | 29 |
+| `core` | 45 | 9 |
+| `full` | 54 | 0 |
+
+- `core` hides: `click`, `getAccessibilityTree`, `getDOMSnapshot`, `getElementBounds`, `getInteractiveElements`, `getPageContent`, `hover`, `selectOption`, `type`
+- `minimal` hides (superset of `core`): `clearConsoleMessages`, `click`, `createWindow`, `deleteCookies`, `executeCDP`, `getAccessibilityTree`, `getCookies`, `getDOMSnapshot`, `getElementBounds`, `getExtensionInfo`, `getInteractiveElements`, `getLocalStorage`, `getPageContent`, `hover`, `listFrames`, `listWindows`, `moveMouse`, `pageFetch`, `ping`, `readConsoleMessages`, `resetViewport`, `selectOption`, `setCookie`, `setLocalStorage`, `setViewport`, `startConsoleCapture`, `stopConsoleCapture`, `type`, `typeText`
+
 ## Capability Announcement Check
 
 - Announced capabilities: 53

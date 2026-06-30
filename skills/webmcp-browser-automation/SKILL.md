@@ -219,12 +219,16 @@ inspect the parsed WebMCP payload.
 These are background commands registered in
 `webmcp-extension/dist/bg/handlers/index.js`.
 
-> Tool exposure: by default the MCP server exposes a lean "core" set. A few
-> commands listed below (`getPageContent`, `getAccessibilityTree`,
-> `getDOMSnapshot`, `getInteractiveElements`, `getElementBounds`, and the
-> CSS-selector variants `click`/`type`/`hover`/`selectOption`) may not appear as
-> their own MCP tool. They are still callable via `browser_raw_command`
-> (`{ method, params }`), or set `WEBMCP_TOOLS=full` to expose everything.
+> Tool exposure: by default the MCP server exposes a lean "minimal" set (~25
+> tools) covering tabs, smart reads, ARIA ref interaction, a coordinate-click
+> fallback, waits, and screenshots. Many commands listed below — cookies/storage,
+> windows/viewport, console capture, `moveMouse`/`typeText`, `executeCDP`,
+> `pageFetch`, `listFrames`, `ping`/`getExtensionInfo`, plus the superseded
+> `getPageContent`/`getAccessibilityTree`/`getDOMSnapshot`/`getInteractiveElements`/`getElementBounds`
+> and the CSS-selector variants `click`/`type`/`hover`/`selectOption` — may not
+> appear as their own MCP tool. They are still callable via `browser_raw_command`
+> (`{ method, params }`). Set `WEBMCP_TOOLS=core` for the broader lean set, or
+> `WEBMCP_TOOLS=full` to expose every command as its own tool.
 
 | Command | Use for | Params |
 |---|---|---|

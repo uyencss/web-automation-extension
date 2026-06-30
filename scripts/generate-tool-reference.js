@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const process = require('process');
+const { pathToFileURL } = require('url');
 
 const ROOT = path.resolve(__dirname, '..');
 const REGISTER_TOOLS_PATH = path.join(
@@ -385,6 +386,21 @@ function extractAnnouncedCapabilities() {
   return capabilities;
 }
 
+async function buildPresetSummary() {
+  const moduleUrl = pathToFileURL(
+    path.join(ROOT, 'server/mcp-tool-catalog.mjs')
+  ).href;
+  const { buildMcpTools, CORE_HIDDEN_METHODS, MINIMAL_HIDDEN_METHODS } = await import(moduleUrl);
+  const count = (env) => buildMcpTools({ toolsEnv: env }).length;
+  return {
+    minimal: count('minimal'),
+    core: count('core'),
+    full: count('full'),
+    coreHidden: [...CORE_HIDDEN_METHODS].sort(),
+    minimalHidden: [...MINIMAL_HIDDEN_METHODS].sort(),
+  };
+}
+
 function markdownEscape(value) {
   return String(value || '')
     .replace(/\|/g, '\\|')
@@ -396,10 +412,11 @@ function formatList(values) {
   return values.length ? values.map((value) => `\`${value}\``).join(', ') : '-';
 }
 
-function generateMarkdown() {
+async function generateMarkdown() {
   const commands = extractExtensionCommands();
   const pageTools = extractPageTools();
   const announcedCapabilities = extractAnnouncedCapabilities();
+  const presets = await buildPresetSummary();
   const commandNames = new Set(commands.map((entry) => entry.method));
   const announced = new Set(announcedCapabilities);
   const announcedMissingHandlers = announcedCapabilities.filter((name) => !commandNames.has(name));
@@ -436,6 +453,19 @@ function generateMarkdown() {
     );
   }
   lines.push('');
+  lines.push('## MCP Tool Exposure Presets (`WEBMCP_TOOLS`)');
+  lines.push('');
+  lines.push('First-class MCP tool counts per preset. Every preset also always includes `browser_raw_command`, through which any hidden command stays fully callable, so trimming is lossless.');
+  lines.push('');
+  lines.push('| Preset | First-class tools | Hidden (via `browser_raw_command`) |');
+  lines.push('|---|---|---|');
+  lines.push(`| \`minimal\` (default) | ${presets.minimal} | ${presets.full - presets.minimal} |`);
+  lines.push(`| \`core\` | ${presets.core} | ${presets.full - presets.core} |`);
+  lines.push(`| \`full\` | ${presets.full} | 0 |`);
+  lines.push('');
+  lines.push(`- \`core\` hides: ${formatList(presets.coreHidden)}`);
+  lines.push(`- \`minimal\` hides (superset of \`core\`): ${formatList(presets.minimalHidden)}`);
+  lines.push('');
   lines.push('## Capability Announcement Check');
   lines.push('');
   lines.push(`- Announced capabilities: ${announcedCapabilities.length}`);
@@ -460,9 +490,9 @@ function generateMarkdown() {
   };
 }
 
-function main() {
+async function main() {
   const checkOnly = process.argv.includes('--check');
-  const { markdown, announcedMissingHandlers } = generateMarkdown();
+  const { markdown, announcedMissingHandlers } = await generateMarkdown();
 
   if (announcedMissingHandlers.length) {
     console.error(
@@ -487,4 +517,7 @@ function main() {
   console.log(`Wrote ${path.relative(ROOT, OUTPUT_PATH)}`);
 }
 
-main();
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
