@@ -15,6 +15,7 @@ import { buildMcpTools } from './mcp-tool-catalog.mjs';
 
 const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
 const gatewayUrl = normalizeGatewayUrl(process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL);
+const profileId = process.env.WEBMCP_PROFILE_ID || undefined;
 const serverDir = dirname(fileURLToPath(import.meta.url));
 // Best-practice MCP installs keep the gateway lifecycle explicit. Enable
 // dev-mode autostart with WEBMCP_GATEWAY_AUTOSTART=1 when desired.
@@ -108,10 +109,12 @@ async function readGatewayJson(response) {
 }
 
 async function callGateway(method, params) {
+  const body = { method, params: params || {} };
+  if (profileId) body.profileId = profileId;
   const response = await fetch(`${gatewayUrl}/api`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params: params || {} }),
+    body: JSON.stringify(body),
   });
 
   const payload = await readGatewayJson(response);
