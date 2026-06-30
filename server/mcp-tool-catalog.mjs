@@ -238,5 +238,17 @@ export function buildMcpTools({ toolsEnv = process.env.WEBMCP_TOOLS } = {}) {
     },
   });
 
+  catalogTools.push({
+    name: 'list_profiles',
+    method: 'list_profiles',
+    group: 'control',
+    description: 'List all connected Chrome profiles (their UUIDs) currently active on the gateway.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  });
+
   return catalogTools;
 }

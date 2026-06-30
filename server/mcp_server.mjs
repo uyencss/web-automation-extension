@@ -184,6 +184,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     params = args.params || {};
   }
 
+  if (method === 'list_profiles') {
+    try {
+      const health = await fetchHealth();
+      if (!health) {
+        throw new Error('Gateway is unreachable');
+      }
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            profiles: health.profiles || [],
+            profileCount: health.profileCount || 0,
+          }, null, 2)
+        }]
+      };
+    } catch (err) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }]
+      };
+    }
+  }
+
   if (!method || typeof method !== 'string') {
     return {
       isError: true,
