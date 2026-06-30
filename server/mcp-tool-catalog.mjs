@@ -79,6 +79,13 @@ function buildInputSchema(requiredParams, optionalParams) {
     };
   }
 
+  if (!seen.has('profileId')) {
+    properties.profileId = {
+      type: 'string',
+      description: 'Optional Chrome profile ID to route this command to when multiple profiles are connected.',
+    };
+  }
+
   return {
     type: 'object',
     properties,
@@ -220,6 +227,10 @@ export function buildMcpTools({ toolsEnv = process.env.WEBMCP_TOOLS } = {}) {
           type: 'object',
           additionalProperties: true,
           description: 'Gateway command params object.',
+        },
+        profileId: {
+          type: 'string',
+          description: 'Optional Chrome profile ID to route this command to when multiple profiles are connected.',
         },
       },
       required: ['method'],

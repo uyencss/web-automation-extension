@@ -108,9 +108,10 @@ async function readGatewayJson(response) {
   }
 }
 
-async function callGateway(method, params) {
+async function callGateway(method, params, requestProfileId) {
   const body = { method, params: params || {} };
-  if (profileId) body.profileId = profileId;
+  const targetProfileId = requestProfileId || profileId;
+  if (targetProfileId) body.profileId = targetProfileId;
   const response = await fetch(`${gatewayUrl}/api`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -173,7 +174,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   const args = request.params.arguments || {};
   const method = tool.method || args.method;
-  const params = tool.method ? args : (args.params || {});
+  const requestProfileId = args.profileId;
+
+  let params;
+  if (tool.method) {
+    params = { ...args };
+    delete params.profileId;
+  } else {
+    params = args.params || {};
+  }
 
   if (!method || typeof method !== 'string') {
     return {
@@ -183,7 +192,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    const result = await callGateway(method, params);
+    const result = await callGateway(method, params, requestProfileId);
     return { content: contentFromResult(result) };
   } catch (err) {
     return {
