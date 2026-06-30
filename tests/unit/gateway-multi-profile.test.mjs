@@ -27,13 +27,12 @@ function makeFakeExtension(profileId, label) {
   sock.on('message', (data) => {
     const msg = JSON.parse(data.toString());
     if (!('id' in msg)) return; // notification (ping/heartbeat) — ignore
-    if ('id' in msg) {
-      sock.send(JSON.stringify({
-        jsonrpc: '2.0',
-        id: msg.id,
-        result: { echoedBy: label, method: msg.method },
-      }));
-    }
+    // Anything with an id is a forwarded command; echo a result for it.
+    sock.send(JSON.stringify({
+      jsonrpc: '2.0',
+      id: msg.id,
+      result: { echoedBy: label, method: msg.method },
+    }));
   });
   return sock;
 }
@@ -74,6 +73,10 @@ async function run() {
   let a; let b;
   try {
     await waitFor(async () => (await getHealth()).ok === true, 'gateway /health up');
+
+    // Before any extension connects: /api must report no connection.
+    const noConn = await callApi({ method: 'ping', params: {} });
+    assert.strictEqual(noConn.status, 503, 'no extension connected → 503');
 
     a = makeFakeExtension('profile-A', 'A');
     b = makeFakeExtension('profile-B', 'B');
