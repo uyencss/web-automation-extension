@@ -100,6 +100,27 @@ Gateway/direct extension calls use `webmcp.listTools`, `webmcp.invokeTool`, and
 `toolName`. Codex native calls use `webmcp_list_tools`,
 `webmcp_invoke_tool`, and `tool_name`.
 
+## Reading vs Interacting (decide first)
+
+Before discovering page structure, decide what the task actually needs:
+
+- **Reading / comprehension / extraction of prose** — the goal is to *answer a
+  question from the page*, summarize an article, read docs, news, a blog post, a
+  product description, or any mostly-text page. **Prefer `getPageText`** (already
+  on a tab) or **`readPage`** (navigate + read in one call). It returns clean
+  article text with nav/ads/boilerplate stripped, in far fewer tokens than a
+  snapshot. This is the fast path — reach for it before `getAriaSnapshot`,
+  `querySelectorAll`, or `screenshot` when you only need to *read*.
+- **Interacting / acting** — the goal is to click, type, fill a form, navigate a
+  flow, or operate a control. Use `getAriaSnapshot` → `clickByRef`/`typeByRef`.
+- **Bulk structured data** (tables, repeated rows, lists of records) — use
+  `evaluateJS`, `query_selector_all`, or `extract_table_data`, *not* page text.
+
+Do not jump straight to `getAriaSnapshot` for a question that `getPageText` can
+answer. Only escalate to a snapshot when the text path misses what you need
+(e.g. the content is behind a control you must click first, or the page is an
+app shell with little readable prose).
+
 ## Mandatory Run Loop
 
 For every browser automation task:
@@ -111,9 +132,14 @@ For every browser automation task:
 2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`.
 3. Wait for readiness: `navigate` waits for page load; otherwise use
    `waitForSelector`, `waitForStable`, or the page tool `wait_for_element`.
-4. Discover the page:
-   - Call `getAriaSnapshot` to get a ref-based accessibility tree — this is
-     the **preferred** way to understand page structure.
+4. Discover the page — match the tool to the goal (see *Reading vs
+   Interacting* above):
+   - **If you only need to read/answer from the page**, call `getPageText`
+     (or `readPage` to navigate+read in one shot) first. Often this single
+     call is the whole task — stop here if it answers the question.
+   - **If you need to act on the page**, call `getAriaSnapshot` to get a
+     ref-based accessibility tree — the preferred way to understand structure
+     for interaction.
    - Call `webmcp.listTools` for page-registered tools.
 5. Pick the smallest reliable action (in order of preference):
    - **ARIA ref interaction** (preferred): use `clickByRef`, `typeByRef`,
@@ -345,8 +371,8 @@ Use standard CSS selectors only. Playwright-only selectors such as
 | Need | Best action |
 |---|---|
 | Open or change page | `newTab` or `navigate` |
-| Read an article/page as clean text | `getPageText` (or `readPage` to navigate+read in one call) |
-| Understand page structure (preferred) | `getAriaSnapshot` — returns semantic tree with ref IDs |
+| Read / answer from a text page (do this first) | `getPageText` (or `readPage` to navigate+read in one call) — fast, clean, low-token; prefer over a snapshot when you only need to read |
+| Understand page structure **to interact** | `getAriaSnapshot` — returns semantic tree with ref IDs |
 | Know what can be clicked/typed | `getAriaSnapshot` or `getInteractiveElements` |
 | Click a button/link on SPA | `getAriaSnapshot` → `clickByRef` (robust) |
 | Fill a text field on SPA | `getAriaSnapshot` → `typeByRef` (robust) |

@@ -2,6 +2,12 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.18 - 2026-06-30
+
+### Changed
+
+- Reworked the skill's tool-selection guidance to make the **read vs. interact** decision explicit. Added a new "Reading vs Interacting (decide first)" section steering the model to `getPageText`/`readPage` as the fast path for reading or answering from a text page (article/docs/news/product copy) instead of defaulting to `getAriaSnapshot`, which is now framed as the path for *interaction*. The Mandatory Run Loop discover step and the Tool Selection table were updated to match.
+
 ## 1.0.17 - 2026-06-30
 
 ### Changed
