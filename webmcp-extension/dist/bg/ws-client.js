@@ -1,4 +1,5 @@
 import { handleIncomingMessage } from './router.js';
+import { getOrCreateProfileId } from './profile-id.js';
 
 const WS_URL = 'ws://localhost:7865';
 const RECONNECT_INTERVAL_MS = 3000;
@@ -22,16 +23,21 @@ export function connectWebSocket() {
     return;
   }
 
-  ws.onopen = () => {
+  ws.onopen = async () => {
     isConnecting = false;
     reconnectAttempt = 0;
     clearReconnectTimer();
     console.log('[WS] ✓ Connected to', WS_URL);
 
+    // Stable per-Chrome-profile id so the gateway can route commands to this
+    // specific browser when several profiles share one gateway.
+    const profileId = await getOrCreateProfileId();
+
     // Send a handshake notification so the server knows the extension is ready
     sendNotification('extensionReady', {
       name: 'WebMCP Tools Provider',
       version: chrome.runtime.getManifest().version,
+      profileId,
       capabilities: [
         // Tab management
         'listTabs', 'navigate', 'newTab', 'closeTab', 'getActiveTab',
