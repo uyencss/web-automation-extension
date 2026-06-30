@@ -66,6 +66,42 @@ Request shape:
 { "method": "getActiveTab", "params": {} }
 ```
 
+### Targeting a profile (multi-profile gateways)
+
+One gateway can serve several Chrome profiles at once — one WebSocket per
+profile. Each profile self-identifies with a stable `profileId` (a UUID it
+persists in its own `chrome.storage.local`). To route a call to a specific
+profile, add a **top-level** `profileId` field to the request body — a sibling
+of `params`, **not** inside it:
+
+```json
+{ "method": "getActiveTab", "params": {}, "profileId": "a1b2c3d4-..." }
+```
+
+Routing rules enforced by the gateway:
+
+- **Exactly one profile connected** — `profileId` is optional; the call routes
+  to that single profile.
+- **Two or more profiles connected** — `profileId` is **required**. Omitting it
+  returns HTTP 400 listing the connected ids.
+- **Unknown / disconnected `profileId`** — HTTP 404.
+- **No profile connected** — HTTP 503.
+
+Discover the currently connected profiles with `GET /health`:
+
+```bash
+curl -sS http://localhost:7865/health
+```
+
+```json
+{ "ok": true, "extensionConnected": true,
+  "profiles": ["a1b2c3d4-...", "e5f6a7b8-..."], "profileCount": 2 }
+```
+
+Pick a `profileId` from `profiles` and pass it on **every** subsequent `/api`
+call for that browser. Over a direct WebSocket connection you are already bound
+to one profile's socket, so no `profileId` is needed there.
+
 Response shape:
 
 ```json
@@ -125,10 +161,12 @@ app shell with little readable prose).
 
 For every browser automation task:
 
-1. Health check: call `ping`. If the gateway is unreachable, start
-   `npm run gateway` or `webmcp gateway start`. If the gateway is up but
-   the extension is not connected, reload the unpacked extension from
-   `webmcp-extension/dist`.
+1. Health check: call `GET /health` (or `ping`). If the gateway is
+   unreachable, start `npm run gateway` or `webmcp gateway start`. If the
+   gateway is up but no extension is connected (`profileCount` is 0), reload
+   the unpacked extension from `webmcp-extension/dist`. **If `profileCount`
+   is greater than 1, pick a `profileId` from `health.profiles` and include
+   it as a top-level field on every `/api` call** (see *Targeting a profile*).
 2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`.
 3. Wait for readiness: `navigate` waits for page load; otherwise use
    `waitForSelector`, `waitForStable`, or the page tool `wait_for_element`.
