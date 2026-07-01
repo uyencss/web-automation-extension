@@ -250,5 +250,27 @@ export function buildMcpTools({ toolsEnv = process.env.WEBMCP_TOOLS } = {}) {
     },
   });
 
+  catalogTools.push({
+    name: 'set_profile_name',
+    method: 'setProfileName',
+    group: 'control',
+    description: 'Set a custom friendly display name for this Chrome profile (e.g. "Work", "Personal"). This triggers a reconnect so the new name registers immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'The custom name for the Chrome profile.',
+        },
+        profileId: {
+          type: 'string',
+          description: 'Optional Chrome profile ID to route this command to when multiple profiles are connected.',
+        },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  });
+
   return catalogTools;
 }
