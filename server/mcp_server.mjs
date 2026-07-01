@@ -173,7 +173,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   const args = request.params.arguments || {};
-  const method = tool.method || args.method;
+  let method = tool.method || args.method;
   const requestProfileId = args.profileId;
 
   let params;
@@ -182,6 +182,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     delete params.profileId;
   } else {
     params = args.params || {};
+  }
+
+  if (method === 'browser_raw_command') {
+    method = args.method;
+    params = args.params || {};
+  } else if (method === 'set_profile_name') {
+    method = 'setProfileName';
   }
 
   if (method === 'list_profiles') {

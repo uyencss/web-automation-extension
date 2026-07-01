@@ -208,69 +208,8 @@ export function buildMcpTools({ toolsEnv = process.env.WEBMCP_TOOLS } = {}) {
     .filter(([method, definition]) =>
       definition.group !== 'runner' &&
       !unsupportedMethods.has(method) &&
-      allow(method))
+      (method === 'browser_raw_command' || allow(method)))
     .map(([method, definition]) => buildTool(method, definition));
-
-  catalogTools.push({
-    name: 'browser_raw_command',
-    method: null,
-    group: 'control',
-    description: 'Send any raw gateway command — including tools not exposed as their own MCP tool under the default minimal surface (e.g. getCookies, setLocalStorage, executeCDP, console capture, listFrames, pageFetch, getPageContent, click). Pass the gateway method name in `method`. Set WEBMCP_TOOLS=core for the broader lean set, or WEBMCP_TOOLS=full to expose every command as a first-class tool.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        method: {
-          type: 'string',
-          description: 'Gateway command name, for example "getActiveTab" or "webmcp.invokeTool".',
-        },
-        params: {
-          type: 'object',
-          additionalProperties: true,
-          description: 'Gateway command params object.',
-        },
-        profileId: {
-          type: 'string',
-          description: 'Optional Chrome profile ID to route this command to when multiple profiles are connected.',
-        },
-      },
-      required: ['method'],
-      additionalProperties: false,
-    },
-  });
-
-  catalogTools.push({
-    name: 'list_profiles',
-    method: 'list_profiles',
-    group: 'control',
-    description: 'List all connected Chrome profiles (their UUIDs) currently active on the gateway.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: false,
-    },
-  });
-
-  catalogTools.push({
-    name: 'set_profile_name',
-    method: 'setProfileName',
-    group: 'control',
-    description: 'Set a custom friendly display name for this Chrome profile (e.g. "Work", "Personal"). This triggers a reconnect so the new name registers immediately.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: {
-          type: 'string',
-          description: 'The custom name for the Chrome profile.',
-        },
-        profileId: {
-          type: 'string',
-          description: 'Optional Chrome profile ID to route this command to when multiple profiles are connected.',
-        },
-      },
-      required: ['name'],
-      additionalProperties: false,
-    },
-  });
 
   return catalogTools;
 }
