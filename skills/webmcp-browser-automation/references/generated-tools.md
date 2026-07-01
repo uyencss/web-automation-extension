@@ -91,9 +91,9 @@ First-class MCP tool counts per preset. Every preset also always includes `brows
 
 | Preset | First-class tools | Hidden (via `browser_raw_command`) |
 |---|---|---|
-| `minimal` (default) | 26 | 28 |
-| `core` | 46 | 8 |
-| `full` | 54 | 0 |
+| `minimal` (default) | 28 | 28 |
+| `core` | 48 | 8 |
+| `full` | 56 | 0 |
 
 - `core` hides: `click`, `getAccessibilityTree`, `getDOMSnapshot`, `getInteractiveElements`, `getPageContent`, `hover`, `selectOption`, `type`
 - `minimal` hides (superset of `core`): `clearConsoleMessages`, `click`, `createWindow`, `deleteCookies`, `executeCDP`, `getAccessibilityTree`, `getCookies`, `getDOMSnapshot`, `getExtensionInfo`, `getInteractiveElements`, `getLocalStorage`, `getPageContent`, `hover`, `listFrames`, `listWindows`, `moveMouse`, `pageFetch`, `ping`, `readConsoleMessages`, `resetViewport`, `selectOption`, `setCookie`, `setLocalStorage`, `setViewport`, `startConsoleCapture`, `stopConsoleCapture`, `type`, `typeText`

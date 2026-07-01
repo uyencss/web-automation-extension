@@ -36,12 +36,62 @@ function normalizeResult(result) {
 }
 
 // ── State ────────────────────────────────────────────────────
-let extensionWs = null;
+// Map<profileId, ws> of identified extension connections. A connection is
+// registered once it sends an `extensionReady` handshake carrying its
+// profileId, and removed on close. Multiple Chrome profiles can connect
+// concurrently to this one gateway.
+const extensions = new Map();
+// Connections that have opened but not yet identified themselves. Tracked only
+// so keep-alive timers/cleanup behave before the handshake arrives.
+const pendingConnections = new Set();
 let nextId = 1;
+// rpcId -> { res, timeoutTimer, method, ws }
 const pendingHttpRequests = new Map();
 
-function isExtensionConnected() {
-  return extensionWs && extensionWs.readyState === 1;
+function connectedProfileIds() {
+  const ids = [];
+  for (const [profileId, ws] of extensions) {
+    if (ws.readyState === 1) ids.push(profileId);
+  }
+  return ids;
+}
+
+function connectedProfileDetails() {
+  const details = [];
+  for (const [profileId, ws] of extensions) {
+    if (ws.readyState === 1) {
+      details.push({
+        profileId,
+        email: ws._profileEmail || '',
+        name: ws._profileName || '',
+      });
+    }
+  }
+  return details;
+}
+
+// Resolve which extension WebSocket should receive a command.
+// Returns { ws } on success or { error, status } on failure.
+function resolveTarget(profileId) {
+  const ids = connectedProfileIds();
+  if (ids.length === 0) {
+    return { error: 'Chrome extension is not connected to the gateway', status: 503 };
+  }
+  if (profileId) {
+    const ws = extensions.get(profileId);
+    if (!ws || ws.readyState !== 1) {
+      return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
+    }
+    return { ws };
+  }
+  // No profileId specified: unambiguous only when exactly one profile is connected.
+  if (ids.length === 1) {
+    return { ws: extensions.get(ids[0]) };
+  }
+  return {
+    error: `Multiple Chrome profiles are connected (${ids.join(', ')}). Specify "profileId" in the request body.`,
+    status: 400,
+  };
 }
 
 function writeJson(res, statusCode, payload) {
@@ -75,9 +125,14 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'GET' && req.url === '/health') {
+    const profiles = connectedProfileIds();
+    const profileDetails = connectedProfileDetails();
     return writeJson(res, 200, {
       ok: true,
-      extensionConnected: Boolean(isExtensionConnected()),
+      extensionConnected: profiles.length > 0,
+      profiles,
+      profileDetails,
+      profileCount: profiles.length,
       port: PORT,
       wsUrl: `ws://localhost:${PORT}`,
       apiUrl: `http://localhost:${PORT}/api`,
@@ -101,14 +156,16 @@ const server = http.createServer((req, res) => {
         return writeJson(res, 400, { error: 'Invalid JSON request payload' });
       }
 
-      const { method, params } = requestPayload;
+      const { method, params, profileId } = requestPayload;
       if (!method) {
         return writeJson(res, 400, { error: 'Missing "method" in request' });
       }
 
-      if (!isExtensionConnected()) {
-        return writeJson(res, 503, { error: 'Chrome extension is not connected to the gateway' });
+      const target = resolveTarget(profileId);
+      if (target.error) {
+        return writeJson(res, target.status, { error: target.error });
       }
+      const ws = target.ws;
 
       // Assign a unique JSON-RPC ID
       const rpcId = nextId++;
@@ -132,12 +189,13 @@ const server = http.createServer((req, res) => {
         }
       }, COMMAND_TIMEOUT_MS);
 
-      // Store the pending HTTP response
-      pendingHttpRequests.set(rpcId, { res, timeoutTimer, method });
+      // Store the pending HTTP response, tagged with the target connection so
+      // we can fail it precisely if that connection drops.
+      pendingHttpRequests.set(rpcId, { res, timeoutTimer, method, ws });
 
-      // Forward to the extension via WebSocket
-      extensionWs.send(JSON.stringify(extensionPayload));
-      console.log(`[Gateway] Forwarded command to Extension: ID=${rpcId} | Method=${method}`);
+      // Forward to the chosen extension via WebSocket
+      ws.send(JSON.stringify(extensionPayload));
+      console.log(`[Gateway] Forwarded command: ID=${rpcId} | Method=${method} | profile=${profileId || '(single)'}`);
     });
   } else {
     writeJson(res, 404, { error: 'Not Found. Exposes GET /health and POST /api for automation.' });
@@ -148,8 +206,9 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws, req) => {
-  extensionWs = ws;
-  console.log(`[Gateway] Chrome Extension connected from ${req.socket.remoteAddress}`);
+  pendingConnections.add(ws);
+  ws._profileId = null;
+  console.log(`[Gateway] Chrome Extension connected from ${req.socket.remoteAddress} (awaiting handshake)`);
 
   // ── Keep the MV3 service worker alive ──────────────────────
   // Send a lightweight ping notification on an interval. The extension does
@@ -200,7 +259,20 @@ wss.on('connection', (ws, req) => {
     if ('method' in msg) {
       const { method, params = {} } = msg;
       if (method === 'extensionReady') {
-        console.log(`[Gateway] Extension is ready: ${params.name} v${params.version}`);
+        // Fall back to a synthetic id so a profileId-less (older) extension is
+        // still routable as a single connection.
+        const profileId = params.profileId || `anon-${req.socket.remoteAddress}-${Date.now()}`;
+        ws._profileId = profileId;
+        ws._profileEmail = params.profileEmail || '';
+        ws._profileName = params.profileName || '';
+        pendingConnections.delete(ws);
+        // Replace any stale connection registered under the same profile.
+        const existing = extensions.get(profileId);
+        if (existing && existing !== ws) {
+          try { existing.close(); } catch { /* already closed */ }
+        }
+        extensions.set(profileId, ws);
+        console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${profileId} | email=${ws._profileEmail} | name=${ws._profileName}`);
       } else if (method === 'heartbeat' || method === 'pong') {
         // Silent keep-alive traffic
       } else {
@@ -210,16 +282,21 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log('[Gateway] Chrome Extension disconnected');
     clearInterval(keepAliveTimer);
-    extensionWs = null;
-
-    // Fail all currently pending HTTP requests
-    for (const [rpcId, pending] of pendingHttpRequests) {
-      clearTimeout(pending.timeoutTimer);
-      writeJson(pending.res, 502, { error: 'Chrome extension disconnected during command execution' });
+    pendingConnections.delete(ws);
+    if (ws._profileId && extensions.get(ws._profileId) === ws) {
+      extensions.delete(ws._profileId);
     }
-    pendingHttpRequests.clear();
+    console.log(`[Gateway] Chrome Extension disconnected | profile=${ws._profileId || '(unidentified)'}`);
+
+    // Fail only the pending requests that were routed to THIS connection.
+    for (const [rpcId, pending] of pendingHttpRequests) {
+      if (pending.ws === ws) {
+        clearTimeout(pending.timeoutTimer);
+        pendingHttpRequests.delete(rpcId);
+        writeJson(pending.res, 502, { error: 'Chrome extension disconnected during command execution' });
+      }
+    }
   });
 });
 

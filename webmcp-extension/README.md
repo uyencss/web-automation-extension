@@ -1,15 +1,15 @@
-# WebMCP Extension v2.1.7
+# WebMCP Extension v2.1.8
 
-Chrome extension for **AI-driven browser automation** over WebSocket. Provides **53 commands**
+Chrome extension for **AI-driven browser automation** over WebSocket. Provides **56 commands**
 so an AI model can fully control the browser: inspect page structure, click/type at
 coordinates, capture console output, read fast ARIA snapshots, manage cookies/storage,
 take screenshots, and more.
 
-> **Note on the MCP surface.** These 53 commands are the full extension/gateway
+> **Note on the MCP surface.** These 56 commands are the full extension/gateway
 > layer (always available over WebSocket and via `browser_raw_command`). The MCP
 > server adapter exposes a trimmed subset by default — a lean **"minimal"** set
-> (~26 tools) — to keep the per-request tool schema small. Switch with
-> `WEBMCP_TOOLS=core` (~46) or `WEBMCP_TOOLS=full` (all 53). See the root
+> (~28 tools) — to keep the per-request tool schema small. Switch with
+> `WEBMCP_TOOLS=core` (~48) or `WEBMCP_TOOLS=full` (all 56). See the root
 > [README](../README.md#choosing-how-many-tools-are-exposed-webmcp_tools).
 
 ## Architecture
@@ -65,8 +65,8 @@ The extension auto-connects within 3 seconds. The gateway logs:
 
 ```
 ✓ Extension connected
-✓ Extension ready: WebMCP Tools Provider v2.1.7
-    53 capabilities registered
+✓ Extension ready: WebMCP Tools Provider v2.1.8
+    56 capabilities registered
 ```
 
 ---

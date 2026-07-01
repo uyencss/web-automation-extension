@@ -75,6 +75,23 @@ const COMMAND_DEFINITIONS = [
   ['ping', { group: 'control' }],
   ['getExtensionInfo', { group: 'control', description: 'Return extension manifest version, attached debugger tabs, and gateway WebSocket URL.' }],
 
+  ['browser_raw_command', {
+    group: 'control',
+    description: 'Send any raw gateway command — including tools not exposed as their own MCP tool under the default minimal surface (e.g. getCookies, setLocalStorage, executeCDP, console capture, listFrames, pageFetch, getPageContent, click). Pass the gateway method name in `method`. Set WEBMCP_TOOLS=core for the broader lean set, or WEBMCP_TOOLS=full to expose every command as a first-class tool.',
+    requiredParams: ['method'],
+    optionalParams: ['params', 'profileId']
+  }],
+  ['list_profiles', {
+    group: 'control',
+    description: 'List all connected Chrome profiles (their UUIDs) currently active on the gateway.'
+  }],
+  ['set_profile_name', {
+    group: 'control',
+    description: 'Set a custom friendly display name for this Chrome profile (e.g. "Work", "Personal"). This triggers a reconnect so the new name registers immediately.',
+    requiredParams: ['name'],
+    optionalParams: ['profileId']
+  }],
+
   ['wait', { group: 'runner', optionalParams: ['ms', 'timeout'] }],
   ['delay', { group: 'runner', optionalParams: ['ms', 'timeout'] }],
 ];

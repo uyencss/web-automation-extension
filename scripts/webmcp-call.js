@@ -4,6 +4,7 @@ const process = require('process');
 
 const DEFAULT_GATEWAY_URL = 'http://localhost:7865/api';
 const gatewayUrl = process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL;
+const profileId = process.env.WEBMCP_PROFILE_ID || undefined;
 
 function printUsage() {
   console.error(`Usage:
@@ -41,10 +42,12 @@ async function main() {
   }
 
   const params = parseJsonParams(rawParams);
+  const requestBody = { method, params };
+  if (profileId) requestBody.profileId = profileId;
   const response = await fetch(gatewayUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params }),
+    body: JSON.stringify(requestBody),
   });
 
   let payload;

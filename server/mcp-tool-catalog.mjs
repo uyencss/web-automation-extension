@@ -79,6 +79,13 @@ function buildInputSchema(requiredParams, optionalParams) {
     };
   }
 
+  if (!seen.has('profileId')) {
+    properties.profileId = {
+      type: 'string',
+      description: 'Optional Chrome profile ID to route this command to when multiple profiles are connected.',
+    };
+  }
+
   return {
     type: 'object',
     properties,
@@ -201,31 +208,8 @@ export function buildMcpTools({ toolsEnv = process.env.WEBMCP_TOOLS } = {}) {
     .filter(([method, definition]) =>
       definition.group !== 'runner' &&
       !unsupportedMethods.has(method) &&
-      allow(method))
+      (method === 'browser_raw_command' || allow(method)))
     .map(([method, definition]) => buildTool(method, definition));
-
-  catalogTools.push({
-    name: 'browser_raw_command',
-    method: null,
-    group: 'control',
-    description: 'Send any raw gateway command — including tools not exposed as their own MCP tool under the default minimal surface (e.g. getCookies, setLocalStorage, executeCDP, console capture, listFrames, pageFetch, getPageContent, click). Pass the gateway method name in `method`. Set WEBMCP_TOOLS=core for the broader lean set, or WEBMCP_TOOLS=full to expose every command as a first-class tool.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        method: {
-          type: 'string',
-          description: 'Gateway command name, for example "getActiveTab" or "webmcp.invokeTool".',
-        },
-        params: {
-          type: 'object',
-          additionalProperties: true,
-          description: 'Gateway command params object.',
-        },
-      },
-      required: ['method'],
-      additionalProperties: false,
-    },
-  });
 
   return catalogTools;
 }

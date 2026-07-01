@@ -15,6 +15,7 @@ import { buildMcpTools } from './mcp-tool-catalog.mjs';
 
 const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
 const gatewayUrl = normalizeGatewayUrl(process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL);
+const profileId = process.env.WEBMCP_PROFILE_ID || undefined;
 const serverDir = dirname(fileURLToPath(import.meta.url));
 // Best-practice MCP installs keep the gateway lifecycle explicit. Enable
 // dev-mode autostart with WEBMCP_GATEWAY_AUTOSTART=1 when desired.
@@ -107,11 +108,14 @@ async function readGatewayJson(response) {
   }
 }
 
-async function callGateway(method, params) {
+async function callGateway(method, params, requestProfileId) {
+  const body = { method, params: params || {} };
+  const targetProfileId = requestProfileId || profileId;
+  if (targetProfileId) body.profileId = targetProfileId;
   const response = await fetch(`${gatewayUrl}/api`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, params: params || {} }),
+    body: JSON.stringify(body),
   });
 
   const payload = await readGatewayJson(response);
@@ -169,8 +173,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   const args = request.params.arguments || {};
-  const method = tool.method || args.method;
-  const params = tool.method ? args : (args.params || {});
+  let method = tool.method || args.method;
+  const requestProfileId = args.profileId;
+
+  let params;
+  if (tool.method) {
+    params = { ...args };
+    delete params.profileId;
+  } else {
+    params = args.params || {};
+  }
+
+  if (method === 'browser_raw_command') {
+    method = args.method;
+    params = args.params || {};
+  } else if (method === 'set_profile_name') {
+    method = 'setProfileName';
+  }
+
+  if (method === 'list_profiles') {
+    try {
+      const health = await fetchHealth();
+      if (!health) {
+        throw new Error('Gateway is unreachable');
+      }
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            profiles: health.profileDetails || [],
+            profileCount: health.profileCount || 0,
+          }, null, 2)
+        }]
+      };
+    } catch (err) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }]
+      };
+    }
+  }
 
   if (!method || typeof method !== 'string') {
     return {
@@ -180,7 +222,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    const result = await callGateway(method, params);
+    const result = await callGateway(method, params, requestProfileId);
     return { content: contentFromResult(result) };
   } catch (err) {
     return {

@@ -2,6 +2,18 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.21 - 2026-07-01
+
+### Added
+
+- Multi-profile gateway routing: the gateway server now tracks multiple concurrently-connected Chrome profiles and routes commands to a specific one via an optional `profileId` param on every gateway/MCP command. Added `list_profiles` (enumerate connected profiles with email/display name) and `set_profile_name` (assign a friendly name to a profile, e.g. "Work"/"Personal") control commands.
+- `tests/unit/profile-id.test.mjs` and `tests/unit/gateway-multi-profile.test.mjs` cover profile-id parsing and multi-profile command routing.
+
+### Changed
+
+- `webmcp-extension` manifest bumped to v2.1.8 and gained `storage`, `identity`, `identity.email` permissions to support per-profile identification and persisted display names.
+- `skills/webmcp-browser-automation/SKILL.md` documents the multi-profile workflow (listing profiles, targeting a `profileId`, naming profiles).
+
 ## 1.0.20 - 2026-06-30
 
 ### Changed
