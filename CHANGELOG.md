@@ -2,6 +2,25 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.22 - 2026-07-01
+
+### Added
+
+- `webmcp workflow` bridge: the package CLI now delegates workflow commands to
+  the standalone `@gyga-browser/webmcp-workflow` runner. Resolution order is
+  `WEBMCP_WORKFLOW_DISPATCHER_BIN` override → sibling monorepo checkout →
+  installed `@gyga-browser/webmcp-workflow` (falls back to the `workflow-dispatcher`
+  package name). The bridge sets `WORKFLOW_DISPATCHER_COMMAND_NAME` so runner
+  help renders as `webmcp workflow` and prints an install hint when the runner
+  is not available.
+- `tests/unit/webmcp-cli.test.mjs` covers the bridge delegation, command-name
+  propagation, and the missing-dispatcher install hint.
+
+### Changed
+
+- `README.md` documents the optional `webmcp workflow` bridge and the npm/npx
+  invocation patterns for pairing both packages.
+
 ## 1.0.21 - 2026-07-01
 
 ### Added

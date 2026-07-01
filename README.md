@@ -23,6 +23,8 @@ The kit has three layers:
 4. Package CLI: `bin/webmcp.mjs`
    - Exposes `webmcp mcp`, `webmcp gateway start`, `webmcp health`, and
      `webmcp call`.
+   - Exposes an optional `webmcp workflow` bridge when
+     `@gyga-browser/webmcp-workflow` is installed separately.
    - Supports npm/npx-style MCP configs without absolute repo paths through the
      released npm package.
 5. Agent skill: `skills/webmcp-browser-automation`
@@ -304,6 +306,24 @@ npx -y @gyga-browser/webmcp-browser-automation-kit call ping
 npx -y @gyga-browser/webmcp-browser-automation-kit extension-path
 ```
 
+Inside this monorepo checkout, workflow runner commands are available through
+the same `webmcp` CLI:
+
+```bash
+node bin/webmcp.mjs workflow validate ../workflow-dispatcher/tests/fixtures/minimal-workflow.json
+node bin/webmcp.mjs workflow dry-run ../workflow-dispatcher/tests/fixtures/example-title-workflow.json --json
+node bin/webmcp.mjs workflow run minimal --config ../workflow-dispatcher/tests/fixtures/dispatcher.config.json --profile personal
+```
+
+This package does not install the workflow runner. For published npm workflow
+usage, install the independent workflow package in the same project/global
+context, or include both packages in an `npx` invocation:
+
+```bash
+npx -y -p @gyga-browser/webmcp-browser-automation-kit -p @gyga-browser/webmcp-workflow webmcp workflow --help
+npx -y @gyga-browser/webmcp-workflow run workflow.json
+```
+
 After global install or `npm link`, the same commands are available as:
 
 ```bash
@@ -311,6 +331,8 @@ webmcp mcp
 webmcp gateway start
 webmcp gateway health --json
 webmcp call ping
+webmcp workflow doctor
+webmcp workflow run minimal --config ../workflow-dispatcher/tests/fixtures/dispatcher.config.json --profile personal
 webmcp extension-path
 ```
 

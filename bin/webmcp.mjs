@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
-import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,6 +11,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
 const PACKAGE_NAME = '@gyga-browser/webmcp-browser-automation-kit';
 const PACKAGE_VERSION = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).version;
+const requireFromCli = createRequire(import.meta.url);
+const WORKFLOW_DISPATCHER_PACKAGES = [
+  '@gyga-browser/webmcp-workflow',
+  'workflow-dispatcher',
+];
 
 function printHelp() {
   console.log(`WebMCP Browser Automation
@@ -19,6 +26,7 @@ Usage:
   webmcp gateway health [--json]
   webmcp health [--json]
   webmcp call <method> [jsonParams]
+  webmcp workflow <command> [options]
   webmcp extension-path
 
 MCP config example:
@@ -34,6 +42,7 @@ MCP config example:
 Environment:
   WEBMCP_GATEWAY_URL=${DEFAULT_GATEWAY_URL}
   WEBMCP_GATEWAY_AUTOSTART=1  Enable MCP dev-mode gateway autostart
+  WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
 `);
 }
 
@@ -116,6 +125,69 @@ async function runGateway(args) {
   process.exit(1);
 }
 
+function getWorkflowDispatcherBin() {
+  const override = process.env.WEBMCP_WORKFLOW_DISPATCHER_BIN || process.env.WORKFLOW_DISPATCHER_BIN;
+  if (override) {
+    const overridePath = resolve(process.cwd(), override);
+    if (existsSync(overridePath)) return overridePath;
+
+    try {
+      return requireFromCli.resolve(`${override}/bin/workflow-dispatcher.js`);
+    } catch {
+      return overridePath;
+    }
+  }
+
+  const siblingBin = resolve(ROOT, '..', 'workflow-dispatcher', 'bin', 'workflow-dispatcher.js');
+  if (existsSync(siblingBin)) return siblingBin;
+
+  for (const packageName of WORKFLOW_DISPATCHER_PACKAGES) {
+    try {
+      return requireFromCli.resolve(`${packageName}/bin/workflow-dispatcher.js`);
+    } catch {
+      // Try the next known package name.
+    }
+  }
+
+  return null;
+}
+
+async function runWorkflow(args) {
+  const dispatcherBin = getWorkflowDispatcherBin();
+  if (!dispatcherBin || !existsSync(dispatcherBin)) {
+    console.error([
+      'Workflow dispatcher CLI not found.',
+      'Install @gyga-browser/webmcp-workflow, run from the webmcp-automation-kit checkout, or set WEBMCP_WORKFLOW_DISPATCHER_BIN.',
+    ].join('\n'));
+    return 1;
+  }
+
+  const workflowArgs = args.length > 0 ? args : ['--help'];
+  const child = spawn(process.execPath, [dispatcherBin, ...workflowArgs], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WORKFLOW_DISPATCHER_COMMAND_NAME: 'webmcp workflow',
+    },
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start workflow dispatcher: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`Workflow dispatcher exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 1);
+    });
+  });
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
 
@@ -137,6 +209,10 @@ async function main() {
   if (command === 'gateway') {
     await runGateway(args);
     return;
+  }
+
+  if (command === 'workflow') {
+    process.exit(await runWorkflow(args));
   }
 
   if (command === 'health') {
