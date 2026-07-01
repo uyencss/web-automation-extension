@@ -194,7 +194,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            profiles: health.profiles || [],
+            profiles: health.profileDetails || [],
             profileCount: health.profileCount || 0,
           }, null, 2)
         }]
