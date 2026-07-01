@@ -25,7 +25,7 @@ export async function getProfileInfo(storage = chrome.storage.local) {
   let email = '';
   try {
     if (typeof chrome !== 'undefined' && chrome.identity && chrome.identity.getProfileUserInfo) {
-      const userInfo = await chrome.identity.getProfileUserInfo({ privilege: 'enabled' });
+      const userInfo = await chrome.identity.getProfileUserInfo();
       if (userInfo && userInfo.email) {
         email = userInfo.email;
       }
