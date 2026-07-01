@@ -71,7 +71,7 @@ export function connectWebSocket() {
     });
   };
 
-  ws.onmessage = (event) => {
+  ws.onmessage = async (event) => {
     let msg;
     try {
       msg = JSON.parse(event.data);
@@ -79,6 +79,26 @@ export function connectWebSocket() {
       console.error('[WS] Invalid JSON received:', event.data);
       return;
     }
+
+    if (msg && msg.method === 'setProfileName') {
+      const name = msg.params?.name;
+      if (!name) {
+        sendError(msg.id, -32602, 'Missing required param: name');
+        return;
+      }
+      try {
+        await chrome.storage.local.set({ webmcp_profile_name: name });
+        sendResult(msg.id, { success: true });
+        // Trigger a reconnect so the gateway receives the new profile name in the handshake
+        setTimeout(() => {
+          if (ws) ws.close();
+        }, 500);
+      } catch (err) {
+        sendError(msg.id, -32603, err.message);
+      }
+      return;
+    }
+
     handleIncomingMessage(msg);
   };
 
