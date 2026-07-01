@@ -56,6 +56,20 @@ function connectedProfileIds() {
   return ids;
 }
 
+function connectedProfileDetails() {
+  const details = [];
+  for (const [profileId, ws] of extensions) {
+    if (ws.readyState === 1) {
+      details.push({
+        profileId,
+        email: ws._profileEmail || '',
+        name: ws._profileName || '',
+      });
+    }
+  }
+  return details;
+}
+
 // Resolve which extension WebSocket should receive a command.
 // Returns { ws } on success or { error, status } on failure.
 function resolveTarget(profileId) {
@@ -112,10 +126,12 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && req.url === '/health') {
     const profiles = connectedProfileIds();
+    const profileDetails = connectedProfileDetails();
     return writeJson(res, 200, {
       ok: true,
       extensionConnected: profiles.length > 0,
       profiles,
+      profileDetails,
       profileCount: profiles.length,
       port: PORT,
       wsUrl: `ws://localhost:${PORT}`,
@@ -247,6 +263,8 @@ wss.on('connection', (ws, req) => {
         // still routable as a single connection.
         const profileId = params.profileId || `anon-${req.socket.remoteAddress}-${Date.now()}`;
         ws._profileId = profileId;
+        ws._profileEmail = params.profileEmail || '';
+        ws._profileName = params.profileName || '';
         pendingConnections.delete(ws);
         // Replace any stale connection registered under the same profile.
         const existing = extensions.get(profileId);
@@ -254,7 +272,7 @@ wss.on('connection', (ws, req) => {
           try { existing.close(); } catch { /* already closed */ }
         }
         extensions.set(profileId, ws);
-        console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${profileId}`);
+        console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${profileId} | email=${ws._profileEmail} | name=${ws._profileName}`);
       } else if (method === 'heartbeat' || method === 'pong') {
         // Silent keep-alive traffic
       } else {

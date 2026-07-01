@@ -19,3 +19,25 @@ export async function getOrCreateProfileId(
   await storage.set({ [STORAGE_KEY]: id });
   return id;
 }
+
+export async function getProfileInfo(storage = chrome.storage.local) {
+  const id = await getOrCreateProfileId(storage);
+  let email = '';
+  try {
+    if (typeof chrome !== 'undefined' && chrome.identity && chrome.identity.getProfileUserInfo) {
+      const userInfo = await chrome.identity.getProfileUserInfo({ privilege: 'enabled' });
+      if (userInfo && userInfo.email) {
+        email = userInfo.email;
+      }
+    }
+  } catch (err) {
+    // Identity permission might not be granted, or sync is disabled
+  }
+
+  const nameData = await storage.get('webmcp_profile_name');
+  const name = nameData && nameData.webmcp_profile_name
+    ? nameData.webmcp_profile_name
+    : (email ? email.split('@')[0] : `Profile-${id.slice(0, 4)}`);
+
+  return { id, email, name };
+}
