@@ -10,7 +10,8 @@
     "webNavigation",
     "downloads",
     "storage",
-    "identity"
+    "identity",
+    "identity.email"
   ],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
