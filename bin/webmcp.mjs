@@ -349,11 +349,19 @@ async function runLaunch(args) {
 
   if (json) {
     console.log(JSON.stringify(payload, null, 2));
+    if (payload.warning) {
+      console.error(`\n⚠️  ${payload.warning}`);
+      if (payload.guidance) console.error(payload.guidance);
+    }
     return;
   }
 
   console.log(`Chrome launched: ${payload.userDataDir}`);
   if (payload.profileId) console.log(`WebMCP profileId: ${payload.profileId}`);
+  if (payload.warning) {
+    console.error(`\n⚠️  ${payload.warning}`);
+    if (payload.guidance) console.error(payload.guidance);
+  }
 }
 
 function getWorkflowDispatcherBin() {

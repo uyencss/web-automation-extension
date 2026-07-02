@@ -82,6 +82,49 @@ test('launchChrome dry-run returns Chrome args without spawning', async () => {
   assert.ok(result.args.includes(`--load-extension=${extensionPath}`));
 });
 
+test('detectChromeChannel classifies builds from path and version string', () => {
+  assert.equal(launcher.detectChromeChannel('/Applications/Google Chrome.app/MacOS/Google Chrome', 'Google Chrome 149.0.7827.201'), 'stable');
+  assert.equal(launcher.detectChromeChannel('/x/Google Chrome for Testing', 'Google Chrome for Testing 131.0'), 'testing');
+  assert.equal(launcher.detectChromeChannel('/x/Google Chrome Canary', 'Google Chrome Canary 152.0'), 'canary');
+  assert.equal(launcher.detectChromeChannel('/usr/bin/chromium', 'Chromium 140.0'), 'chromium');
+  assert.equal(launcher.detectChromeChannel('/usr/bin/some-node', ''), 'unknown');
+});
+
+test('loadExtensionSupported reflects the Chrome M137 drop of --load-extension', () => {
+  assert.equal(launcher.loadExtensionSupported({ channel: 'stable', major: 137 }), false);
+  assert.equal(launcher.loadExtensionSupported({ channel: 'stable', major: 149 }), false);
+  assert.equal(launcher.loadExtensionSupported({ channel: 'beta', major: 140 }), false);
+  assert.equal(launcher.loadExtensionSupported({ channel: 'stable', major: 136 }), true);
+  assert.equal(launcher.loadExtensionSupported({ channel: 'testing', major: 149 }), true);
+  assert.equal(launcher.loadExtensionSupported({ channel: 'chromium', major: 149 }), true);
+  assert.equal(launcher.loadExtensionSupported({ channel: 'canary', major: 152 }), true);
+  // Unknown builds and undetectable versions are not blocked.
+  assert.equal(launcher.loadExtensionSupported({ channel: 'unknown', major: null }), true);
+  assert.equal(launcher.loadExtensionSupported(null), true);
+});
+
+test('launchChrome annotates the result with Chrome build + extension loadability', async () => {
+  const root = tempRoot();
+  const extensionPath = fakeExtensionDir(root);
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+
+  const result = await launcher.launchChrome({
+    mode: 'managed',
+    newProfileName: 'Annotated',
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    dryRun: true,
+  });
+
+  assert.equal(result.extensionPath, extensionPath);
+  assert.equal(typeof result.chromeChannel, 'string');
+  assert.equal(typeof result.extensionLoadable, 'boolean');
+  // process.execPath is not stable Chrome >= 137, so nothing is blocked here.
+  assert.equal(result.extensionLoadable, true);
+  assert.equal(result.warning, undefined);
+});
+
 test('existing locked profile reports needsRelaunch unless relaunch is explicit', async () => {
   const root = tempRoot();
   const extensionPath = fakeExtensionDir(root);

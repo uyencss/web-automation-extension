@@ -54,6 +54,16 @@ npx -y @gyga-browser/webmcp-browser-automation-kit launch --name agent-session -
 The final JSON includes `userDataDir`, `gatewayUrl`, and, once the extension
 connects, `profileId`. Use that `profileId` for multi-profile gateway calls.
 
+> **Chrome 137+ note.** Stable and Beta Google Chrome removed the
+> `--load-extension` command-line switch in **M137**, so on those builds Chrome
+> opens but the extension is not injected. `webmcp launch` detects this and
+> returns `"extensionLoadable": false` with a `warning`/`guidance` message
+> instead of failing silently. When you see it, either load the extension once
+> via `chrome://extensions` (Developer mode → **Load unpacked** → the path from
+> `extension-path`), which persists for that profile, or point
+> `WEBMCP_CHROME_BINARY` at Chrome for Testing, Chrome Canary/Dev, or Chromium,
+> where `--load-extension` still works.
+
 List managed and detected user profiles:
 
 ```bash

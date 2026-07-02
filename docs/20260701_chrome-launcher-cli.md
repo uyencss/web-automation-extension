@@ -1,5 +1,14 @@
 # Tách Chrome Launcher + Extension thành package riêng & viết Skill cho AI
 
+> [!IMPORTANT]
+> **Chrome 137+**: stable/beta Chrome đã gỡ bỏ command-line switch `--load-extension`
+> (và cả escape hatch `--disable-features=DisableLoadExtensionCommandLineSwitch`) từ
+> M137. Các bước "Chrome mở → `chrome://extensions` có extension" bên dưới chỉ đúng
+> với Chromium / Chrome for Testing / Canary / Dev, hoặc stable/beta < M137. Trên
+> stable Chrome hiện đại phải load unpacked thủ công (persist theo profile) hoặc
+> trỏ `WEBMCP_CHROME_BINARY` sang build tương thích. Xem
+> [20260702_chrome-137-load-extension-compat.md](20260702_chrome-137-load-extension-compat.md).
+
 > [!NOTE]
 > **Revised 2026-07-02** — đối chiếu lại với code thực tế. Các thay đổi chính so với bản 2026-07-01:
 > 1. CLI entry là `bin/webmcp.mjs` (ESM), không phải `bin/webmcp.js` — cần quyết định module format (đã chốt: CJS + `createRequire`).

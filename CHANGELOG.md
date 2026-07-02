@@ -2,6 +2,32 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.24 - 2026-07-02
+
+### Fixed
+
+- The Chrome launcher no longer fails silently on stable/beta Google Chrome
+  **M137+**, which removed the `--load-extension` command-line switch. Launches
+  now run `<chrome> --version`, classify the build, and report
+  `extensionLoadable`, `chromeVersion`, `chromeMajor`, and `chromeChannel` on the
+  result. When the extension cannot auto-load, `launchChrome`/`webmcp launch`
+  surface a `warning` and step-by-step `guidance` (load unpacked once via
+  `chrome://extensions`, or set `WEBMCP_CHROME_BINARY` to Chrome for
+  Testing/Canary/Dev/Chromium) instead of leaving `extensionConnected: false`
+  with no explanation.
+
+### Changed
+
+- Removed the dead `--disable-features=DisableLoadExtensionCommandLineSwitch`
+  launch flag. It was the M120–M136 escape hatch for `--load-extension` and is a
+  no-op after Chrome M137 removed the switch.
+- Documented the M137 behavior in `README.md`, the `webmcp-chrome-launcher`
+  skill, its API reference, and a new
+  `docs/20260702_chrome-137-load-extension-compat.md`.
+- Added launcher API `detectChromeInfo`, `detectChromeChannel`,
+  `loadExtensionSupported`, and `loadExtensionGuidance`, covered by
+  `tests/unit/chrome-launcher.test.mjs`.
+
 ## 1.0.23 - 2026-07-02
 
 ### Added

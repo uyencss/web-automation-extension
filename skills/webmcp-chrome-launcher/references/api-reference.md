@@ -26,6 +26,9 @@ const launcher = require('./chrome-launcher');
 - `findChromeBinary()` returns the detected Chrome/Chromium executable or `null`.
 - `createManagedProfile(name, options)` creates an isolated profile under `~/.webmcp/managed-profiles`.
 - `rememberManagedSession`, `hasLiveManagedSession`, `rememberGatewaySession`, and `getGatewaySession` persist process state in `sessions.json`.
+- `detectChromeInfo(chromePath)` runs `<chrome> --version` and returns `{ raw, major, channel }` (never throws).
+- `detectChromeChannel(chromePath, versionOutput)` classifies a build as `stable`, `beta`, `dev`, `canary`, `testing`, `chromium`, or `unknown`.
+- `loadExtensionSupported(info)` returns whether `--load-extension` is honored for that build (see "Chrome 137+" below).
 
 ## launchChrome Options
 
@@ -54,9 +57,29 @@ Successful result:
   "profileDir": "Default",
   "mode": "managed",
   "attached": false,
-  "args": ["--user-data-dir=...", "--load-extension=..."]
+  "args": ["--user-data-dir=...", "--load-extension=..."],
+  "chromeVersion": "Google Chrome 149.0.7827.201",
+  "chromeMajor": 149,
+  "chromeChannel": "stable",
+  "extensionPath": "/path/to/webmcp-extension/dist",
+  "extensionLoadable": false,
+  "warning": "Chrome will open, but the WebMCP extension will not auto-load on this build.",
+  "guidance": "Google Chrome 149... ignores the --load-extension command-line switch (removed in M137)..."
 }
 ```
+
+`warning` and `guidance` are present only when `extensionLoadable` is `false`. The launch args no longer include `--disable-features=DisableLoadExtensionCommandLineSwitch`; that switch was a no-op after Chrome M137 removed it.
+
+## Chrome 137+ and `--load-extension`
+
+Stable/Beta Google Chrome dropped the `--load-extension` command-line switch in **M137**, so the bundled extension cannot be injected at launch on those builds. `launchChrome` reports this via `extensionLoadable: false` plus a `warning`/`guidance` pair instead of failing silently.
+
+Builds where `--load-extension` still works (`extensionLoadable: true`): **Chromium**, **Chrome for Testing**, **Chrome Canary/Dev**, and stable/beta Chrome **older than M137**.
+
+Remediation on an affected build:
+
+1. Load the `dist` folder once via `chrome://extensions` → Developer mode → **Load unpacked**. It persists for that profile.
+2. Or set `WEBMCP_CHROME_BINARY` to a compatible build.
 
 Existing locked profile result:
 

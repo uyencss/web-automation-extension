@@ -42,9 +42,26 @@ webmcp launch --profile-id "Chrome:Default" --gateway --json
 
 Use `--name` for a new managed profile. Use `--profile-id managed:<slug>` to reopen an existing managed profile.
 
+## Chrome 137+ does not auto-load the extension
+
+Stable and Beta Google Chrome removed the `--load-extension` command-line switch in **M137** (and the old `--disable-features=DisableLoadExtensionCommandLineSwitch` escape hatch no longer works). On those builds Chrome opens the profile but the WebMCP extension is not injected.
+
+`webmcp launch` detects this. When the resolved Chrome cannot auto-load the extension, the JSON output carries:
+
+- `"extensionLoadable": false`
+- a `"warning"` and step-by-step `"guidance"` string
+- `chromeVersion`, `chromeMajor`, `chromeChannel`
+
+When you see `extensionLoadable: false` (or `/health` keeps reporting `extensionConnected: false` after a launch), do **not** keep retrying. Pick one fix:
+
+1. **Load unpacked once (persists per profile).** Print the path with `webmcp extension-path`, then in that Chrome open `chrome://extensions` → enable Developer mode → **Load unpacked** → select the printed `dist` folder. It stays installed for that profile, so later `webmcp launch` runs attach with the extension already present — no flag needed.
+2. **Use a build that still honors the switch.** Point `WEBMCP_CHROME_BINARY` at Chrome for Testing, Chrome Canary/Dev, or Chromium, then launch as usual.
+
+Chrome for Testing, Canary/Dev, and Chromium report `extensionLoadable: true` and load the extension normally.
+
 ## Relaunch Safety
 
-Chrome only honors `--load-extension` when the user-data-dir boots. If an existing user profile is already running, `webmcp launch --profile-id ...` returns JSON with `needsRelaunch: true` and exits with code 2.
+Chrome only injects `--load-extension` (on builds that still support it — see above) when the user-data-dir first boots. If an existing user profile is already running, `webmcp launch --profile-id ...` returns JSON with `needsRelaunch: true` and exits with code 2.
 
 Do not retry with `--relaunch` until the user confirms that Chrome can be quit and restarted. After confirmation:
 
