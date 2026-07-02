@@ -95,7 +95,7 @@ Existing locked profile result:
 
 ## State Files
 
-Default state location is `~/.webmcp/`; override with `WEBMCP_DATA_DIR`.
+Default state location is `~/.webmcp/`; override with `WEBMCP_HOME` (or its back-compat alias `WEBMCP_DATA_DIR`). This is the shared kit home, also used by the `webmcp-workflow` CLI for `workflow-runs/`.
 
 - `managed-profiles/` stores isolated Chrome user-data dirs.
 - `sessions.json` stores live Chrome and gateway PIDs. Dead PIDs are pruned automatically with `process.kill(pid, 0)`.

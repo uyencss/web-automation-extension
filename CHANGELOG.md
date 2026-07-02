@@ -2,6 +2,21 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.25 - 2026-07-02
+
+### Added
+
+- `WEBMCP_HOME` environment variable as the shared WebMCP kit data dir, used by
+  both this extension and the `@gyga-browser/webmcp-workflow` CLI. It takes
+  priority over `WEBMCP_DATA_DIR`, which is retained as a back-compat alias.
+  Default remains `~/.webmcp`. Existing setups are unaffected; the subfolder
+  layout (`managed-profiles/`, `sessions.json`) is unchanged.
+
+### Changed
+
+- CLI help, Chrome-launcher skill, and API reference now document `WEBMCP_HOME`
+  as the primary variable with `WEBMCP_DATA_DIR` as its alias.
+
 ## 1.0.24 - 2026-07-02
 
 ### Fixed

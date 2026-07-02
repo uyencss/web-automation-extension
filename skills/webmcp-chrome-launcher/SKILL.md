@@ -32,7 +32,7 @@ List available profiles when the user asks to use a real Chrome profile or accou
 webmcp profiles list --json
 ```
 
-Managed profiles are isolated WebMCP-owned user-data dirs under `~/.webmcp/managed-profiles` unless `WEBMCP_DATA_DIR` overrides the location. Existing profiles are read-only detections from Chrome/Chromium/Edge profile metadata.
+Managed profiles are isolated WebMCP-owned user-data dirs under `~/.webmcp/managed-profiles` unless `WEBMCP_HOME` (or its back-compat alias `WEBMCP_DATA_DIR`) overrides the location. Existing profiles are read-only detections from Chrome/Chromium/Edge profile metadata.
 
 Launch a selected profile:
 
@@ -86,7 +86,8 @@ webmcp extension-path
 Override locations:
 
 ```bash
-WEBMCP_DATA_DIR=/tmp/webmcp webmcp launch --name test --gateway --json
+WEBMCP_HOME=/tmp/webmcp webmcp launch --name test --gateway --json
+# WEBMCP_DATA_DIR is still honored as a back-compat alias of WEBMCP_HOME
 WEBMCP_CHROME_BINARY=/path/to/chrome webmcp launch --name test --dry-run --json
 ```
 

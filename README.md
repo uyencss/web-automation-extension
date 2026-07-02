@@ -29,7 +29,8 @@ The kit has three layers:
      released npm package.
 5. Chrome launcher: `chrome-launcher/`
    - Finds Chrome/Chromium, launches managed or existing profiles with the
-     bundled extension, persists session state under `~/.webmcp`, and can start
+     bundled extension, persists session state under `~/.webmcp` (override with
+     `WEBMCP_HOME`, or its back-compat alias `WEBMCP_DATA_DIR`), and can start
      the gateway for a full bootstrap flow.
 6. Agent skills: `skills/webmcp-browser-automation` and `skills/webmcp-chrome-launcher`
    - Tells agents to health-check, choose a tab, call `webmcp.listTools`, invoke

@@ -47,7 +47,8 @@ Environment:
   WEBMCP_GATEWAY_TOKEN            Shared secret; required on POST /api when set
   WEBMCP_GATEWAY_AUTOSTART=1  Enable MCP dev-mode gateway autostart
   WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
-  WEBMCP_DATA_DIR                 Chrome launcher state dir (default: ~/.webmcp)
+  WEBMCP_HOME                     Shared kit data dir (default: ~/.webmcp)
+  WEBMCP_DATA_DIR                 Alias of WEBMCP_HOME (back-compat)
   WEBMCP_CHROME_BINARY            Override Chrome/Chromium binary path
 `);
 }
