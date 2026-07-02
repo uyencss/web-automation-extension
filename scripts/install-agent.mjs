@@ -27,8 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MCP_SERVER = join(ROOT, 'server', 'mcp_server.mjs');
-const SKILL_NAME = 'webmcp-browser-automation';
-const SKILL_SRC = join(ROOT, 'skills', SKILL_NAME);
+const SKILL_NAMES = ['webmcp-browser-automation', 'webmcp-chrome-launcher'];
 const SERVER_NAME = 'webmcp';
 const PACKAGE_NAME = process.env.WEBMCP_NPM_PACKAGE || '@gyga-browser/webmcp-browser-automation-kit';
 const INSTALL_MODE = (process.env.WEBMCP_INSTALL_MODE || 'npx').toLowerCase();
@@ -38,14 +37,21 @@ const ok = (m) => log(`  ✓ ${m}`);
 const note = (m) => log(`  → ${m}`);
 const head = (m) => log(`\n=== ${m} ===`);
 
-function copySkill(dest) {
-  if (!existsSync(SKILL_SRC)) {
-    note(`Skipping skill: ${SKILL_SRC} not found`);
+function copySkill(skillName, dest) {
+  const skillSrc = join(ROOT, 'skills', skillName);
+  if (!existsSync(skillSrc)) {
+    note(`Skipping skill: ${skillSrc} not found`);
     return;
   }
   mkdirSync(dirname(dest), { recursive: true });
-  cpSync(SKILL_SRC, dest, { recursive: true });
+  cpSync(skillSrc, dest, { recursive: true });
   ok(`Skill copied -> ${dest}`);
+}
+
+function copySkills(destRoot) {
+  for (const skillName of SKILL_NAMES) {
+    copySkill(skillName, join(destRoot, skillName));
+  }
 }
 
 function getMcpCommandConfig() {
@@ -141,7 +147,7 @@ const TARGETS = {
   // Claude Code: global skill in ~/.claude/skills, available to every project.
   claude() {
     head('Claude Code');
-    copySkill(join(homedir(), '.claude', 'skills', SKILL_NAME));
+    copySkills(join(homedir(), '.claude', 'skills'));
     try {
       const { command, args } = getMcpCommandConfig();
       execFileSync(
@@ -168,7 +174,7 @@ const TARGETS = {
   // Codex: global skill in ~/.codex/skills, global MCP in ~/.codex/config.toml.
   codex() {
     head('Codex');
-    copySkill(join(homedir(), '.codex', 'skills', SKILL_NAME));
+    copySkills(join(homedir(), '.codex', 'skills'));
     addCodexMcpConfig();
   },
 
@@ -187,7 +193,7 @@ const TARGETS = {
   // Gemini CLI: MCP configuration in ~/.gemini/config/mcp_config.json and global skills under ~/.gemini/config/skills/.
   gemini() {
     head('Gemini CLI');
-    copySkill(join(homedir(), '.gemini', 'config', 'skills', SKILL_NAME));
+    copySkills(join(homedir(), '.gemini', 'config', 'skills'));
 
     const configFile = join(homedir(), '.gemini', 'config', 'mcp_config.json');
     const { command, args } = getMcpCommandConfig();
@@ -210,7 +216,7 @@ const TARGETS = {
   // Antigravity: MCP configuration in ~/.gemini/config/mcp_config.json and global skills under ~/.gemini/config/skills/.
   antigravity() {
     head('Antigravity');
-    copySkill(join(homedir(), '.gemini', 'config', 'skills', SKILL_NAME));
+    copySkills(join(homedir(), '.gemini', 'config', 'skills'));
 
     const configFile = join(homedir(), '.gemini', 'antigravity-ide', 'mcp_config.json');
     const { command, args } = getMcpCommandConfig();
@@ -245,9 +251,9 @@ const TARGETS = {
 function reminder() {
   log(`\n${'-'.repeat(64)}`);
   log(`MCP install mode: ${INSTALL_MODE}${INSTALL_MODE === 'npx' ? ` (${PACKAGE_NAME})` : ` (${MCP_SERVER})`}`);
-  log('IMPORTANT — the only manual step is loading the extension into Chrome:');
-  log('  1) Run the gateway: `webmcp gateway start` or `npm run gateway`');
-  log('  2) Open Chrome with the extension loaded (webmcp-extension/dist) -> it auto-connects');
+  log('Browser bootstrap:');
+  log('  1) Preferred: `webmcp launch --name agent-session --gateway --json`');
+  log('  2) Manual fallback: `webmcp gateway start`, then load webmcp-extension/dist in Chrome');
   log('  3) Open the AI client -> it spawns the MCP server, which connects to the running gateway');
   log('  The released package is used by default. To point at a local checkout: WEBMCP_INSTALL_MODE=local npm run install:<target>');
   log(`${'-'.repeat(64)}`);

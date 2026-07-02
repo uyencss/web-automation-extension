@@ -25,6 +25,8 @@ Usage:
   webmcp gateway start
   webmcp gateway health [--json]
   webmcp health [--json]
+  webmcp launch [--name <name> | --profile-id <id>] [--gateway] [--relaunch] [--dry-run] [--json]
+  webmcp profiles list [--json]
   webmcp call <method> [jsonParams]
   webmcp workflow <command> [options]
   webmcp extension-path
@@ -41,8 +43,12 @@ MCP config example:
 
 Environment:
   WEBMCP_GATEWAY_URL=${DEFAULT_GATEWAY_URL}
+  WEBMCP_GATEWAY_HOST=127.0.0.1   Gateway bind host (set 0.0.0.0 to expose on LAN)
+  WEBMCP_GATEWAY_TOKEN            Shared secret; required on POST /api when set
   WEBMCP_GATEWAY_AUTOSTART=1  Enable MCP dev-mode gateway autostart
   WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
+  WEBMCP_DATA_DIR                 Chrome launcher state dir (default: ~/.webmcp)
+  WEBMCP_CHROME_BINARY            Override Chrome/Chromium binary path
 `);
 }
 
@@ -54,6 +60,15 @@ function getGatewayBaseUrl() {
 
 function getGatewayApiUrl() {
   return `${getGatewayBaseUrl()}/api`;
+}
+
+// Build request headers, attaching the gateway token when the environment
+// provides one so calls succeed against a token-protected (app-managed) gateway.
+function gatewayHeaders(extra = {}) {
+  const headers = { ...extra };
+  const token = process.env.WEBMCP_GATEWAY_TOKEN;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
 }
 
 function parseJsonParams(raw) {
@@ -83,6 +98,14 @@ async function fetchJson(url, options = {}) {
   return { response, payload };
 }
 
+async function fetchJsonOrNull(url, options = {}) {
+  try {
+    return await fetchJson(url, options);
+  } catch {
+    return null;
+  }
+}
+
 async function printHealth({ json = false } = {}) {
   const { response, payload } = await fetchJson(`${getGatewayBaseUrl()}/health`);
   if (json) {
@@ -101,7 +124,7 @@ async function callGateway(method, rawParams) {
   const params = parseJsonParams(rawParams);
   const { response, payload } = await fetchJson(getGatewayApiUrl(), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: gatewayHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ method, params }),
   });
 
@@ -123,6 +146,214 @@ async function runGateway(args) {
 
   console.error(`Unknown gateway command: ${subcommand}`);
   process.exit(1);
+}
+
+function parseFlags(args) {
+  const flags = {};
+  const positional = [];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (!arg.startsWith('--')) {
+      positional.push(arg);
+      continue;
+    }
+
+    const eq = arg.indexOf('=');
+    if (eq !== -1) {
+      flags[arg.slice(2, eq)] = arg.slice(eq + 1);
+      continue;
+    }
+
+    const key = arg.slice(2);
+    const next = args[i + 1];
+    if (next && !next.startsWith('--')) {
+      flags[key] = next;
+      i += 1;
+    } else {
+      flags[key] = true;
+    }
+  }
+
+  return { flags, positional };
+}
+
+function getChromeLauncher() {
+  return requireFromCli(resolve(ROOT, 'chrome-launcher'));
+}
+
+function profileIdsFromHealth(payload) {
+  if (!payload || !Array.isArray(payload.profiles)) return [];
+  return payload.profiles.filter((profileId) => typeof profileId === 'string');
+}
+
+async function getGatewayHealth() {
+  const result = await fetchJsonOrNull(`${getGatewayBaseUrl()}/health`);
+  if (!result?.response?.ok) return null;
+  return result.payload;
+}
+
+async function ensureGatewayRunning() {
+  const existing = await getGatewayHealth();
+  if (existing?.ok) return { started: false, health: existing };
+
+  const { rememberGatewaySession } = getChromeLauncher();
+  const gatewayPath = resolve(ROOT, 'server', 'gateway_server.js');
+  const child = spawn(process.execPath, [gatewayPath], {
+    cwd: ROOT,
+    detached: true,
+    env: {
+      ...process.env,
+      WEBMCP_GATEWAY_PORT: process.env.WEBMCP_GATEWAY_PORT || '7865',
+      WEBMCP_GATEWAY_HOST: process.env.WEBMCP_GATEWAY_HOST || '127.0.0.1',
+    },
+    stdio: 'ignore',
+  });
+  child.unref();
+  rememberGatewaySession(child.pid, { url: getGatewayBaseUrl() });
+
+  const start = Date.now();
+  while (Date.now() - start < 8000) {
+    const health = await getGatewayHealth();
+    if (health?.ok) return { started: true, pid: child.pid, health };
+    await new Promise((resolveWait) => setTimeout(resolveWait, 300));
+  }
+
+  throw new Error(`Gateway did not become healthy at ${getGatewayBaseUrl()}/health`);
+}
+
+async function waitForLaunchedProfile(beforeIds, timeoutMs = 30000) {
+  const before = new Set(beforeIds);
+  const start = Date.now();
+  let latest = null;
+
+  while (Date.now() - start < timeoutMs) {
+    const health = await getGatewayHealth();
+    if (health?.ok) {
+      latest = health;
+      const ids = profileIdsFromHealth(health);
+      const added = ids.find((profileId) => !before.has(profileId));
+      if (added) return { profileId: added, health };
+      if (ids.length === 1 && before.size === 0) return { profileId: ids[0], health };
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
+  }
+
+  return { profileId: null, health: latest };
+}
+
+function printLaunchUsage() {
+  console.log(`Usage:
+  webmcp launch --name <managed-profile-name> [--gateway] [--dry-run] [--json]
+  webmcp launch --profile-id <id> [--gateway] [--relaunch] [--dry-run] [--json]
+
+Examples:
+  webmcp launch --name scraping-bot --gateway --json
+  webmcp profiles list --json
+  webmcp launch --profile-id "Chrome:Default" --relaunch`);
+}
+
+function printProfiles(profiles, json) {
+  if (json) {
+    console.log(JSON.stringify(profiles, null, 2));
+    return;
+  }
+
+  for (const group of ['managed', 'existing']) {
+    console.log(`${group}:`);
+    if (profiles[group].length === 0) {
+      console.log('  (none)');
+      continue;
+    }
+    for (const profile of profiles[group]) {
+      const email = profile.email ? ` <${profile.email}>` : '';
+      console.log(`  ${profile.id}  ${profile.name}${email}`);
+    }
+  }
+}
+
+async function runProfiles(args) {
+  const [subcommand = 'list', ...rest] = args;
+  if (subcommand !== 'list') {
+    console.error(`Unknown profiles command: ${subcommand}`);
+    process.exit(1);
+  }
+
+  const { flags } = parseFlags(rest);
+  const { listAllProfiles } = getChromeLauncher();
+  printProfiles(listAllProfiles(), Boolean(flags.json));
+}
+
+async function runLaunch(args) {
+  const { flags } = parseFlags(args);
+  if (flags.help || flags.h) {
+    printLaunchUsage();
+    return;
+  }
+
+  const json = Boolean(flags.json || flags.gateway || flags['dry-run']);
+  const dryRun = Boolean(flags['dry-run']);
+  const {
+    defaultExtensionPath,
+    findProfileById,
+    launchChrome,
+    listAllProfiles,
+  } = getChromeLauncher();
+
+  let profile = null;
+  let mode = 'managed';
+  if (flags['profile-id']) {
+    profile = findProfileById(String(flags['profile-id']));
+    if (!profile) {
+      console.error(`Profile not found: ${flags['profile-id']}`);
+      console.error('Run `webmcp profiles list --json` to see available ids.');
+      process.exit(1);
+    }
+    mode = profile.kind === 'existing' ? 'existing' : 'managed';
+  }
+
+  const gateway = flags.gateway ? await ensureGatewayRunning() : null;
+  const beforeIds = gateway?.health ? profileIdsFromHealth(gateway.health) : [];
+  const launchResult = await launchChrome({
+    mode,
+    profile,
+    newProfileName: flags.name || 'webmcp',
+    relaunch: Boolean(flags.relaunch),
+    dryRun,
+    extensionPath: flags['extension-path'] || defaultExtensionPath(),
+  });
+
+  if (launchResult.needsRelaunch) {
+    const payload = {
+      ...launchResult,
+      ok: false,
+      exitCode: 2,
+      hint: 'Ask the user before retrying with --relaunch because this may quit their running Chrome windows.',
+    };
+    console.log(JSON.stringify(payload, null, 2));
+    process.exit(2);
+  }
+
+  let connected = { profileId: null, health: null };
+  if (flags.gateway && !dryRun) {
+    connected = await waitForLaunchedProfile(beforeIds);
+  }
+
+  const payload = {
+    ...launchResult,
+    gatewayUrl: flags.gateway ? getGatewayBaseUrl() : null,
+    gatewayStarted: gateway?.started || false,
+    profileId: connected.profileId,
+    profiles: flags['include-profiles'] ? listAllProfiles() : undefined,
+  };
+
+  if (json) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  console.log(`Chrome launched: ${payload.userDataDir}`);
+  if (payload.profileId) console.log(`WebMCP profileId: ${payload.profileId}`);
 }
 
 function getWorkflowDispatcherBin() {
@@ -208,6 +439,16 @@ async function main() {
 
   if (command === 'gateway') {
     await runGateway(args);
+    return;
+  }
+
+  if (command === 'profiles') {
+    await runProfiles(args);
+    return;
+  }
+
+  if (command === 'launch') {
+    await runLaunch(args);
     return;
   }
 

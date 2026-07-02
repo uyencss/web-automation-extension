@@ -1,0 +1,4 @@
+interface:
+  display_name: "WebMCP Chrome Launcher"
+  short_description: "Launch and manage WebMCP Chrome sessions."
+  default_prompt: "Launch Chrome with the WebMCP extension, start or check the WebMCP gateway, and return the connected profileId for automation."

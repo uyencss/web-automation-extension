@@ -21,16 +21,22 @@ The kit has three layers:
    - Generates MCP tools from `catalog/command-catalog.js`.
    - Proxies each tool call to the gateway HTTP API.
 4. Package CLI: `bin/webmcp.mjs`
-   - Exposes `webmcp mcp`, `webmcp gateway start`, `webmcp health`, and
-     `webmcp call`.
+   - Exposes `webmcp mcp`, `webmcp gateway start`, `webmcp launch`,
+     `webmcp profiles list`, `webmcp health`, and `webmcp call`.
    - Exposes an optional `webmcp workflow` bridge when
      `@gyga-browser/webmcp-workflow` is installed separately.
    - Supports npm/npx-style MCP configs without absolute repo paths through the
      released npm package.
-5. Agent skill: `skills/webmcp-browser-automation`
+5. Chrome launcher: `chrome-launcher/`
+   - Finds Chrome/Chromium, launches managed or existing profiles with the
+     bundled extension, persists session state under `~/.webmcp`, and can start
+     the gateway for a full bootstrap flow.
+6. Agent skills: `skills/webmcp-browser-automation` and `skills/webmcp-chrome-launcher`
    - Tells agents to health-check, choose a tab, call `webmcp.listTools`, invoke
      page tools through `webmcp.invokeTool`, parse nested MCP results, and verify
      each browser action.
+   - Tells agents how to launch Chrome, select profiles, and safely handle
+     relaunches for already-running user profiles.
 
 `catalog/command-catalog.js` is used by the MCP adapter to generate tool schemas.
 
@@ -39,7 +45,30 @@ The kit has three layers:
 For normal use, you do not need to clone this repository. Run the published npm
 package with `npx` and configure your MCP client to start the same package.
 
-Print the unpacked extension path:
+Launch a managed Chrome profile with the bundled extension and gateway:
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit launch --name agent-session --gateway --json
+```
+
+The final JSON includes `userDataDir`, `gatewayUrl`, and, once the extension
+connects, `profileId`. Use that `profileId` for multi-profile gateway calls.
+
+List managed and detected user profiles:
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit profiles list --json
+```
+
+Launch an existing profile only after selecting its id. If Chrome is already
+running, the command returns `needsRelaunch: true`; ask the user before retrying
+with `--relaunch`.
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit launch --profile-id "Chrome:Default" --gateway --json
+```
+
+Manual fallback: print the unpacked extension path:
 
 ```bash
 npx -y @gyga-browser/webmcp-browser-automation-kit extension-path

@@ -44,9 +44,12 @@ async function main() {
   const params = parseJsonParams(rawParams);
   const requestBody = { method, params };
   if (profileId) requestBody.profileId = profileId;
+  const headers = { 'Content-Type': 'application/json' };
+  const token = process.env.WEBMCP_GATEWAY_TOKEN;
+  if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(gatewayUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(requestBody),
   });
 

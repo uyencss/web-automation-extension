@@ -1,9 +1,48 @@
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { WebSocketServer } = require('ws');
 const { getCommandGroups, listCommands } = require('../catalog/command-catalog.js');
 
 const PORT = Number(process.env.WEBMCP_GATEWAY_PORT || process.env.PORT || 7865);
+// Bind to loopback by default so the local automation API is not reachable from
+// the LAN. Set WEBMCP_GATEWAY_HOST=0.0.0.0 explicitly to expose it (e.g. for a
+// remote agent on the same network) — you should pair that with a token.
+const HOST = process.env.WEBMCP_GATEWAY_HOST || '127.0.0.1';
+// Optional shared secret. When set, POST /api requires a matching
+// `Authorization: Bearer <token>` (or `x-webmcp-token: <token>`) header. The
+// managed app injects this into every child/agent via env; unset = open (the
+// current default, safe because we now bind loopback only).
+const TOKEN = process.env.WEBMCP_GATEWAY_TOKEN || '';
 const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
+
+// Version metadata surfaced on /health so a supervising app can detect drift
+// between the gateway package and the bundled extension without extra IPC.
+function readJsonSafe(relPath) {
+  try {
+    return JSON.parse(fs.readFileSync(path.resolve(__dirname, relPath), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+const GATEWAY_VERSION = readJsonSafe('../package.json')?.version || null;
+const EXTENSION_VERSION = readJsonSafe('../webmcp-extension/dist/manifest.json')?.version || null;
+
+// Timing-safe token comparison so a set token can't be probed by response time.
+function tokenMatches(provided) {
+  if (!TOKEN) return true;
+  const a = Buffer.from(String(provided || ''));
+  const b = Buffer.from(TOKEN);
+  if (a.length !== b.length) return false;
+  return require('crypto').timingSafeEqual(a, b);
+}
+
+function extractToken(req) {
+  const auth = req.headers['authorization'] || '';
+  const bearer = /^Bearer\s+(.+)$/i.exec(auth);
+  if (bearer) return bearer[1].trim();
+  return req.headers['x-webmcp-token'] || '';
+}
 // Interval at which the gateway pings the extension. In Manifest V3, any
 // inbound WebSocket message resets the service-worker idle timer (~30s).
 // Pinging well under 30s keeps the extension's service worker alive so the
@@ -117,7 +156,7 @@ const server = http.createServer((req, res) => {
   // CORS Headers to allow scripts/agents to query from anywhere
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-webmcp-token');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(200);
@@ -137,12 +176,18 @@ const server = http.createServer((req, res) => {
       wsUrl: `ws://localhost:${PORT}`,
       apiUrl: `http://localhost:${PORT}/api`,
       timeoutMs: COMMAND_TIMEOUT_MS,
+      gatewayVersion: GATEWAY_VERSION,
+      extensionVersion: EXTENSION_VERSION,
+      authRequired: Boolean(TOKEN),
       commands: listGatewayCommands(),
       commandGroups: getGatewayCommandGroups(),
     });
   }
 
   if (req.method === 'POST' && req.url === '/api') {
+    if (!tokenMatches(extractToken(req))) {
+      return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
+    }
     let body = '';
     req.on('data', chunk => {
       body += chunk.toString();
@@ -301,12 +346,15 @@ wss.on('connection', (ws, req) => {
 });
 
 // Start Gateway Server
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log('='.repeat(70));
   console.log(`  WebMCP Automation Gateway Server is running!`);
-  console.log(`  - Extension WebSocket Endpoint: ws://localhost:${PORT}`);
-  console.log(`  - Health Endpoint: GET http://localhost:${PORT}/health`);
-  console.log(`  - HTTP API Endpoint for Agents/Scripts: POST http://localhost:${PORT}/api`);
+  console.log(`  - Bind Host: ${HOST}${HOST === '0.0.0.0' ? ' (exposed to LAN)' : ' (loopback only)'}`);
+  console.log(`  - Gateway v${GATEWAY_VERSION || '?'} | Extension v${EXTENSION_VERSION || '?'}`);
+  console.log(`  - Auth: ${TOKEN ? 'token required' : 'open (no token set)'}`);
+  console.log(`  - Extension WebSocket Endpoint: ws://${HOST}:${PORT}`);
+  console.log(`  - Health Endpoint: GET http://${HOST}:${PORT}/health`);
+  console.log(`  - HTTP API Endpoint for Agents/Scripts: POST http://${HOST}:${PORT}/api`);
   console.log(`  - Command Timeout: ${COMMAND_TIMEOUT_MS}ms`);
   console.log('='.repeat(70));
   console.log('Load/reload the Extension in Chrome to connect.');

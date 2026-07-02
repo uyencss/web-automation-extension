@@ -112,9 +112,12 @@ async function callGateway(method, params, requestProfileId) {
   const body = { method, params: params || {} };
   const targetProfileId = requestProfileId || profileId;
   if (targetProfileId) body.profileId = targetProfileId;
+  const headers = { 'Content-Type': 'application/json' };
+  const token = process.env.WEBMCP_GATEWAY_TOKEN;
+  if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(`${gatewayUrl}/api`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
 

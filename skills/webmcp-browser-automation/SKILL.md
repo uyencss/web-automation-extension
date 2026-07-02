@@ -52,6 +52,16 @@ With the released npm package, the portable equivalent is:
 npx -y @gyga-browser/webmcp-browser-automation-kit gateway start
 ```
 
+If the gateway is unreachable or `/health` reports `extensionConnected: false`,
+bootstrap Chrome with the bundled extension first:
+
+```bash
+webmcp launch --name task-name --gateway --json
+```
+
+Use the `webmcp-chrome-launcher` skill for profile selection, managed browser sessions,
+and safe `--relaunch` handling for already-running user Chrome profiles.
+
 The Chrome extension connects to `ws://localhost:7865`; scripts and agents call:
 
 ```bash

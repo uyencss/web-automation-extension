@@ -2,6 +2,19 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.23 - 2026-07-02
+
+### Added
+
+- Added a dependency-free `chrome-launcher/` package API for finding Chrome,
+  launching managed or existing profiles with the bundled WebMCP extension,
+  persisting launched Chrome/gateway process state under `~/.webmcp`, and listing
+  managed/detected Chrome profiles.
+- Added `webmcp launch` and `webmcp profiles list` CLI commands, including
+  `--gateway`, `--dry-run`, `--relaunch`, and JSON output for agents.
+- Added the `webmcp-chrome-launcher` skill and installer support for copying both
+  bundled skills into supported agent runtimes.
+
 ## 1.0.22 - 2026-07-01
 
 ### Added

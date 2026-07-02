@@ -7,21 +7,33 @@
     "type": "git",
     "url": "git+https://github.com/uyencss/web-automation-extension.git"
   },
-  "version": "1.0.22",
+  "version": "1.0.23",
   "description": "Reusable WebMCP Chrome extension, gateway, and agent skill kit for browser automation.",
   "license": "MIT",
   "author": "uyencss",
   "bin": {
     "webmcp": "bin/webmcp.mjs"
   },
+  "exports": {
+    ".": "./bin/webmcp.mjs",
+    "./bin/webmcp.mjs": "./bin/webmcp.mjs",
+    "./catalog/command-catalog.js": "./catalog/command-catalog.js",
+    "./chrome-launcher": "./chrome-launcher/index.js",
+    "./package.json": "./package.json",
+    "./server/gateway_server.js": "./server/gateway_server.js",
+    "./server/mcp_server.mjs": "./server/mcp_server.mjs",
+    "./server/mcp-tool-catalog.mjs": "./server/mcp-tool-catalog.mjs"
+  },
   "files": [
     "bin/",
+    "chrome-launcher/",
     "server/gateway_server.js",
     "server/mcp_server.mjs",
     "server/mcp-tool-catalog.mjs",
     "catalog/command-catalog.js",
     "webmcp-extension/dist/",
     "skills/webmcp-browser-automation/",
+    "skills/webmcp-chrome-launcher/",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -45,7 +57,7 @@
     "call": "node scripts/webmcp-call.js",
     "tools:generate": "node scripts/generate-tool-reference.js",
     "tools:check": "node scripts/generate-tool-reference.js --check",
-    "test": "node tests/unit/evaluate-wrap.test.mjs && node tests/unit/page-text-extraction.test.mjs && node tests/unit/tool-filter.test.mjs && node tests/unit/profile-id.test.mjs && node tests/unit/gateway-multi-profile.test.mjs && node tests/unit/webmcp-cli.test.mjs"
+    "test": "node tests/unit/evaluate-wrap.test.mjs && node tests/unit/page-text-extraction.test.mjs && node tests/unit/tool-filter.test.mjs && node tests/unit/profile-id.test.mjs && node tests/unit/gateway-multi-profile.test.mjs && node tests/unit/chrome-launcher.test.mjs && node tests/unit/webmcp-cli.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
