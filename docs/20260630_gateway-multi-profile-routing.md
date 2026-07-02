@@ -6,19 +6,19 @@
 
 **Architecture:** Replace the gateway's single `extensionWs` with a `Map<profileId, ws>`. Each extension generates a stable UUID, persists it in `chrome.storage.local` (isolated per Chrome profile), and sends it along with the Chrome profile's Google account email and a custom display name in the `extensionReady` handshake. The gateway registers each connection under its `profileId`, stores `profileEmail` and `profileName` on the WebSocket, routes `/api` requests by a top-level `profileId` field (falling back to the sole connection when only one is present), and reports all connected profiles with rich metadata on `/health`. The MCP server exposes `list_profiles` (returning `profileDetails` with id/email/name) and `set_profile_name` tools. The bundled MCP server / CLI helper read `WEBMCP_PROFILE_ID`, and the SKILL documents how an agent supplies `profileId`.
 
-**Scope:** This plan touches `mcp-web-extension/` ONLY. The `workflow-dispatcher/` runner is intentionally out of scope for now; it can adopt the same top-level `profileId` body field later without any gateway change.
+**Scope:** This plan touches `webmcp-browser-kit/` ONLY. The `webmcp-workflow-cli/` runner is intentionally out of scope for now; it can adopt the same top-level `profileId` body field later without any gateway change.
 
 **Tech Stack:** Node.js (`http`, `ws`), Chrome MV3 service worker (`chrome.storage.local`, `crypto.randomUUID`), CommonJS runner modules, ES-module extension bundle.
 
 ## Global Constraints
 
-- Node `>=18` (per `mcp-web-extension/package.json` engines) — built-in `fetch` and `crypto.randomUUID` are available; do not add dependencies.
+- Node `>=18` (per `webmcp-browser-kit/package.json` engines) — built-in `fetch` and `crypto.randomUUID` are available; do not add dependencies.
 - Only `ws` and `@modelcontextprotocol/sdk` are allowed runtime deps; do not introduce new ones.
 - `webmcp-extension/dist/` IS the shipped/loaded extension source (the build script only zips it). Edit `dist/` files directly; there is no transpile step.
 - Backward compatibility is mandatory: an `/api` request with **no** `profileId` must still work when exactly one profile is connected, and an extension that sends no `profileId` in its handshake must still be routable.
-- All changes are inside `mcp-web-extension/` (a git repo — commit there). Do NOT modify `workflow-dispatcher/`.
+- All changes are inside `webmcp-browser-kit/` (a git repo — commit there). Do NOT modify `webmcp-workflow-cli/`.
 - The `profileId` travels as a **top-level sibling of `params`** in the `/api` body (`{ method, params, profileId }`). The gateway strips it and never forwards it to the extension (the extension still receives only `{ jsonrpc, id, method, params }`).
-- Test runner is plain `node` scripts under `mcp-web-extension/tests/unit/` wired into the `test` npm script — no test framework. New tests must follow that style (`node:assert`, exit non-zero on failure).
+- Test runner is plain `node` scripts under `webmcp-browser-kit/tests/unit/` wired into the `test` npm script — no test framework. New tests must follow that style (`node:assert`, exit non-zero on failure).
 
 ---
 
@@ -28,10 +28,10 @@ A small, dependency-free module that returns a stable id, generating and persist
 
 **Files:**
 
-- Create: `mcp-web-extension/webmcp-extension/dist/bg/profile-id.js`
-- Test: `mcp-web-extension/tests/unit/profile-id.test.mjs`
-- Modify: `mcp-web-extension/package.json:` (the `test` script line) — append the new test
-- Modify: `mcp-web-extension/webmcp-extension/dist/manifest.json` — add `"identity"` and `"identity.email"` permissions
+- Create: `webmcp-browser-kit/webmcp-extension/dist/bg/profile-id.js`
+- Test: `webmcp-browser-kit/tests/unit/profile-id.test.mjs`
+- Modify: `webmcp-browser-kit/package.json:` (the `test` script line) — append the new test
+- Modify: `webmcp-browser-kit/webmcp-extension/dist/manifest.json` — add `"identity"` and `"identity.email"` permissions
 
 **Interfaces:**
 
@@ -42,7 +42,7 @@ A small, dependency-free module that returns a stable id, generating and persist
 
 - [ ] **Step 1: Write the failing test**
 
-Create `mcp-web-extension/tests/unit/profile-id.test.mjs`:
+Create `webmcp-browser-kit/tests/unit/profile-id.test.mjs`:
 
 ```js
 import assert from "node:assert";
@@ -96,12 +96,12 @@ run().catch((err) => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node mcp-web-extension/tests/unit/profile-id.test.mjs`
+Run: `node webmcp-browser-kit/tests/unit/profile-id.test.mjs`
 Expected: FAIL — `Cannot find module .../dist/bg/profile-id.js` (file does not exist yet).
 
 - [ ] **Step 3: Create the module**
 
-Create `mcp-web-extension/webmcp-extension/dist/bg/profile-id.js`:
+Create `webmcp-browser-kit/webmcp-extension/dist/bg/profile-id.js`:
 
 ```js
 // Stable per-Chrome-profile identifier.
@@ -129,12 +129,12 @@ export async function getOrCreateProfileId(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node mcp-web-extension/tests/unit/profile-id.test.mjs`
+Run: `node webmcp-browser-kit/tests/unit/profile-id.test.mjs`
 Expected: PASS — prints `profile-id.test.mjs OK`.
 
 - [ ] **Step 5: Wire the test into the npm test script**
 
-In `mcp-web-extension/package.json`, change the `test` script from:
+In `webmcp-browser-kit/package.json`, change the `test` script from:
 
 ```json
 "test": "node tests/unit/evaluate-wrap.test.mjs && node tests/unit/page-text-extraction.test.mjs && node tests/unit/tool-filter.test.mjs"
@@ -151,8 +151,8 @@ to:
 - [ ] **Step 6: Commit**
 
 ```bash
-git -C mcp-web-extension add webmcp-extension/dist/bg/profile-id.js tests/unit/profile-id.test.mjs package.json
-git -C mcp-web-extension commit -m "feat(ext): add stable per-profile id module"
+git -C webmcp-browser-kit add webmcp-extension/dist/bg/profile-id.js tests/unit/profile-id.test.mjs package.json
+git -C webmcp-browser-kit commit -m "feat(ext): add stable per-profile id module"
 ```
 
 ---
@@ -163,7 +163,7 @@ Load (or generate) the profile id and metadata when the WebSocket opens and incl
 
 **Files:**
 
-- Modify: `mcp-web-extension/webmcp-extension/dist/bg/ws-client.js:1-3,25-72`
+- Modify: `webmcp-browser-kit/webmcp-extension/dist/bg/ws-client.js:1-3,25-72`
 
 **Interfaces:**
 
@@ -172,7 +172,7 @@ Load (or generate) the profile id and metadata when the WebSocket opens and incl
 
 - [ ] **Step 1: Add the import**
 
-In `mcp-web-extension/webmcp-extension/dist/bg/ws-client.js`, change the top of the file from:
+In `webmcp-browser-kit/webmcp-extension/dist/bg/ws-client.js`, change the top of the file from:
 
 ```js
 import { handleIncomingMessage } from "./router.js";
@@ -232,14 +232,14 @@ Leave the rest of the `capabilities` array and the closing `});` exactly as-is.
 
 - [ ] **Step 3: Sanity-check that the bundle still parses**
 
-Run: `node --input-type=module -e "import('./mcp-web-extension/webmcp-extension/dist/bg/profile-id.js').then(m => console.log(typeof m.getOrCreateProfileId))"`
+Run: `node --input-type=module -e "import('./webmcp-browser-kit/webmcp-extension/dist/bg/profile-id.js').then(m => console.log(typeof m.getOrCreateProfileId))"`
 Expected: prints `function` (confirms the new module resolves; `ws-client.js` itself can't run under Node because it references `chrome`/`WebSocket`, so this verifies only its new dependency).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git -C mcp-web-extension add webmcp-extension/dist/bg/ws-client.js
-git -C mcp-web-extension commit -m "feat(ext): send profileId in extensionReady handshake"
+git -C webmcp-browser-kit add webmcp-extension/dist/bg/ws-client.js
+git -C webmcp-browser-kit commit -m "feat(ext): send profileId in extensionReady handshake"
 ```
 
 ---
@@ -250,8 +250,8 @@ Replace the single connection with a `Map<profileId, ws>`, register connections 
 
 **Files:**
 
-- Modify: `mcp-web-extension/server/gateway_server.js:38-45` (state + helpers), `:77-88` (`/health`), `:96-141` (`/api` handler), `:150-224` (connection handler)
-- Test: `mcp-web-extension/tests/unit/gateway-multi-profile.test.mjs`
+- Modify: `webmcp-browser-kit/server/gateway_server.js:38-45` (state + helpers), `:77-88` (`/health`), `:96-141` (`/api` handler), `:150-224` (connection handler)
+- Test: `webmcp-browser-kit/tests/unit/gateway-multi-profile.test.mjs`
 
 **Interfaces:**
 
@@ -262,7 +262,7 @@ Replace the single connection with a `Map<profileId, ws>`, register connections 
 
 - [ ] **Step 1: Write the failing integration test**
 
-Create `mcp-web-extension/tests/unit/gateway-multi-profile.test.mjs`:
+Create `webmcp-browser-kit/tests/unit/gateway-multi-profile.test.mjs`:
 
 ```js
 import assert from "node:assert";
@@ -418,12 +418,12 @@ run().catch((err) => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node mcp-web-extension/tests/unit/gateway-multi-profile.test.mjs`
+Run: `node webmcp-browser-kit/tests/unit/gateway-multi-profile.test.mjs`
 Expected: FAIL — current gateway overwrites the single `extensionWs`, exposes no `profiles` array on `/health`, and ignores `profileId`. The `waitFor(... profiles.length === 2)` will time out (`/health` has no `profiles` field), throwing "Timed out waiting for: both profiles registered".
 
 - [ ] **Step 3: Replace gateway state and add routing helpers**
 
-In `mcp-web-extension/server/gateway_server.js`, replace the State block (lines 38-45):
+In `webmcp-browser-kit/server/gateway_server.js`, replace the State block (lines 38-45):
 
 ```js
 // ── State ────────────────────────────────────────────────────
@@ -670,31 +670,31 @@ ws.on("close", () => {
 
 - [ ] **Step 7: Run the integration test to verify it passes**
 
-Run: `node mcp-web-extension/tests/unit/gateway-multi-profile.test.mjs`
+Run: `node webmcp-browser-kit/tests/unit/gateway-multi-profile.test.mjs`
 Expected: PASS — prints `gateway-multi-profile.test.mjs OK`.
 
 - [ ] **Step 8: Run the full extension test suite for regressions**
 
-Run: `cd mcp-web-extension && npm test`
+Run: `cd webmcp-browser-kit && npm test`
 Expected: all five test scripts pass (the three originals plus `profile-id` and `gateway-multi-profile`).
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git -C mcp-web-extension add server/gateway_server.js tests/unit/gateway-multi-profile.test.mjs
-git -C mcp-web-extension commit -m "feat(gateway): route /api by profileId via Map of connections"
+git -C webmcp-browser-kit add server/gateway_server.js tests/unit/gateway-multi-profile.test.mjs
+git -C webmcp-browser-kit commit -m "feat(gateway): route /api by profileId via Map of connections"
 ```
 
 ---
 
 ### Task 4: profileId support for the MCP server and CLI helper
 
-`mcp_server.mjs` (the MCP entry point) and `scripts/webmcp-call.js` (the `npm run call` helper) also POST to `/api`. Give them an env-driven `profileId` so they work against a multi-profile gateway without changing call sites. These live in the `mcp-web-extension` git repo.
+`mcp_server.mjs` (the MCP entry point) and `scripts/webmcp-call.js` (the `npm run call` helper) also POST to `/api`. Give them an env-driven `profileId` so they work against a multi-profile gateway without changing call sites. These live in the `webmcp-browser-kit` git repo.
 
 **Files:**
 
-- Modify: `mcp-web-extension/server/mcp_server.mjs:16-17,110-115`
-- Modify: `mcp-web-extension/scripts/webmcp-call.js:5-6,44-50`
+- Modify: `webmcp-browser-kit/server/mcp_server.mjs:16-17,110-115`
+- Modify: `webmcp-browser-kit/scripts/webmcp-call.js:5-6,44-50`
 
 **Interfaces:**
 
@@ -703,7 +703,7 @@ git -C mcp-web-extension commit -m "feat(gateway): route /api by profileId via M
 
 - [ ] **Step 1: Add profileId to mcp_server callGateway**
 
-In `mcp-web-extension/server/mcp_server.mjs`, just after the existing `const gatewayUrl = ...` line (line 17), add:
+In `webmcp-browser-kit/server/mcp_server.mjs`, just after the existing `const gatewayUrl = ...` line (line 17), add:
 
 ```js
 const profileId = process.env.WEBMCP_PROFILE_ID || undefined;
@@ -735,7 +735,7 @@ async function callGateway(method, params) {
 
 - [ ] **Step 2: Add profileId to the CLI helper**
 
-In `mcp-web-extension/scripts/webmcp-call.js`, just after the existing `const gatewayUrl = ...` line (line 6), add:
+In `webmcp-browser-kit/scripts/webmcp-call.js`, just after the existing `const gatewayUrl = ...` line (line 6), add:
 
 ```js
 const profileId = process.env.WEBMCP_PROFILE_ID || undefined;
@@ -767,19 +767,19 @@ const response = await fetch(gatewayUrl, {
 
 - [ ] **Step 3: Verify both files parse**
 
-Run: `node --check mcp-web-extension/server/mcp_server.mjs && node --check mcp-web-extension/scripts/webmcp-call.js && echo "syntax OK"`
+Run: `node --check webmcp-browser-kit/server/mcp_server.mjs && node --check webmcp-browser-kit/scripts/webmcp-call.js && echo "syntax OK"`
 Expected: prints `syntax OK`.
 
 - [ ] **Step 4: Manual smoke (optional, needs a running gateway + connected extension)**
 
-Run: `cd mcp-web-extension && WEBMCP_PROFILE_ID=<a-connected-profile-id> npm run health`
+Run: `cd webmcp-browser-kit && WEBMCP_PROFILE_ID=<a-connected-profile-id> npm run health`
 Expected: the `ping` succeeds and is routed to that profile. Discover valid ids first via `curl -s localhost:7865/health | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).profiles))"`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git -C mcp-web-extension add server/mcp_server.mjs scripts/webmcp-call.js
-git -C mcp-web-extension commit -m "feat: forward WEBMCP_PROFILE_ID from mcp server and CLI helper"
+git -C webmcp-browser-kit add server/mcp_server.mjs scripts/webmcp-call.js
+git -C webmcp-browser-kit commit -m "feat: forward WEBMCP_PROFILE_ID from mcp server and CLI helper"
 ```
 
 ---
@@ -790,7 +790,7 @@ Teach the agent that drives the gateway how to target a profile: discover connec
 
 **Files:**
 
-- Modify: `mcp-web-extension/skills/webmcp-browser-automation/SKILL.md` (the "First Choice Transport" section — add a "Targeting a profile" subsection after the _Request shape_ block; and the "Mandatory Run Loop" step 1)
+- Modify: `webmcp-browser-kit/skills/webmcp-browser-automation/SKILL.md` (the "First Choice Transport" section — add a "Targeting a profile" subsection after the _Request shape_ block; and the "Mandatory Run Loop" step 1)
 
 **Interfaces:**
 
@@ -799,7 +799,7 @@ Teach the agent that drives the gateway how to target a profile: discover connec
 
 - [ ] **Step 1: Add the "Targeting a profile" subsection**
 
-In `mcp-web-extension/skills/webmcp-browser-automation/SKILL.md`, find the _Request shape_ block in the "First Choice Transport" section:
+In `webmcp-browser-kit/skills/webmcp-browser-automation/SKILL.md`, find the _Request shape_ block in the "First Choice Transport" section:
 
 ````markdown
 Request shape:
@@ -889,14 +889,14 @@ Replace it with:
 
 - [ ] **Step 3: Verify the new content is present and consistent**
 
-Run: `grep -n "Targeting a profile\|profileCount\|\"profileId\"" mcp-web-extension/skills/webmcp-browser-automation/SKILL.md`
+Run: `grep -n "Targeting a profile\|profileCount\|\"profileId\"" webmcp-browser-kit/skills/webmcp-browser-automation/SKILL.md`
 Expected: matches for the new subsection heading, `profileCount` (in both the JSON example and the run-loop step), and the `profileId` JSON example — confirming both edits landed.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git -C mcp-web-extension add skills/webmcp-browser-automation/SKILL.md
-git -C mcp-web-extension commit -m "docs(skill): document profileId routing for multi-profile gateways"
+git -C webmcp-browser-kit add skills/webmcp-browser-automation/SKILL.md
+git -C webmcp-browser-kit commit -m "docs(skill): document profileId routing for multi-profile gateways"
 ```
 
 ---
@@ -906,13 +906,13 @@ git -C mcp-web-extension commit -m "docs(skill): document profileId routing for 
 Enrich each profile with human-readable metadata so agents can identify profiles by name or email instead of raw UUIDs. Add `getProfileInfo()` to the extension, expose `profileDetails` on `/health`, register `list_profiles` and `set_profile_name` as first-class MCP tools via the command catalog, and handle the `setProfileName` command in the extension.
 
 **Files:**
-- Modify: `mcp-web-extension/webmcp-extension/dist/manifest.json` — add `"identity"` and `"identity.email"` permissions
-- Modify: `mcp-web-extension/webmcp-extension/dist/bg/profile-id.js` — add `getProfileInfo()` export
-- Modify: `mcp-web-extension/webmcp-extension/dist/bg/ws-client.js` — import `getProfileInfo` instead of `getOrCreateProfileId`, send `profileEmail`/`profileName` in handshake, handle `setProfileName` command in `onmessage`
-- Modify: `mcp-web-extension/server/gateway_server.js` — add `connectedProfileDetails()` helper, expose `profileDetails` on `/health`, store `_profileEmail`/`_profileName` on WebSocket from handshake
-- Modify: `mcp-web-extension/catalog/command-catalog.js` — add `browser_raw_command`, `list_profiles`, `set_profile_name` definitions
-- Modify: `mcp-web-extension/server/mcp-tool-catalog.mjs` — remove hardcoded pushes (now auto-generated from catalog)
-- Modify: `mcp-web-extension/server/mcp_server.mjs` — handle `list_profiles` (query `/health` → return `profileDetails`), map `set_profile_name` → `setProfileName`, map `browser_raw_command` → extract inner `method`/`params`
+- Modify: `webmcp-browser-kit/webmcp-extension/dist/manifest.json` — add `"identity"` and `"identity.email"` permissions
+- Modify: `webmcp-browser-kit/webmcp-extension/dist/bg/profile-id.js` — add `getProfileInfo()` export
+- Modify: `webmcp-browser-kit/webmcp-extension/dist/bg/ws-client.js` — import `getProfileInfo` instead of `getOrCreateProfileId`, send `profileEmail`/`profileName` in handshake, handle `setProfileName` command in `onmessage`
+- Modify: `webmcp-browser-kit/server/gateway_server.js` — add `connectedProfileDetails()` helper, expose `profileDetails` on `/health`, store `_profileEmail`/`_profileName` on WebSocket from handshake
+- Modify: `webmcp-browser-kit/catalog/command-catalog.js` — add `browser_raw_command`, `list_profiles`, `set_profile_name` definitions
+- Modify: `webmcp-browser-kit/server/mcp-tool-catalog.mjs` — remove hardcoded pushes (now auto-generated from catalog)
+- Modify: `webmcp-browser-kit/server/mcp_server.mjs` — handle `list_profiles` (query `/health` → return `profileDetails`), map `set_profile_name` → `setProfileName`, map `browser_raw_command` → extract inner `method`/`params`
 
 **Interfaces:**
 - `getProfileInfo(storage?) -> Promise<{ id, email, name }>` — uses `chrome.identity.getProfileUserInfo()` (requires `identity` + `identity.email` permissions) for email, reads `webmcp_profile_name` from `chrome.storage.local` for custom display name.

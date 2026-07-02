@@ -13,7 +13,7 @@ test('webmcp workflow delegates to the workflow dispatcher CLI', () => {
     BIN,
     'workflow',
     'dry-run',
-    'workflow-dispatcher/tests/fixtures/minimal-workflow.json',
+    'webmcp-workflow-cli/tests/fixtures/minimal-workflow.json',
     '--json',
     '--no-history',
   ], {
@@ -45,7 +45,7 @@ test('webmcp workflow reports a clear install hint when dispatcher is unavailabl
     encoding: 'utf8',
     env: {
       ...process.env,
-      WEBMCP_WORKFLOW_DISPATCHER_BIN: './missing-workflow-dispatcher.js',
+      WEBMCP_WORKFLOW_DISPATCHER_BIN: './missing-webmcp-workflow-cli.js',
     },
   });
 

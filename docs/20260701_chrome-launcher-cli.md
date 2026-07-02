@@ -22,9 +22,9 @@
 
 ```mermaid
 graph TD
-    A["webmcp-automation-kit (monorepo)"] --> B["mcp-web-extension/"]
+    A["webmcp-automation-kit (monorepo)"] --> B["webmcp-browser-kit/"]
     A --> C["webmcp-desktop/ (Electron)"]
-    A --> D["workflow-dispatcher/"]
+    A --> D["webmcp-workflow-cli/"]
     
     B --> E["webmcp-extension/dist/ — Chrome extension MV3"]
     B --> F["server/ — gateway server"]
@@ -54,7 +54,7 @@ graph TD
 - CLI entry: **`bin/webmcp.mjs`** (ESM) với các subcommand `mcp`, `gateway start|health`, `health`, `call`, `workflow`, `extension-path`. Package **không có** `"type": "module"` → file `.js` mặc định là CJS; CLI đã dùng sẵn `createRequire`.
 - `package.json#files` là whitelist — **mọi thư mục mới (chrome-launcher/, skill mới) phải được thêm vào đây** thì mới ship khi `npm publish`.
 - `scripts/install-agent.mjs` hardcode `SKILL_NAME = 'webmcp-browser-automation'` — chỉ cài đúng 1 skill vào `~/.claude/skills`, `~/.codex/skills`, v.v.
-- Extension dist hardcode `WS_URL = 'ws://localhost:7865'` ([ws-client.js L4](file:///Users/ttcenter/Desktop/VIBE_CODE/webmcp-automation-kit/mcp-web-extension/webmcp-extension/dist/bg/ws-client.js)). Gateway default port 7865. → **CLI phải chạy gateway trên port mặc định 7865**, không dùng random port như desktop app.
+- Extension dist hardcode `WS_URL = 'ws://localhost:7865'` ([ws-client.js L4](file:///Users/ttcenter/Desktop/VIBE_CODE/webmcp-automation-kit/webmcp-browser-kit/webmcp-extension/dist/bg/ws-client.js)). Gateway default port 7865. → **CLI phải chạy gateway trên port mặc định 7865**, không dùng random port như desktop app.
 - Gateway đã hỗ trợ **multi-profile**: mỗi extension connection có `profileId`; `/health` trả về danh sách `profiles`. Launch flow nên tận dụng để báo cho AI biết profileId nào vừa online.
 - `webmcp-desktop` đã depend `@gyga-browser/webmcp-browser-automation-kit@^1.0.22` → bước "desktop import từ package" khả thi ngay.
 
@@ -229,7 +229,7 @@ sequenceDiagram
 
 ## Thay đổi cần thực hiện
 
-### 1. Thêm module `chrome-launcher/` vào `mcp-web-extension/` (CJS)
+### 1. Thêm module `chrome-launcher/` vào `webmcp-browser-kit/` (CJS)
 
 - **[NEW] `chrome-launcher/config.js`** — `WEBMCP_DATA_DIR || ~/.webmcp/`; export `managedProfilesDir`, `sessionsFile`, `ensureDirs()`. Không đụng Electron.
 - **[NEW] `chrome-launcher/sessions.js`** — thay `managedSessions` Map in-memory: load/save `sessions.json` (`userDataDir → { pid, startedAt }` + gateway pid), validate PID bằng `process.kill(pid, 0)`, tự dọn entry chết.

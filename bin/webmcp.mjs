@@ -14,7 +14,7 @@ const PACKAGE_VERSION = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), '
 const requireFromCli = createRequire(import.meta.url);
 const WORKFLOW_DISPATCHER_PACKAGES = [
   '@gyga-browser/webmcp-workflow',
-  'workflow-dispatcher',
+  'webmcp-workflow-cli',
 ];
 
 function printHelp() {
@@ -372,18 +372,18 @@ function getWorkflowDispatcherBin() {
     if (existsSync(overridePath)) return overridePath;
 
     try {
-      return requireFromCli.resolve(`${override}/bin/workflow-dispatcher.js`);
+      return requireFromCli.resolve(`${override}/bin/webmcp-workflow-cli.js`);
     } catch {
       return overridePath;
     }
   }
 
-  const siblingBin = resolve(ROOT, '..', 'workflow-dispatcher', 'bin', 'workflow-dispatcher.js');
+  const siblingBin = resolve(ROOT, '..', 'webmcp-workflow-cli', 'bin', 'webmcp-workflow-cli.js');
   if (existsSync(siblingBin)) return siblingBin;
 
   for (const packageName of WORKFLOW_DISPATCHER_PACKAGES) {
     try {
-      return requireFromCli.resolve(`${packageName}/bin/workflow-dispatcher.js`);
+      return requireFromCli.resolve(`${packageName}/bin/webmcp-workflow-cli.js`);
     } catch {
       // Try the next known package name.
     }

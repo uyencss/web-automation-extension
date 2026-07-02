@@ -6,7 +6,7 @@ const path = require('path');
 
 function getDataDir() {
   // WEBMCP_HOME is the shared kit data dir (used by both this extension and the
-  // workflow-dispatcher CLI). WEBMCP_DATA_DIR is kept as a back-compat alias.
+  // webmcp-workflow-cli CLI). WEBMCP_DATA_DIR is kept as a back-compat alias.
   return process.env.WEBMCP_HOME
     || process.env.WEBMCP_DATA_DIR
     || path.join(os.homedir(), '.webmcp');

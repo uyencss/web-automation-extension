@@ -350,9 +350,9 @@ Inside this monorepo checkout, workflow runner commands are available through
 the same `webmcp` CLI:
 
 ```bash
-node bin/webmcp.mjs workflow validate ../workflow-dispatcher/tests/fixtures/minimal-workflow.json
-node bin/webmcp.mjs workflow dry-run ../workflow-dispatcher/tests/fixtures/example-title-workflow.json --json
-node bin/webmcp.mjs workflow run minimal --config ../workflow-dispatcher/tests/fixtures/dispatcher.config.json --profile personal
+node bin/webmcp.mjs workflow validate ../webmcp-workflow-cli/tests/fixtures/minimal-workflow.json
+node bin/webmcp.mjs workflow dry-run ../webmcp-workflow-cli/tests/fixtures/example-title-workflow.json --json
+node bin/webmcp.mjs workflow run minimal --config ../webmcp-workflow-cli/tests/fixtures/dispatcher.config.json --profile personal
 ```
 
 This package does not install the workflow runner. For published npm workflow
@@ -372,7 +372,7 @@ webmcp gateway start
 webmcp gateway health --json
 webmcp call ping
 webmcp workflow doctor
-webmcp workflow run minimal --config ../workflow-dispatcher/tests/fixtures/dispatcher.config.json --profile personal
+webmcp workflow run minimal --config ../webmcp-workflow-cli/tests/fixtures/dispatcher.config.json --profile personal
 webmcp extension-path
 ```
 
