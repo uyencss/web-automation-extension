@@ -85,6 +85,14 @@ selectByRef             { ref, values, frameId?, tabId? }
 ## Page Stability
 waitForStable           { minStableMs?, maxWaitMs?, maxMutations?, tabId? }
 
+## Orchestration
+batch                   { actions:[{ method, params }], onError?, screenshotAfter?, tabId?, actionTimeoutMs? }
+# Runs several commands in ONE round-trip. Each action is { method, params }.
+# tabId threads across actions (carry-over from each result + batch-level default).
+# onError: "continue" (default) | "stop-on-error" (halts, returns partial).
+# delay/wait are inline pseudo-actions (capped 10s). Sub-results are NOT auto-unwrapped.
+# Returns { total, executed, success, errors, results:[{ index, method, ok, result?, error?, duration, screenshot? }] }.
+
 ## Console Observability
 startConsoleCapture     { tabId? }
 readConsoleMessages     { level?, pattern?, limit?, since?, clear?, tabId? }
@@ -153,6 +161,9 @@ Need robust real input (anti-bot)?
 
 Need to wait for page to settle?
   -> waitForStable (auto-applied after click/type/clickByRef/typeByRef)
+
+Know the next few steps already (predictable sequence)?
+  -> batch({ actions:[{ method, params }, ...] })   # one round-trip, no per-step LLM turn
 
 Need DOM extraction?
   -> webmcp.invokeTool(query_selector_all)

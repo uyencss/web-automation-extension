@@ -227,6 +227,39 @@ const ariaSearchWorkflow = [
   command('getAriaSnapshot', { maxDepth: 6 }),
 ];
 
+// ============================================================
+// Batch — collapse a predictable sequence into ONE round-trip
+//
+// Use when the next few steps are known ahead of time (not a
+// decision that depends on the previous result). Each action is
+// the same { method, params } shape as a standalone command.
+// batch threads tabId across actions and returns a per-action
+// { index, method, ok, result?, error?, duration } array.
+// ============================================================
+
+// Task: "Search a page in one call: snapshot -> type -> submit -> wait -> read"
+const batchSearchWorkflow = command('batch', {
+  onError: 'stop-on-error',
+  actions: [
+    { method: 'getAriaSnapshot', params: { maxNodes: 60 } },
+    // AI fills refs from the snapshot above, then:
+    { method: 'typeByRef', params: { ref: 'r32', text: 'WebMCP specification' } },
+    { method: 'clickByRef', params: { ref: 'r37' } },
+    { method: 'delay', params: { ms: 3000 } }, // inline pseudo-action (capped 10s)
+    { method: 'getPageText', params: { maxLength: 1200 } },
+  ],
+});
+
+// Task: "Open a page and read it deterministically" — tabId carries over from newTab
+const batchOpenAndReadWorkflow = command('batch', {
+  actions: [
+    { method: 'newTab', params: { url: 'https://example.com' } },
+    { method: 'waitForStable', params: {} },
+    { method: 'getPageText', params: { maxLength: 800 } }, // no tabId: inherits the new tab
+    { method: 'screenshot', params: {} },
+  ],
+});
+
 module.exports = {
   command,
   pageTool,
@@ -241,4 +274,6 @@ module.exports = {
   ariaLoginWorkflow,
   ariaFormWorkflow,
   ariaSearchWorkflow,
+  batchSearchWorkflow,
+  batchOpenAndReadWorkflow,
 };

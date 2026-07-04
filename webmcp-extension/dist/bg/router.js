@@ -1,5 +1,6 @@
 import { sendResult, sendError, sendNotification } from './ws-client.js';
 import { commandHandlers } from './handlers/index.js';
+import { runBatch } from './handlers/batch.js';
 
 export async function handleIncomingMessage(msg) {
   // It's a response to something we sent (not used currently)
@@ -14,6 +15,19 @@ export async function handleIncomingMessage(msg) {
       return;
     }
     console.log('[WS] Notification:', msg.method, msg.params);
+    return;
+  }
+
+  // Orchestration primitive: run several commands in-process, one round-trip.
+  // Handled before the generic dispatch so it never needs to live in
+  // commandHandlers (avoids circular import + nested-batch recursion).
+  if (msg.method === 'batch') {
+    try {
+      const result = await runBatch(msg.params || {}, commandHandlers);
+      sendResult(msg.id, result);
+    } catch (err) {
+      sendError(msg.id, -1, err.message || String(err));
+    }
     return;
   }
 

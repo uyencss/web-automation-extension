@@ -221,7 +221,11 @@ const server = http.createServer((req, res) => {
         params: params || {}
       };
 
-      // Set up a timeout for this request
+      // Set up a timeout for this request. Batch runs several commands
+      // sequentially → longer, proportional timeout (hard-capped at 300s).
+      const actionCount =
+        method === 'batch' && Array.isArray(params?.actions) ? params.actions.length : 1;
+      const effectiveTimeout = Math.min(COMMAND_TIMEOUT_MS * actionCount, 300_000);
       const timeoutTimer = setTimeout(() => {
         const pending = pendingHttpRequests.get(rpcId);
         if (pending) {
@@ -229,10 +233,10 @@ const server = http.createServer((req, res) => {
           writeJson(
             pending.res,
             504,
-            { error: `Command '${method}' timed out after ${COMMAND_TIMEOUT_MS}ms` }
+            { error: `Command '${method}' timed out after ${effectiveTimeout}ms` }
           );
         }
-      }, COMMAND_TIMEOUT_MS);
+      }, effectiveTimeout);
 
       // Store the pending HTTP response, tagged with the target connection so
       // we can fail it precisely if that connection drops.

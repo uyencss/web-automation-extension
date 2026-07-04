@@ -304,6 +304,8 @@ These are background commands registered in
 | `screenshot` | Capture PNG base64 | `{ fullPage?, tabId? }` |
 | `webmcp.listTools` | List `navigator.modelContext` tools | `{ tabId? }` |
 | `webmcp.invokeTool` | Invoke a page-registered tool | `{ toolName, input?, tabId? }` |
+| **Orchestration** | | |
+| `batch` | Run several commands sequentially in ONE round-trip | `{ actions:[{method,params}], onError?, screenshotAfter?, tabId?, actionTimeoutMs? }` |
 | `getAccessibilityTree` | Read accessible page structure | `{ interestingOnly?, depth?, tabId? }` |
 | `getDOMSnapshot` | Capture DOM/layout snapshot | `{ computedStyles?, tabId? }` |
 | `getElementBounds` | Get selector bounds | `{ selector, tabId? }` |
@@ -512,6 +514,44 @@ Use standard CSS selectors only. Playwright-only selectors such as
 3. `webmcp.invokeTool` -> `fill_form_field` for each field.
 4. `webmcp.invokeTool` -> `click_element` or `submit_form`.
 5. Wait for the expected success selector or navigation.
+
+### Batch several commands in one round-trip
+
+When you already know the next few steps (a predictable sequence, not a decision
+that depends on the previous result), collapse them into one `batch` call
+instead of N separate `/api` / tool calls. Each action is `{ method, params }` —
+the same shape as a standalone command.
+
+```json
+{
+  "method": "batch",
+  "params": {
+    "onError": "stop-on-error",
+    "actions": [
+      { "method": "getAriaSnapshot", "params": { "maxNodes": 60 } },
+      { "method": "typeByRef",   "params": { "ref": "r32", "text": "hello" } },
+      { "method": "clickByRef",  "params": { "ref": "r37" } },
+      { "method": "delay",       "params": { "ms": 4000 } },
+      { "method": "getPageText", "params": { "maxLength": 1200 } }
+    ]
+  }
+}
+```
+
+- `tabId` threads across actions: it carries over from each result (e.g. a
+  `navigate`/`newTab` sets the tab for later actions) and a batch-level `tabId`
+  is the default. Set `tabId` on an individual action to override.
+- `onError`: `"continue"` (default) runs every action; `"stop-on-error"` halts
+  on the first failure and returns partial results.
+- `delay`/`wait` are pseudo-actions handled inside the batch (capped at 10s).
+- `screenshotAfter: true` attaches a screenshot to every action — payload-heavy;
+  prefer inserting a `screenshot` action at a checkpoint instead.
+- Returns `{ total, executed, success, errors, results:[{ index, method, ok,
+  result?, error?, duration, screenshot? }] }`. Sub-results are **not**
+  auto-unwrapped — a `webmcp.invokeTool` inside a batch returns the raw
+  `{ tabId, result:{ content:[{ text }] } }`, so parse it yourself.
+- Not a replacement for `webmcp-workflow` JSON: batch is ad-hoc, live sequencing
+  for the exploration phase; workflows are deterministic, stored, and verifiable.
 
 ### Network capture
 

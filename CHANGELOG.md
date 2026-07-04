@@ -2,6 +2,32 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.26 - 2026-07-04
+
+### Added
+
+- **`batch` command** — run several gateway commands sequentially in ONE HTTP
+  round-trip, executed in-process by the extension (extension `v2.1.9`). Each
+  action is `{ method, params }` matching any gateway command. Fills the gap
+  between ad-hoc live control (N round-trips) and stored `webmcp-workflow` JSON;
+  it does not replace the workflow runner.
+  - Threads `tabId` across actions: carry-over from each result plus an optional
+    batch-level default; an action's own `tabId` overrides.
+  - `onError`: `continue` (default) runs all actions; `stop-on-error` halts on
+    the first failure and returns partial results.
+  - Inline `delay`/`wait` pseudo-action (capped at 10s), per-action timeout
+    (`actionTimeoutMs`, default 60s) to isolate a hung action, a 50-action cap,
+    and nested-batch rejection.
+  - Optional `screenshotAfter` attaches a screenshot to every action; actions
+    that return a screenshot surface it inline.
+  - Exposed on `/health` and as a first-class MCP tool (`batch`, present on the
+    default minimal surface) with a nested action schema. MCP results flatten
+    per-action outcomes and interleave screenshots.
+  - Gateway grants a proportional request timeout for batch
+    (`COMMAND_TIMEOUT_MS × actionCount`, hard-capped at 300s).
+  - Caveat: sub-results are not auto-unwrapped — parse a `webmcp.invokeTool`
+    result inside a batch yourself.
+
 ## 1.0.25 - 2026-07-02
 
 ### Added

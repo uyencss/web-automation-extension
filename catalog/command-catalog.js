@@ -1,6 +1,7 @@
 const COMMAND_GROUPS = [
   { id: 'tabs', label: 'Tab management' },
   { id: 'page', label: 'Page interaction' },
+  { id: 'orchestration', label: 'Multi-action orchestration' },
   { id: 'cdp', label: 'Chrome DevTools Protocol' },
   { id: 'webmcp', label: 'Page WebMCP tools' },
   { id: 'vision', label: 'AI observation' },
@@ -12,6 +13,20 @@ const COMMAND_GROUPS = [
 ];
 
 const COMMAND_DEFINITIONS = [
+  ['batch', {
+    group: 'orchestration',
+    description:
+      'Execute several gateway commands sequentially in ONE round-trip. Each ' +
+      'action is { method, params } matching any gateway command (navigate, ' +
+      'clickByRef, typeByRef, getPageText, screenshot, waitForStable, or the ' +
+      'delay/wait pseudo-action). Threads tabId across actions (carry-over from ' +
+      'each result; batch-level tabId as default). onError="stop-on-error" halts ' +
+      'on first failure (partial results returned); "continue" (default) runs all. ' +
+      'screenshotAfter=true captures a screenshot after every action. Returns ' +
+      '{ total, executed, success, errors, results:[{index,method,ok,result?,error?,duration,screenshot?}] }.',
+    requiredParams: ['actions'],
+    optionalParams: ['onError', 'screenshotAfter', 'tabId', 'actionTimeoutMs'],
+  }],
   ['listTabs', { group: 'tabs' }],
   ['navigate', { group: 'tabs', requiredParams: ['url'] }],
   ['newTab', { group: 'tabs', optionalParams: ['url'] }],

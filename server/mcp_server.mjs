@@ -131,6 +131,34 @@ async function callGateway(method, params, requestProfileId) {
 }
 
 function contentFromResult(result) {
+  // Batch result: flatten per-action outcomes, interleave any screenshots.
+  if (
+    result && typeof result === 'object' &&
+    Array.isArray(result.results) && typeof result.total === 'number'
+  ) {
+    const content = [{
+      type: 'text',
+      text: `Batch: ${result.success}/${result.total} ok, ${result.errors} error(s), ${result.executed} executed`,
+    }];
+    for (const item of result.results) {
+      const status = item.ok ? '✓' : `✗ ${item.error}`;
+      const body = item.ok && item.result
+        ? '\n' + JSON.stringify(item.result, null, 2) : '';
+      content.push({
+        type: 'text',
+        text: `[${item.index}] ${item.method} ${status} (${item.duration}ms)${body}`,
+      });
+      if (item.screenshot?.base64) {
+        content.push({
+          type: 'image',
+          data: item.screenshot.base64,
+          mimeType: `image/${item.screenshot.format || 'png'}`,
+        });
+      }
+    }
+    return content;
+  }
+
   if (result && typeof result === 'object' && typeof result.base64 === 'string') {
     return [
       {

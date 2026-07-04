@@ -155,6 +155,28 @@ inline native select options, and fall back to the native CDP Accessibility tree
 when needed. Use refs like `r1` or iframe refs like `f3r1` with `clickByRef`,
 `typeByRef`, `hoverByRef`, and `selectByRef`.
 
+Run a predictable sequence of commands in a single round-trip with `batch`:
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit call batch '{
+  "onError": "stop-on-error",
+  "actions": [
+    { "method": "typeByRef",   "params": { "ref": "r32", "text": "hello" } },
+    { "method": "clickByRef",  "params": { "ref": "r37" } },
+    { "method": "delay",       "params": { "ms": 4000 } },
+    { "method": "getPageText", "params": { "maxLength": 1200 } }
+  ]
+}'
+```
+
+Each action is `{ method, params }`. `batch` threads `tabId` across actions
+(carry-over from each result, plus an optional batch-level default), supports
+`onError` `continue`/`stop-on-error`, an inline `delay`/`wait` pseudo-action
+(≤10s), and optional `screenshotAfter`. It returns
+`{ total, executed, success, errors, results:[...] }` with a per-action `ok`,
+`duration`, and any `error`. It complements — does not replace — the deterministic
+`webmcp-workflow` JSON runner: reach for `batch` in the live exploration phase.
+
 ## MCP Server
 
 The MCP server lets MCP clients call the same browser commands without writing

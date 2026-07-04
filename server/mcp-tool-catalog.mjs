@@ -191,6 +191,49 @@ function buildTool(method, definition) {
   const optionalParams = definition.optionalParams || [];
   const group = definition.group || 'control';
 
+  // batch has a nested action schema that the generic builder can't express.
+  if (method === 'batch') {
+    return {
+      name: 'batch',
+      method: 'batch',
+      group,
+      description: definition.description,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          actions: {
+            type: 'array',
+            description: 'Ordered commands to run sequentially.',
+            items: {
+              type: 'object',
+              properties: {
+                method: {
+                  type: 'string',
+                  description:
+                    'Gateway command name (navigate, clickByRef, typeByRef, ' +
+                    'getPageText, screenshot, waitForStable, delay, ...).',
+                },
+                params: { type: 'object', additionalProperties: true },
+              },
+              required: ['method'],
+              additionalProperties: false,
+            },
+          },
+          onError: { type: 'string', enum: ['continue', 'stop-on-error'] },
+          screenshotAfter: { type: 'boolean' },
+          tabId: { type: 'number', description: 'Default tab for every action.' },
+          actionTimeoutMs: { type: 'number' },
+          profileId: {
+            type: 'string',
+            description: 'Route to this Chrome profile when several are connected.',
+          },
+        },
+        required: ['actions'],
+        additionalProperties: false,
+      },
+    };
+  }
+
   return {
     name: toolNameForMethod(method),
     method,
