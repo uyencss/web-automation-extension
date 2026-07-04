@@ -2,6 +2,24 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.28 - 2026-07-04
+
+### Added
+
+- **`activateTab` command** — bring an already-open Chrome tab to the
+  foreground by focusing its window and marking it active (extension
+  `v2.1.10`). Params `{ tabId }`; pick the `tabId` from `listTabs`. Fills the
+  gap for visibility/focus-sensitive pages (e.g. Cloudflare, Facebook) that
+  throttle background tabs and gate rendering on `document.visibilityState`.
+- `/health` `profileDetails` now report per-profile `extensionVersion` and
+  `capabilities`, so bundled and running extension versions are no longer
+  conflated across profiles.
+
+### Changed
+
+- `webmcp call` lifts `profileId` to a top-level `/api` field (also honoured via
+  the `WEBMCP_PROFILE_ID` env var), matching the multi-profile routing contract.
+
 ## 1.0.27 - 2026-07-04
 
 ### Fixed

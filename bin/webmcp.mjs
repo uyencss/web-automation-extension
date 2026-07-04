@@ -52,6 +52,7 @@ Environment:
   WEBMCP_GATEWAY_HOST=127.0.0.1   Gateway bind host (set 0.0.0.0 to expose on LAN)
   WEBMCP_GATEWAY_TOKEN            Shared secret; required on POST /api when set
   WEBMCP_GATEWAY_AUTOSTART=1  Enable MCP dev-mode gateway autostart
+  WEBMCP_PROFILE_ID           Route gateway calls to this connected Chrome profile
   WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
   WEBMCP_HOME                     Shared kit data dir (default: ~/.webmcp)
   WEBMCP_DATA_DIR                 Alias of WEBMCP_HOME (back-compat)
@@ -128,11 +129,15 @@ async function printHealth({ json = false } = {}) {
 }
 
 async function callGateway(method, rawParams) {
-  const params = parseJsonParams(rawParams);
+  const parsedParams = parseJsonParams(rawParams);
+  const { profileId: requestProfileId, ...params } = parsedParams;
+  const targetProfileId = requestProfileId || process.env.WEBMCP_PROFILE_ID || undefined;
+  const body = { method, params };
+  if (targetProfileId) body.profileId = targetProfileId;
   const { response, payload } = await fetchJson(getGatewayApiUrl(), {
     method: 'POST',
     headers: gatewayHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ method, params }),
+    body: JSON.stringify(body),
   });
 
   console.log(JSON.stringify(payload, null, 2));

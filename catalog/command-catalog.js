@@ -31,6 +31,7 @@ const COMMAND_DEFINITIONS = [
   ['navigate', { group: 'tabs', requiredParams: ['url'] }],
   ['newTab', { group: 'tabs', optionalParams: ['url'] }],
   ['closeTab', { group: 'tabs', optionalParams: ['tabId'] }],
+  ['activateTab', { group: 'tabs', description: 'Make an existing Chrome tab active and focus its window. Use with tabId from listTabs when multiple tabs are open.', requiredParams: ['tabId'] }],
   ['getActiveTab', { group: 'tabs' }],
   ['listFrames', { group: 'page', description: 'List the frame tree for a tab, returning CDP frame IDs, Chrome frame IDs when available, URLs, names, and parent relationships. Use this before targeting iframe commands.', optionalParams: ['flat', 'force'] }],
 

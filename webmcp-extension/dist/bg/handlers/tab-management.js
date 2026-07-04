@@ -70,6 +70,25 @@ export const tabHandlers = {
     return { closed: true, tabId };
   },
 
+  async activateTab(params) {
+    const tabId = await resolveTabId(params);
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.id) throw new Error(`No tab found for tabId=${tabId}`);
+
+    if (tab.windowId !== undefined) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
+    const updatedTab = await chrome.tabs.update(tabId, { active: true });
+
+    return {
+      tabId: updatedTab.id,
+      url: updatedTab.url,
+      title: updatedTab.title,
+      active: updatedTab.active,
+      windowId: updatedTab.windowId,
+    };
+  },
+
   async getActiveTab() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) throw new Error('No active tab');

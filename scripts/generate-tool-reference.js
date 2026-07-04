@@ -25,6 +25,7 @@ const COMMAND_PARAM_HINTS = {
   newTab: '{ url? }',
   navigate: '{ url, tabId? }',
   closeTab: '{ tabId? }',
+  activateTab: '{ tabId }',
   listFrames: '{ flat?, force?, tabId? }',
   waitForSelector: '{ selector, timeout?, frame?, tabId? }',
   getPageContent: '{ format?, maxLength?, offset?, frame?, tabId? }',

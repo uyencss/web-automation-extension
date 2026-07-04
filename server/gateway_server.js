@@ -103,6 +103,8 @@ function connectedProfileDetails() {
         profileId,
         email: ws._profileEmail || '',
         name: ws._profileName || '',
+        extensionVersion: ws._extensionVersion || '',
+        capabilities: Array.isArray(ws._capabilities) ? ws._capabilities : [],
       });
     }
   }
@@ -314,6 +316,8 @@ wss.on('connection', (ws, req) => {
         ws._profileId = profileId;
         ws._profileEmail = params.profileEmail || '';
         ws._profileName = params.profileName || '';
+        ws._extensionVersion = params.version || '';
+        ws._capabilities = Array.isArray(params.capabilities) ? params.capabilities : [];
         pendingConnections.delete(ws);
         // Replace any stale connection registered under the same profile.
         const existing = extensions.get(profileId);

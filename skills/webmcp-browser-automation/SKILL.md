@@ -177,7 +177,9 @@ For every browser automation task:
    the unpacked extension from `webmcp-extension/dist`. **If `profileCount`
    is greater than 1, pick a `profileId` from `health.profiles` and include
    it as a top-level field on every `/api` call** (see *Targeting a profile*).
-2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`.
+2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`. If you need an
+   already-open tab, call `listTabs`, pick the intended `tabId`, then call
+   `activateTab` before interacting.
 3. Wait for readiness: `navigate` waits for page load; otherwise use
    `waitForSelector`, `waitForStable`, or the page tool `wait_for_element`.
 4. Discover the page — match the tool to the goal (see *Reading vs

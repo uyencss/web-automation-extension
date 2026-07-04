@@ -21,7 +21,7 @@ function makeFakeExtension(profileId, label) {
     sock.send(JSON.stringify({
       jsonrpc: '2.0',
       method: 'extensionReady',
-      params: { name: 'fake', version: '0', profileId },
+      params: { name: 'fake', version: `2.1.${label}`, profileId, capabilities: ['ping', 'activateTab'] },
     }));
   });
   sock.on('message', (data) => {
@@ -91,6 +91,13 @@ async function run() {
     assert.ok(health.profiles.includes('profile-B'), 'health lists profile-B');
     assert.strictEqual(health.profileCount, 2, 'profileCount is 2');
     assert.strictEqual(health.extensionConnected, true, 'extensionConnected true');
+    assert.ok(
+      health.profileDetails.some((profile) =>
+        profile.profileId === 'profile-A' &&
+        profile.extensionVersion === '2.1.A' &&
+        profile.capabilities.includes('activateTab')),
+      'profileDetails includes per-profile extension version and capabilities',
+    );
 
     const toA = await callApi({ method: 'ping', params: {}, profileId: 'profile-A' });
     assert.strictEqual(toA.status, 200, 'routed-to-A status 200');

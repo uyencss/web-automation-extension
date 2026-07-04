@@ -4,12 +4,13 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (53)
+## Extension Commands (54)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
 | Command | Params | Handler |
 |---|---|---|
+| `activateTab` | `{ tabId }` | `tab-management.js` |
 | `clearConsoleMessages` | `{ tabId? }` | `console-capture.js` |
 | `click` | `{ selector, frame?, tabId? }` | `high-level.js` |
 | `clickByRef` | `{ ref, element?, frameId?, tabId? }` | `aria-snapshot.js` |
@@ -91,17 +92,17 @@ First-class MCP tool counts per preset. Every preset also always includes `brows
 
 | Preset | First-class tools | Hidden (via `browser_raw_command`) |
 |---|---|---|
-| `minimal` (default) | 29 | 28 |
-| `core` | 49 | 8 |
-| `full` | 57 | 0 |
+| `minimal` (default) | 30 | 28 |
+| `core` | 50 | 8 |
+| `full` | 58 | 0 |
 
 - `core` hides: `click`, `getAccessibilityTree`, `getDOMSnapshot`, `getInteractiveElements`, `getPageContent`, `hover`, `selectOption`, `type`
 - `minimal` hides (superset of `core`): `clearConsoleMessages`, `click`, `createWindow`, `deleteCookies`, `executeCDP`, `getAccessibilityTree`, `getCookies`, `getDOMSnapshot`, `getExtensionInfo`, `getInteractiveElements`, `getLocalStorage`, `getPageContent`, `hover`, `listFrames`, `listWindows`, `moveMouse`, `pageFetch`, `ping`, `readConsoleMessages`, `resetViewport`, `selectOption`, `setCookie`, `setLocalStorage`, `setViewport`, `startConsoleCapture`, `stopConsoleCapture`, `type`, `typeText`
 
 ## Capability Announcement Check
 
-- Announced capabilities: 53
-- Commands with handlers: 53
+- Announced capabilities: 54
+- Commands with handlers: 54
 - Announced without handler: none
 - Handler not announced: none
 

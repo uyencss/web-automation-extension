@@ -42,7 +42,7 @@ export function connectWebSocket() {
       profileName: profile.name,
       capabilities: [
         // Tab management
-        'listTabs', 'navigate', 'newTab', 'closeTab', 'getActiveTab',
+        'listTabs', 'navigate', 'newTab', 'closeTab', 'activateTab', 'getActiveTab',
         // Page interaction (JS-based)
         'listFrames',
         'evaluateJS', 'executeCDP', 'screenshot',
