@@ -142,8 +142,15 @@ function contentFromResult(result) {
     }];
     for (const item of result.results) {
       const status = item.ok ? '✓' : `✗ ${item.error}`;
+      // Strip any base64 from the text body — it is rendered as an image below;
+      // dumping it as text too would double the payload (mirrors the single
+      // screenshot path).
+      const textResult =
+        item.result && typeof item.result.base64 === 'string'
+          ? { ...item.result, base64: '[base64 image omitted from text]' }
+          : item.result;
       const body = item.ok && item.result
-        ? '\n' + JSON.stringify(item.result, null, 2) : '';
+        ? '\n' + JSON.stringify(textResult, null, 2) : '';
       content.push({
         type: 'text',
         text: `[${item.index}] ${item.method} ${status} (${item.duration}ms)${body}`,

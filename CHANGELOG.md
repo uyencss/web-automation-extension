@@ -2,6 +2,14 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.27 - 2026-07-04
+
+### Fixed
+
+- MCP `batch` results now omit screenshot base64 from the textual JSON body
+  while still rendering the image content separately, avoiding duplicated
+  payloads for screenshot-heavy batches.
+
 ## 1.0.26 - 2026-07-04
 
 ### Added
