@@ -58,7 +58,8 @@ harmless (ignored) on builds that dropped it.
   older stable/beta. Unknown builds are not blocked.
 
 Every successful launch result gains `chromeVersion`, `chromeMajor`,
-`chromeChannel`, `extensionPath`, and `extensionLoadable`. When
+`chromeChannel`, `extensionPath`, `extensionId`, `extensionStoreUrl`, and
+`extensionLoadable`. When
 `extensionLoadable` is `false`, the result also includes a `warning` and a
 step-by-step `guidance` string. The `webmcp launch` CLI prints the warning to
 stderr (JSON on stdout stays machine-clean).
@@ -67,12 +68,15 @@ This converts a silent failure into an actionable message.
 
 ## Remediation surfaced to the user
 
-1. **Load unpacked once (recommended, persists per profile).** Open
-   `chrome://extensions`, enable Developer mode, click **Load unpacked**, and
-   select the `webmcp-extension/dist` path (`webmcp extension-path`). Chrome
-   remembers it, so later `webmcp launch` runs attach with the extension already
-   present.
-2. **Use a compatible build.** Set `WEBMCP_CHROME_BINARY` to Chrome for Testing,
+1. **Install the published extension (recommended, persists per profile).**
+   Install WebMCP Tools Provider from the Chrome Web Store:
+   <https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae>.
+   Chrome remembers it, so later `webmcp launch` runs attach with the extension
+   already present.
+2. **Load unpacked for local development.** Open `chrome://extensions`, enable
+   Developer mode, click **Load unpacked**, and select the
+   `webmcp-extension/dist` path (`webmcp extension-path`).
+3. **Use a compatible build.** Set `WEBMCP_CHROME_BINARY` to Chrome for Testing,
    Chrome Canary/Dev, or Chromium, where `--load-extension` still works.
 
 ## Verification

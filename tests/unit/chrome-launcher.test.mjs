@@ -103,6 +103,14 @@ test('loadExtensionSupported reflects the Chrome M137 drop of --load-extension',
   assert.equal(launcher.loadExtensionSupported(null), true);
 });
 
+test('published extension metadata is exported for install guidance', () => {
+  assert.equal(launcher.WEBMCP_EXTENSION_ID, 'lbodkmkjbcemodklopcfdmpjomdoapae');
+  assert.equal(
+    launcher.WEBMCP_EXTENSION_STORE_URL,
+    'https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae',
+  );
+});
+
 test('launchChrome annotates the result with Chrome build + extension loadability', async () => {
   const root = tempRoot();
   const extensionPath = fakeExtensionDir(root);
@@ -118,6 +126,8 @@ test('launchChrome annotates the result with Chrome build + extension loadabilit
   });
 
   assert.equal(result.extensionPath, extensionPath);
+  assert.equal(result.extensionId, launcher.WEBMCP_EXTENSION_ID);
+  assert.equal(result.extensionStoreUrl, launcher.WEBMCP_EXTENSION_STORE_URL);
   assert.equal(typeof result.chromeChannel, 'string');
   assert.equal(typeof result.extensionLoadable, 'boolean');
   // process.execPath is not stable Chrome >= 137, so nothing is blocked here.

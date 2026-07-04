@@ -62,6 +62,8 @@ Successful result:
   "chromeMajor": 149,
   "chromeChannel": "stable",
   "extensionPath": "/path/to/webmcp-extension/dist",
+  "extensionId": "lbodkmkjbcemodklopcfdmpjomdoapae",
+  "extensionStoreUrl": "https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae",
   "extensionLoadable": false,
   "warning": "Chrome will open, but the WebMCP extension will not auto-load on this build.",
   "guidance": "Google Chrome 149... ignores the --load-extension command-line switch (removed in M137)..."
@@ -78,8 +80,9 @@ Builds where `--load-extension` still works (`extensionLoadable: true`): **Chrom
 
 Remediation on an affected build:
 
-1. Load the `dist` folder once via `chrome://extensions` → Developer mode → **Load unpacked**. It persists for that profile.
-2. Or set `WEBMCP_CHROME_BINARY` to a compatible build.
+1. Install WebMCP Tools Provider from the Chrome Web Store: <https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae>. It persists for that profile.
+2. For local development, load the `dist` folder once via `chrome://extensions` → Developer mode → **Load unpacked**.
+3. Or set `WEBMCP_CHROME_BINARY` to a compatible build.
 
 Existing locked profile result:
 

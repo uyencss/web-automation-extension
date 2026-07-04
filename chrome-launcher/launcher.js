@@ -13,6 +13,9 @@ const {
   rememberManagedSession,
 } = require('./sessions');
 
+const WEBMCP_EXTENSION_ID = 'lbodkmkjbcemodklopcfdmpjomdoapae';
+const WEBMCP_EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/webmcp-tools-provider/${WEBMCP_EXTENSION_ID}`;
+
 function defaultExtensionPath() {
   return path.resolve(__dirname, '..', 'webmcp-extension', 'dist');
 }
@@ -157,11 +160,12 @@ function loadExtensionGuidance({ extensionPath, info }) {
   return [
     `${label} ignores the --load-extension command-line switch (removed from stable Chrome in M137), ` +
       'so the WebMCP extension will not auto-load.',
-    'Load it one of these two ways:',
-    `  1. Once, manually: open chrome://extensions, turn on Developer mode, click "Load unpacked", ` +
+    'Install or load it one of these ways:',
+    `  1. Recommended: install WebMCP Tools Provider from the Chrome Web Store: ${WEBMCP_EXTENSION_STORE_URL}`,
+    `  2. Development fallback: open chrome://extensions, turn on Developer mode, click "Load unpacked", ` +
       `and select ${extensionPath}. Chrome then remembers it for that profile, so later ` +
       'launches attach with the extension already present.',
-    '  2. Point WEBMCP_CHROME_BINARY at Chrome for Testing, Chrome Canary/Dev, or Chromium, ' +
+    '  3. Point WEBMCP_CHROME_BINARY at Chrome for Testing, Chrome Canary/Dev, or Chromium, ' +
       'where --load-extension still works.',
   ].join('\n');
 }
@@ -248,6 +252,8 @@ async function launchChrome(options = {}) {
       chromeChannel: chromeInfo.channel,
       extensionPath,
       extensionLoadable,
+      extensionId: WEBMCP_EXTENSION_ID,
+      extensionStoreUrl: WEBMCP_EXTENSION_STORE_URL,
     };
     if (!extensionLoadable) {
       extras.warning = 'Chrome will open, but the WebMCP extension will not auto-load on this build.';
@@ -312,6 +318,8 @@ async function launchChrome(options = {}) {
 }
 
 module.exports = {
+  WEBMCP_EXTENSION_ID,
+  WEBMCP_EXTENSION_STORE_URL,
   defaultExtensionPath,
   chromeCandidates,
   findChromeBinary,

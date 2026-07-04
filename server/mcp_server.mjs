@@ -242,7 +242,7 @@ await server.connect(transport);
 if (!health) {
   console.error(`[mcp] webmcp ready, but gateway is NOT reachable at ${gatewayUrl}. Run "webmcp gateway start" or "npm run gateway".`);
 } else if (!health.extensionConnected) {
-  console.error(`[mcp] webmcp ready, gateway=${gatewayUrl}, but the Chrome extension is not connected. Load/reload the unpacked extension from webmcp-extension/dist.`);
+  console.error(`[mcp] webmcp ready, gateway=${gatewayUrl}, but the Chrome extension is not connected. Install WebMCP Tools Provider from https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae, or load/reload the unpacked extension from webmcp-extension/dist for local development.`);
 } else {
   console.error(`[mcp] webmcp ready, gateway=${gatewayUrl}, extension connected.`);
 }

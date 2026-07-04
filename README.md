@@ -5,8 +5,11 @@ extension.
 
 The kit has three layers:
 
-1. Runtime extension: `webmcp-extension/dist`
-   - Chrome unpacked extension.
+1. Runtime extension: WebMCP Tools Provider
+   - Published Chrome extension:
+     <https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae>
+   - Local development fallback: `webmcp-extension/dist` as an unpacked
+     extension.
    - Injects `register-tools.js` into pages.
    - Exposes background commands for tabs, CDP input, screenshots, cookies,
      storage, viewport control, console capture, fast ARIA snapshots, and
@@ -46,7 +49,11 @@ The kit has three layers:
 For normal use, you do not need to clone this repository. Run the published npm
 package with `npx` and configure your MCP client to start the same package.
 
-Launch a managed Chrome profile with the bundled extension and gateway:
+Install the published Chrome extension:
+
+<https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae>
+
+Then launch a managed Chrome profile with the gateway:
 
 ```bash
 npx -y @gyga-browser/webmcp-browser-automation-kit launch --name agent-session --gateway --json
@@ -59,9 +66,10 @@ connects, `profileId`. Use that `profileId` for multi-profile gateway calls.
 > `--load-extension` command-line switch in **M137**, so on those builds Chrome
 > opens but the extension is not injected. `webmcp launch` detects this and
 > returns `"extensionLoadable": false` with a `warning`/`guidance` message
-> instead of failing silently. When you see it, either load the extension once
-> via `chrome://extensions` (Developer mode → **Load unpacked** → the path from
-> `extension-path`), which persists for that profile, or point
+> instead of failing silently. When you see it, install WebMCP Tools Provider
+> from the Chrome Web Store for that profile. For local development you can
+> still load the unpacked extension once via `chrome://extensions` (Developer
+> mode → **Load unpacked** → the path from `extension-path`), or point
 > `WEBMCP_CHROME_BINARY` at Chrome for Testing, Chrome Canary/Dev, or Chromium,
 > where `--load-extension` still works.
 
@@ -79,13 +87,19 @@ with `--relaunch`.
 npx -y @gyga-browser/webmcp-browser-automation-kit launch --profile-id "Chrome:Default" --gateway --json
 ```
 
-Manual fallback: print the unpacked extension path:
+Print published and local extension metadata:
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit extension-info --json
+```
+
+Local development fallback: print the unpacked extension path:
 
 ```bash
 npx -y @gyga-browser/webmcp-browser-automation-kit extension-path
 ```
 
-Load the extension in Chrome:
+Load the unpacked extension in Chrome:
 
 1. Open `chrome://extensions`.
 2. Enable Developer mode.
@@ -232,7 +246,15 @@ cd /path/to/web-automation-extension
 npm run setup
 ```
 
-Load or reload the unpacked extension from:
+For normal testing, install the published WebMCP Tools Provider extension in the
+Chrome profile you use:
+
+```text
+https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae
+```
+
+If you are changing extension code, load or reload the unpacked development
+extension from:
 
 ```text
 /path/to/web-automation-extension/webmcp-extension/dist
@@ -343,6 +365,7 @@ npx -y @gyga-browser/webmcp-browser-automation-kit mcp
 npx -y @gyga-browser/webmcp-browser-automation-kit gateway start
 npx -y @gyga-browser/webmcp-browser-automation-kit gateway health --json
 npx -y @gyga-browser/webmcp-browser-automation-kit call ping
+npx -y @gyga-browser/webmcp-browser-automation-kit extension-info --json
 npx -y @gyga-browser/webmcp-browser-automation-kit extension-path
 ```
 
@@ -373,6 +396,7 @@ webmcp gateway health --json
 webmcp call ping
 webmcp workflow doctor
 webmcp workflow run minimal --config ../webmcp-workflow-cli/tests/fixtures/dispatcher.config.json --profile personal
+webmcp extension-info --json
 webmcp extension-path
 ```
 
@@ -393,8 +417,9 @@ webmcp -h
 ## Agent Usage Contract
 
 - Call `ping` first. If it fails, start
-  `npx -y @gyga-browser/webmcp-browser-automation-kit gateway start` and reload
-  the unpacked extension. In a local checkout, `npm run gateway` is equivalent.
+  `npx -y @gyga-browser/webmcp-browser-automation-kit gateway start` and make
+  sure WebMCP Tools Provider is installed from the Chrome Web Store in the
+  active profile. In a local checkout, `npm run gateway` is equivalent.
 - Use `getActiveTab`, `newTab`, or `navigate` to select the target tab.
 - Prefer `getAriaSnapshot` for page structure. It defaults to the fast
   content-script snapshot with compact persistent refs, viewport filtering,
@@ -440,7 +465,7 @@ webmcp -h
 | Symptom                                            | Fix                                                                                                           |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Gateway is not reachable from MCP                   | Start `npx -y @gyga-browser/webmcp-browser-automation-kit gateway start`, or `npm run gateway` inside a local checkout. For dev autostart set `WEBMCP_GATEWAY_AUTOSTART=1`. |
-| `Chrome extension is not connected to the gateway` | Gateway is up but no extension is attached: load/reload the unpacked extension. |
+| `Chrome extension is not connected to the gateway` | Gateway is up but no extension is attached: install WebMCP Tools Provider from the Chrome Web Store, or load/reload the unpacked extension for local development. |
 | `Method not found`                                 | You may be calling a page tool as a top-level command. Use `webmcp.invokeTool`.                               |
 | `navigator.modelContext not found`                 | Use a normal web page, wait for load, and reload the extension/page. Chrome internal pages are not supported. |
 | `Another debugger is already attached`             | Only one debugger client can attach to a tab. Use another tab or detach the conflicting extension.            |

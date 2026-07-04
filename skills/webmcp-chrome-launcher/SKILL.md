@@ -54,8 +54,9 @@ Stable and Beta Google Chrome removed the `--load-extension` command-line switch
 
 When you see `extensionLoadable: false` (or `/health` keeps reporting `extensionConnected: false` after a launch), do **not** keep retrying. Pick one fix:
 
-1. **Load unpacked once (persists per profile).** Print the path with `webmcp extension-path`, then in that Chrome open `chrome://extensions` → enable Developer mode → **Load unpacked** → select the printed `dist` folder. It stays installed for that profile, so later `webmcp launch` runs attach with the extension already present — no flag needed.
-2. **Use a build that still honors the switch.** Point `WEBMCP_CHROME_BINARY` at Chrome for Testing, Chrome Canary/Dev, or Chromium, then launch as usual.
+1. **Install the published extension (recommended).** Open the launched Chrome profile and install WebMCP Tools Provider from <https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae>. It persists for that profile, so later `webmcp launch` runs attach with the extension already present.
+2. **Load unpacked for local development.** Print the path with `webmcp extension-path`, then in that Chrome open `chrome://extensions` → enable Developer mode → **Load unpacked** → select the printed `dist` folder.
+3. **Use a build that still honors the switch.** Point `WEBMCP_CHROME_BINARY` at Chrome for Testing, Chrome Canary/Dev, or Chromium, then launch as usual.
 
 Chrome for Testing, Canary/Dev, and Chromium report `extensionLoadable: true` and load the extension normally.
 
@@ -81,6 +82,12 @@ Show the bundled extension path:
 
 ```bash
 webmcp extension-path
+```
+
+Show the published extension id, Chrome Web Store URL, and local development path:
+
+```bash
+webmcp extension-info --json
 ```
 
 Override locations:

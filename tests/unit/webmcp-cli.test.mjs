@@ -53,3 +53,19 @@ test('webmcp workflow reports a clear install hint when dispatcher is unavailabl
   assert.match(result.stderr, /Workflow dispatcher CLI not found/);
   assert.match(result.stderr, /Install @gyga-browser\/webmcp-workflow/);
 });
+
+test('webmcp extension-info prints published Chrome Web Store metadata', () => {
+  const result = spawnSync(process.execPath, [BIN, 'extension-info', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.id, 'lbodkmkjbcemodklopcfdmpjomdoapae');
+  assert.equal(
+    payload.chromeWebStoreUrl,
+    'https://chromewebstore.google.com/detail/webmcp-tools-provider/lbodkmkjbcemodklopcfdmpjomdoapae',
+  );
+  assert.match(payload.unpackedExtensionPath, /webmcp-extension\/dist$/);
+});

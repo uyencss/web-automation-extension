@@ -16,6 +16,10 @@ const WORKFLOW_DISPATCHER_PACKAGES = [
   '@gyga-browser/webmcp-workflow',
   'webmcp-workflow-cli',
 ];
+const STORE_PACKAGES = [
+  '@gyga-browser/webmcp-store',
+  'webmcp-workflow-store',
+];
 
 function printHelp() {
   console.log(`WebMCP Browser Automation
@@ -29,6 +33,8 @@ Usage:
   webmcp profiles list [--json]
   webmcp call <method> [jsonParams]
   webmcp workflow <command> [options]
+  webmcp store <command> [options]
+  webmcp extension-info [--json]
   webmcp extension-path
 
 MCP config example:
@@ -428,6 +434,65 @@ async function runWorkflow(args) {
   });
 }
 
+function getStoreBin() {
+  const override = process.env.WEBMCP_STORE_BIN;
+  if (override) {
+    const overridePath = resolve(process.cwd(), override);
+    if (existsSync(overridePath)) return overridePath;
+    try {
+      return requireFromCli.resolve(`${override}/bin/webmcp-store.mjs`);
+    } catch {
+      return overridePath;
+    }
+  }
+
+  const siblingBin = resolve(ROOT, '..', 'webmcp-workflow-store', 'bin', 'webmcp-store.mjs');
+  if (existsSync(siblingBin)) return siblingBin;
+
+  for (const packageName of STORE_PACKAGES) {
+    try {
+      return requireFromCli.resolve(`${packageName}/bin/webmcp-store.mjs`);
+    } catch {
+      // Try the next known package name.
+    }
+  }
+
+  return null;
+}
+
+async function runStore(args) {
+  const storeBin = getStoreBin();
+  if (!storeBin || !existsSync(storeBin)) {
+    console.error([
+      'WebMCP store CLI not found.',
+      'Install @gyga-browser/webmcp-store, run from the webmcp-automation-kit checkout, or set WEBMCP_STORE_BIN.',
+    ].join('\n'));
+    return 1;
+  }
+
+  const storeArgs = args.length > 0 ? args : ['--help'];
+  const child = spawn(process.execPath, [storeBin, ...storeArgs], {
+    cwd: process.cwd(),
+    env: { ...process.env, WEBMCP_STORE_COMMAND_NAME: 'webmcp store' },
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start store CLI: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`Store CLI exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 1);
+    });
+  });
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
 
@@ -465,6 +530,10 @@ async function main() {
     process.exit(await runWorkflow(args));
   }
 
+  if (command === 'store') {
+    process.exit(await runStore(args));
+  }
+
   if (command === 'health') {
     await printHealth({ json: args.includes('--json') });
     return;
@@ -477,6 +546,23 @@ async function main() {
       process.exit(1);
     }
     await callGateway(method, rawParams);
+    return;
+  }
+
+  if (command === 'extension-info') {
+    const { defaultExtensionPath, WEBMCP_EXTENSION_ID, WEBMCP_EXTENSION_STORE_URL } = getChromeLauncher();
+    const payload = {
+      id: WEBMCP_EXTENSION_ID,
+      name: 'WebMCP Tools Provider',
+      chromeWebStoreUrl: WEBMCP_EXTENSION_STORE_URL,
+      unpackedExtensionPath: defaultExtensionPath(),
+    };
+    if (args.includes('--json')) console.log(JSON.stringify(payload, null, 2));
+    else {
+      console.log(`WebMCP Tools Provider (${payload.id})`);
+      console.log(`Chrome Web Store: ${payload.chromeWebStoreUrl}`);
+      console.log(`Unpacked extension path: ${payload.unpackedExtensionPath}`);
+    }
     return;
   }
 
