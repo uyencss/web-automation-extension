@@ -36,6 +36,32 @@ Critical rule: a page tool name such as `query_selector_all` or
 `click_element` is not an extension JSON-RPC method. It must be passed as
 `params.toolName` to `webmcp.invokeTool`.
 
+## Extension Version Compatibility
+
+> This skill assumes **extension ≥ v2.1.10** (the latest bundled version).
+> The `/health` response includes `profileDetails[].extensionVersion` for each
+> connected profile — you already read this in *Mandatory Run Loop* step 1, so
+> version detection is zero-cost. If the reported version is older, some
+> commands are unavailable. Use the fallback listed below instead of calling a
+> version-gated command on an older extension.
+
+| Command | Min Version | Fallback when unavailable |
+|---|---|---|
+| `activateTab` | v2.1.10 | Use `navigate` to the tab's URL, or skip the focus step |
+| `batch` | v2.1.9 | Call each command sequentially as separate `/api` calls |
+| `getPageText` | v2.1.6 | `getPageContent` with `{ "format": "text" }` |
+| `readPage` | v2.1.6 | `navigate` → `waitForStable` → `getPageContent` |
+| `getAriaSnapshot` (fast path) | v2.1.3 | Always has automatic CDP fallback (`mode: "native"`) |
+| `selectByRef` | v2.1.3 | `selectOption` (CSS selector variant) |
+| `startConsoleCapture` / `readConsoleMessages` / `clearConsoleMessages` / `stopConsoleCapture` | v2.1.2 | `evaluateJS` with console monkey-patching (limited) |
+| `listFrames` | v2.1.1 | `evaluateJS` to enumerate `window.frames` |
+| `pageFetch` | v2.1.0 | `evaluateJS` → `await fetch(...)` |
+| All other commands | v2.0.0 | Always available |
+
+When `/health` reports an older extension, do **not** call the gated commands —
+use the fallback path silently. Do **not** ask the user to upgrade unless the
+fallback is insufficient for the task.
+
 ## First Choice Transport
 
 When no native WebMCP/browser tool is already available in the agent runtime,
@@ -177,6 +203,9 @@ For every browser automation task:
    the unpacked extension from `webmcp-extension/dist`. **If `profileCount`
    is greater than 1, pick a `profileId` from `health.profiles` and include
    it as a top-level field on every `/api` call** (see *Targeting a profile*).
+   Note the `extensionVersion` in `profileDetails[]` — if it is older than
+   v2.1.10, consult *Extension Version Compatibility* for per-command
+   availability and use the documented fallback for any gated command.
 2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`. If you need an
    already-open tab, call `listTabs`, pick the intended `tabId`, then call
    `activateTab` before interacting.
@@ -286,63 +315,64 @@ These are background commands registered in
 > `browser_raw_command` (`{ method, params }`). Set `WEBMCP_TOOLS=core` for the
 > broader lean set, or `WEBMCP_TOOLS=full` to expose every command as its own tool.
 
-| Command | Use for | Params |
-|---|---|---|
-| `ping` | Health check | `{}` |
-| `getExtensionInfo` | Extension version and debugger attachment info | `{}` |
-| `getActiveTab` | Resolve current target tab | `{}` |
-| `listTabs` | Find tabs by URL/title | `{}` |
-| `newTab` | Open a new active tab | `{ url? }` |
-| `navigate` | Navigate active or selected tab | `{ url, tabId? }` |
-| `closeTab` | Close a tab | `{ tabId? }` |
-| `waitForSelector` | Wait for a CSS selector in page JS | `{ selector, timeout?, tabId? }` |
-| `getPageContent` | Read raw title/text/html snapshot | `{ format?, maxLength?, offset?, tabId? }` |
-| `getPageText` | Smart readable article text (semantic container + cleanup) | `{ maxLength?, offset?, frame?, tabId? }` |
-| `readPage` | One-shot open+read: navigate, wait, return smart text | `{ url?, maxLength?, offset?, frame?, tabId? }` |
-| `click` | JS selector click | `{ selector, tabId? }` |
-| `type` | JS selector value set | `{ selector, text, tabId? }` |
-| `evaluateJS` | Execute page JavaScript | `{ code, tabId? }` |
-| `executeCDP` | Send raw CDP command | `{ method, params?, tabId? }` |
-| `screenshot` | Capture PNG base64 | `{ fullPage?, tabId? }` |
-| `webmcp.listTools` | List `navigator.modelContext` tools | `{ tabId? }` |
-| `webmcp.invokeTool` | Invoke a page-registered tool | `{ toolName, input?, tabId? }` |
-| **Orchestration** | | |
-| `batch` | Run several commands sequentially in ONE round-trip | `{ actions:[{method,params}], onError?, screenshotAfter?, tabId?, actionTimeoutMs? }` |
-| `getAccessibilityTree` | Read accessible page structure | `{ interestingOnly?, depth?, tabId? }` |
-| `getDOMSnapshot` | Capture DOM/layout snapshot | `{ computedStyles?, tabId? }` |
-| `getElementBounds` | Get selector bounds | `{ selector, tabId? }` |
-| `getInteractiveElements` | List clickable/focusable elements with centers | `{ tabId? }` |
-| **ARIA Snapshot** | | |
-| `getAriaSnapshot` | Capture fast viewport-first tree with compact ref IDs (e.g. `ref=r1`, iframe `ref=f3r1`; native fallback uses `ref=S1`) | `{ maxDepth?, mode?, scope?, maxNodes?, maxChars?, includeOptions?, maxOptions?, refFormat?, viewportMargin?, frameId?, tabId? }` |
-| `clickByRef` | Click element by ARIA ref — more robust than CSS selector | `{ ref, element?, frameId?, tabId? }` |
-| `typeByRef` | Type into element by ARIA ref, optionally submit | `{ ref, text, submit?, frameId?, tabId? }` |
-| `hoverByRef` | Hover over element by ARIA ref | `{ ref, frameId?, tabId? }` |
-| `selectByRef` | Select dropdown option(s) by ARIA ref | `{ ref, values, frameId?, tabId? }` |
-| **Page Stability** | | |
-| `waitForStable` | Wait for page DOM to settle (no mutations) | `{ minStableMs?, maxWaitMs?, maxMutations?, tabId? }` |
-| **Console Observability** | | |
-| `startConsoleCapture` | Start buffering console calls and uncaught exceptions | `{ tabId? }` |
-| `readConsoleMessages` | Read captured console output with filters | `{ level?, pattern?, limit?, since?, clear?, tabId? }` |
-| `clearConsoleMessages` | Clear the console buffer without stopping capture | `{ tabId? }` |
-| `stopConsoleCapture` | Stop console capture and release Runtime capture state | `{ tabId? }` |
-| **CDP Input** | | |
-| `dispatchClick` | Real CDP click at coordinates | `{ x, y, button?, clickCount?, tabId? }` |
-| `moveMouse` | Real CDP mouse move | `{ x, y, steps?, fromX?, fromY?, tabId? }` |
-| `pressKey` | Real CDP key press | `{ key, text?, modifiers?, tabId? }` |
-| `typeText` | Real CDP text insertion into focused element | `{ text, tabId? }` |
-| `scroll` | Real CDP mouse-wheel scroll | `{ deltaX?, deltaY?, x?, y?, tabId? }` |
-| `hover` | Real CDP hover by selector | `{ selector, tabId? }` |
-| `selectOption` | Select an HTML `<select>` option | `{ selector, value?, index?, text?, frame?, tabId? }` |
-| **Storage & Browser** | | |
-| `getCookies` | Read cookies for current page | `{ tabId? }` |
-| `setCookie` | Set a cookie | `{ name, value, domain?, path?, tabId? }` |
-| `deleteCookies` | Delete a cookie | `{ name, domain?, url?, tabId? }` |
-| `getLocalStorage` | Read localStorage | `{ tabId? }` |
-| `setLocalStorage` | Write localStorage | `{ key, value, tabId? }` |
-| `listWindows` | List browser windows | `{}` |
-| `createWindow` | Create browser window | `{ url?, width?, height?, type? }` |
-| `setViewport` | Override viewport | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` |
-| `resetViewport` | Clear viewport override | `{ tabId? }` |
+| Command | Since | Use for | Params |
+|---|---|---|---|
+| `ping` | | Health check | `{}` |
+| `getExtensionInfo` | | Extension version and debugger attachment info | `{}` |
+| `getActiveTab` | | Resolve current target tab | `{}` |
+| `listTabs` | | Find tabs by URL/title | `{}` |
+| `newTab` | | Open a new active tab | `{ url? }` |
+| `navigate` | | Navigate active or selected tab | `{ url, tabId? }` |
+| `closeTab` | | Close a tab | `{ tabId? }` |
+| `activateTab` | v2.1.10 | Bring a tab to the foreground (focus its window) | `{ tabId }` |
+| `waitForSelector` | | Wait for a CSS selector in page JS | `{ selector, timeout?, tabId? }` |
+| `getPageContent` | | Read raw title/text/html snapshot | `{ format?, maxLength?, offset?, tabId? }` |
+| `getPageText` | v2.1.6 | Smart readable article text (semantic container + cleanup) | `{ maxLength?, offset?, frame?, tabId? }` |
+| `readPage` | v2.1.6 | One-shot open+read: navigate, wait, return smart text | `{ url?, maxLength?, offset?, frame?, tabId? }` |
+| `click` | | JS selector click | `{ selector, tabId? }` |
+| `type` | | JS selector value set | `{ selector, text, tabId? }` |
+| `evaluateJS` | | Execute page JavaScript | `{ code, tabId? }` |
+| `executeCDP` | | Send raw CDP command | `{ method, params?, tabId? }` |
+| `screenshot` | | Capture PNG base64 | `{ fullPage?, tabId? }` |
+| `webmcp.listTools` | | List `navigator.modelContext` tools | `{ tabId? }` |
+| `webmcp.invokeTool` | | Invoke a page-registered tool | `{ toolName, input?, tabId? }` |
+| **Orchestration** | | | |
+| `batch` | v2.1.9 | Run several commands sequentially in ONE round-trip | `{ actions:[{method,params}], onError?, screenshotAfter?, tabId?, actionTimeoutMs? }` |
+| `getAccessibilityTree` | | Read accessible page structure | `{ interestingOnly?, depth?, tabId? }` |
+| `getDOMSnapshot` | | Capture DOM/layout snapshot | `{ computedStyles?, tabId? }` |
+| `getElementBounds` | | Get selector bounds | `{ selector, tabId? }` |
+| `getInteractiveElements` | | List clickable/focusable elements with centers | `{ tabId? }` |
+| **ARIA Snapshot** | | | |
+| `getAriaSnapshot` | v2.1.3 | Capture fast viewport-first tree with compact ref IDs (e.g. `ref=r1`, iframe `ref=f3r1`; native fallback uses `ref=S1`) | `{ maxDepth?, mode?, scope?, maxNodes?, maxChars?, includeOptions?, maxOptions?, refFormat?, viewportMargin?, frameId?, tabId? }` |
+| `clickByRef` | v2.1.3 | Click element by ARIA ref — more robust than CSS selector | `{ ref, element?, frameId?, tabId? }` |
+| `typeByRef` | v2.1.3 | Type into element by ARIA ref, optionally submit | `{ ref, text, submit?, frameId?, tabId? }` |
+| `hoverByRef` | v2.1.3 | Hover over element by ARIA ref | `{ ref, frameId?, tabId? }` |
+| `selectByRef` | v2.1.3 | Select dropdown option(s) by ARIA ref | `{ ref, values, frameId?, tabId? }` |
+| **Page Stability** | | | |
+| `waitForStable` | v2.1.3 | Wait for page DOM to settle (no mutations) | `{ minStableMs?, maxWaitMs?, maxMutations?, tabId? }` |
+| **Console Observability** | | | |
+| `startConsoleCapture` | v2.1.2 | Start buffering console calls and uncaught exceptions | `{ tabId? }` |
+| `readConsoleMessages` | v2.1.2 | Read captured console output with filters | `{ level?, pattern?, limit?, since?, clear?, tabId? }` |
+| `clearConsoleMessages` | v2.1.2 | Clear the console buffer without stopping capture | `{ tabId? }` |
+| `stopConsoleCapture` | v2.1.2 | Stop console capture and release Runtime capture state | `{ tabId? }` |
+| **CDP Input** | | | |
+| `dispatchClick` | | Real CDP click at coordinates | `{ x, y, button?, clickCount?, tabId? }` |
+| `moveMouse` | | Real CDP mouse move | `{ x, y, steps?, fromX?, fromY?, tabId? }` |
+| `pressKey` | | Real CDP key press | `{ key, text?, modifiers?, tabId? }` |
+| `typeText` | | Real CDP text insertion into focused element | `{ text, tabId? }` |
+| `scroll` | | Real CDP mouse-wheel scroll | `{ deltaX?, deltaY?, x?, y?, tabId? }` |
+| `hover` | | Real CDP hover by selector | `{ selector, tabId? }` |
+| `selectOption` | | Select an HTML `<select>` option | `{ selector, value?, index?, text?, frame?, tabId? }` |
+| **Storage & Browser** | | | |
+| `getCookies` | | Read cookies for current page | `{ tabId? }` |
+| `setCookie` | | Set a cookie | `{ name, value, domain?, path?, tabId? }` |
+| `deleteCookies` | | Delete a cookie | `{ name, domain?, url?, tabId? }` |
+| `getLocalStorage` | | Read localStorage | `{ tabId? }` |
+| `setLocalStorage` | | Write localStorage | `{ key, value, tabId? }` |
+| `listWindows` | | List browser windows | `{}` |
+| `createWindow` | | Create browser window | `{ url?, width?, height?, type? }` |
+| `setViewport` | | Override viewport | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` |
+| `resetViewport` | | Clear viewport override | `{ tabId? }` |
 
 ### ARIA Snapshot vs CSS Selectors
 

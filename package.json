@@ -7,7 +7,7 @@
     "type": "git",
     "url": "git+https://github.com/uyencss/web-automation-extension.git"
   },
-  "version": "1.0.28",
+  "version": "1.0.29",
   "description": "Reusable WebMCP Chrome extension, gateway, and agent skill kit for browser automation.",
   "license": "MIT",
   "author": "uyencss",

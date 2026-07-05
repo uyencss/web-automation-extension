@@ -2,6 +2,14 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.29 - 2026-07-05
+
+### Added
+
+- **Extension Version Compatibility guidance** — added a section to the browser automation `SKILL.md` detailing the version compatibility matrix, mapping commands (like `activateTab`, `batch`, `getPageText`, etc.) to their minimum extension version and detailing non-disruptive, offline fallbacks.
+- **Since column in command references** — annotated the background commands reference table with `Since` version tags (e.g. `v2.1.10`, `v2.1.9`, etc.) to provide context directly in the tool selection documentation.
+- **Zero-cost version checking** — added guidance to the Mandatory Run Loop check to inspect the existing `/health` profile details payload for `extensionVersion` rather than executing an extra remote call.
+
 ## 1.0.28 - 2026-07-04
 
 ### Added
