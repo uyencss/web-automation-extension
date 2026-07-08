@@ -126,6 +126,13 @@ npx -y @gyga-browser/webmcp-browser-automation-kit call newTab '{"url":"https://
 npx -y @gyga-browser/webmcp-browser-automation-kit call webmcp.listTools '{"tabId":123}'
 ```
 
+## Local Credential Vault
+
+Credential storage is a separate package,
+**[@gyga-browser/webmcp-vault-kit](../webmcp-vault-kit)**. This kit only exposes
+an optional `webmcp vault` CLI bridge to it (like `webmcp workflow`) — it does
+not bundle or depend on the vault package. See that package's README for setup.
+
 Capture page console output around an automation step:
 
 ```bash

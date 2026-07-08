@@ -69,3 +69,29 @@ test('webmcp extension-info prints published Chrome Web Store metadata', () => {
   );
   assert.match(payload.unpackedExtensionPath, /webmcp-extension\/dist$/);
 });
+
+test('webmcp vault delegates to the vault CLI', () => {
+  const result = spawnSync(process.execPath, [BIN, 'vault', '--help'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /webmcp-vault — local encrypted credential vault/);
+});
+
+test('webmcp vault reports a clear install hint when vault is unavailable', () => {
+  const result = spawnSync(process.execPath, [BIN, 'vault', '--help'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_VAULT_BIN: './missing-webmcp-vault.js',
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /WebMCP vault CLI not found/);
+  assert.match(result.stderr, /Install @gyga-browser\/webmcp-vault-kit/);
+});
+

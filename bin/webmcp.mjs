@@ -20,6 +20,9 @@ const STORE_PACKAGES = [
   '@gyga-browser/webmcp-store',
   'webmcp-workflow-store',
 ];
+const VAULT_PACKAGES = [
+  '@gyga-browser/webmcp-vault-kit',
+];
 
 function printHelp() {
   console.log(`WebMCP Browser Automation
@@ -32,6 +35,7 @@ Usage:
   webmcp launch [--name <name> | --profile-id <id>] [--gateway] [--relaunch] [--dry-run] [--json]
   webmcp profiles list [--json]
   webmcp call <method> [jsonParams]
+  webmcp vault <command> [options]
   webmcp workflow <command> [options]
   webmcp store <command> [options]
   webmcp extension-info [--json]
@@ -53,6 +57,8 @@ Environment:
   WEBMCP_GATEWAY_TOKEN            Shared secret; required on POST /api when set
   WEBMCP_GATEWAY_AUTOSTART=1  Enable MCP dev-mode gateway autostart
   WEBMCP_PROFILE_ID           Route gateway calls to this connected Chrome profile
+  WEBMCP_VAULT_KEY            Unlock local encrypted WebMCP vault commands
+  WEBMCP_VAULT_KEY_FILE       Read the local vault key from a file
   WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
   WEBMCP_HOME                     Shared kit data dir (default: ~/.webmcp)
   WEBMCP_DATA_DIR                 Alias of WEBMCP_HOME (back-compat)
@@ -192,6 +198,69 @@ function parseFlags(args) {
 
 function getChromeLauncher() {
   return requireFromCli(resolve(ROOT, 'chrome-launcher'));
+}
+
+// The vault CLI lives in the standalone @gyga-browser/webmcp-vault-kit package
+// so other apps (desktop app, workflow CLI) can reuse it. `webmcp vault ...`
+// forwards to that package's `webmcp-vault` bin, preferring a local sibling
+// checkout and falling back to the installed package.
+function getVaultBin() {
+  const override = process.env.WEBMCP_VAULT_BIN;
+  if (override) {
+    const overridePath = resolve(process.cwd(), override);
+    if (existsSync(overridePath)) return overridePath;
+    try {
+      return requireFromCli.resolve(`${override}/bin/webmcp-vault.mjs`);
+    } catch {
+      return overridePath;
+    }
+  }
+
+  const siblingBin = resolve(ROOT, '..', 'webmcp-vault-kit', 'bin', 'webmcp-vault.mjs');
+  if (existsSync(siblingBin)) return siblingBin;
+
+  for (const packageName of VAULT_PACKAGES) {
+    try {
+      return requireFromCli.resolve(`${packageName}/bin`);
+    } catch {
+      // Try the next known package name.
+    }
+  }
+
+  return null;
+}
+
+async function runVault(args) {
+  const vaultBin = getVaultBin();
+  if (!vaultBin || !existsSync(vaultBin)) {
+    console.error([
+      'WebMCP vault CLI not found.',
+      'Install @gyga-browser/webmcp-vault-kit, run from the webmcp-automation-kit checkout, or set WEBMCP_VAULT_BIN.',
+    ].join('\n'));
+    return 1;
+  }
+
+  const vaultArgs = args.length > 0 ? args : ['--help'];
+  const child = spawn(process.execPath, [vaultBin, ...vaultArgs], {
+    cwd: process.cwd(),
+    env: { ...process.env },
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start vault CLI: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`Vault CLI exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 1);
+    });
+  });
 }
 
 function profileIdsFromHealth(payload) {
@@ -552,6 +621,10 @@ async function main() {
     }
     await callGateway(method, rawParams);
     return;
+  }
+
+  if (command === 'vault') {
+    process.exit(await runVault(args));
   }
 
   if (command === 'extension-info') {
