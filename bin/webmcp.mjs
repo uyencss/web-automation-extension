@@ -34,6 +34,7 @@ Usage:
   webmcp health [--json]
   webmcp launch [--name <name> | --profile-id <id>] [--gateway] [--relaunch] [--dry-run] [--json]
   webmcp close [--profile-id <id>] [--all] [--json]
+  webmcp quit [--json]
   webmcp profiles list [--json]
   webmcp call <method> [jsonParams]
   webmcp vault <command> [options]
@@ -604,6 +605,44 @@ async function runClose(args) {
   }
 }
 
+async function runQuit(args) {
+  const { flags } = parseFlags(args);
+  const json = Boolean(flags.json);
+
+  const { quitChrome, closeChrome } = getChromeLauncher();
+  const gatewayUrl = process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL;
+  let closedViaGateway = 0;
+
+  // 1. Try graceful close via gateway first (so extension sessions end cleanly)
+  try {
+    const res = await closeChrome({ all: true, gatewayUrl });
+    closedViaGateway = res.closedCount || 0;
+  } catch {
+    // gateway not running — skip
+  }
+
+  // 2. Force-quit all remaining Chrome processes OS-wide
+  await quitChrome();
+
+  // 3. Brief wait for processes to terminate
+  await new Promise((r) => setTimeout(r, 1500));
+
+  const result = {
+    ok: true,
+    closedViaGateway,
+    message: 'All Chrome processes have been terminated.',
+  };
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    if (closedViaGateway > 0) {
+      console.log(`Gracefully closed ${closedViaGateway} connected session(s) via gateway.`);
+    }
+    console.log('All Chrome processes have been terminated.');
+  }
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
 
@@ -639,6 +678,11 @@ async function main() {
 
   if (command === 'close') {
     await runClose(args);
+    return;
+  }
+
+  if (command === 'quit') {
+    await runQuit(args);
     return;
   }
 

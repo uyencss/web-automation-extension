@@ -115,6 +115,17 @@ Close all connected Chrome profile instances:
 webmcp close --all
 ```
 
+## Force Quit All Chrome
+
+Terminate all Chrome processes on the machine, regardless of profile or gateway state. This first attempts a graceful close via the gateway, then force-quits any remaining Chrome processes at the OS level:
+
+```bash
+webmcp quit
+webmcp quit --json
+```
+
+Use this when you need a clean slate before launching a new session, or when Chrome is unresponsive.
+
 ## API Reference
 
 Read `references/api-reference.md` when modifying launcher code or using the Node API directly.
