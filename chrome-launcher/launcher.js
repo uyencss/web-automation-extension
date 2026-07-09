@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile, execFileSync, spawn } = require('child_process');
+const { isPidAlive } = require('./sessions');
 const {
   ensureDirs,
   MANAGED_PROFILES_DIR,
@@ -58,10 +59,56 @@ function findChromeBinary() {
   return chromeCandidates().find((candidate) => fs.existsSync(candidate)) || null;
 }
 
+const LOCK_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+
+/**
+ * Remove stale Chrome lock files from a user-data directory.
+ * Returns the list of files that were removed.
+ */
+function cleanStaleLocks(userDataDir) {
+  const removed = [];
+  for (const fileName of LOCK_FILES) {
+    const filePath = path.join(userDataDir, fileName);
+    try {
+      fs.unlinkSync(filePath);
+      removed.push(filePath);
+    } catch {
+      // file doesn't exist or not permitted — skip
+    }
+  }
+  return removed;
+}
+
+/**
+ * Check whether a Chrome profile directory is locked by a live process.
+ * If lock files exist but the owning PID is dead (stale locks), they are
+ * automatically cleaned up and the function returns false.
+ */
 function isProfileLocked(userDataDir) {
-  return ['SingletonLock', 'SingletonSocket', 'SingletonCookie'].some((fileName) =>
-    fs.existsSync(path.join(userDataDir, fileName)),
-  );
+  const lockPath = path.join(userDataDir, 'SingletonLock');
+  if (!fs.existsSync(lockPath)) {
+    return LOCK_FILES.some((f) => fs.existsSync(path.join(userDataDir, f)));
+  }
+
+  // On macOS/Linux, SingletonLock is a symlink whose target is "<hostname>-<pid>".
+  // On Windows it's a regular file. Try to extract the PID.
+  try {
+    const target = fs.readlinkSync(lockPath);        // e.g. "Hieu-MBP-17703"
+    const match = target.match(/-(\d+)$/);
+    if (match) {
+      const pid = parseInt(match[1], 10);
+      if (!isPidAlive(pid)) {
+        // PID is dead → stale lock. Clean up.
+        cleanStaleLocks(userDataDir);
+        return false;
+      }
+    }
+  } catch {
+    // readlinkSync fails if it's a regular file (Windows) or permission error.
+    // Fall through to simple existence check.
+  }
+
+  return true;
 }
 
 function slugify(name) {
@@ -172,8 +219,15 @@ function loadExtensionGuidance({ extensionPath, info }) {
   ].join('\n');
 }
 
-function quitChrome() {
-  return new Promise((resolve) => {
+/**
+ * Force-quit all Chrome processes on the machine.
+ * If options.cleanLocks is true (default), also removes stale lock files
+ * from all managed profile directories.
+ */
+async function quitChrome(options = {}) {
+  const { cleanLocks = true, managedProfilesDir = MANAGED_PROFILES_DIR } = options;
+
+  await new Promise((resolve) => {
     if (process.platform === 'darwin') {
       execFile('osascript', ['-e', 'tell application "Google Chrome" to quit'], () => resolve());
     } else if (process.platform === 'win32') {
@@ -182,6 +236,22 @@ function quitChrome() {
       execFile('pkill', ['-TERM', 'chrome'], () => resolve());
     }
   });
+
+  // Wait briefly for processes to fully terminate before cleaning locks
+  await new Promise((r) => setTimeout(r, 1000));
+
+  if (cleanLocks) {
+    try {
+      const dirs = fs.readdirSync(managedProfilesDir, { withFileTypes: true });
+      for (const entry of dirs) {
+        if (entry.isDirectory()) {
+          cleanStaleLocks(path.join(managedProfilesDir, entry.name));
+        }
+      }
+    } catch {
+      // managed-profiles dir may not exist yet
+    }
+  }
 }
 
 async function waitForUnlock(userDataDir, timeoutMs = 12000) {
@@ -413,6 +483,8 @@ async function closeChrome(options = {}) {
         } catch {
           // already dead or not permitted
         }
+        // Clean stale lock files left behind by the killed process
+        cleanStaleLocks(userDataDir);
       }
     }
     
@@ -433,6 +505,7 @@ module.exports = {
   chromeCandidates,
   findChromeBinary,
   isProfileLocked,
+  cleanStaleLocks,
   slugify,
   nextManagedProfileDir,
   createManagedProfile,

@@ -621,16 +621,13 @@ async function runQuit(args) {
     // gateway not running — skip
   }
 
-  // 2. Force-quit all remaining Chrome processes OS-wide
-  await quitChrome();
-
-  // 3. Brief wait for processes to terminate
-  await new Promise((r) => setTimeout(r, 1500));
+  // 2. Force-quit all remaining Chrome processes + clean stale lock files
+  await quitChrome({ cleanLocks: true });
 
   const result = {
     ok: true,
     closedViaGateway,
-    message: 'All Chrome processes have been terminated.',
+    message: 'All Chrome processes have been terminated and stale locks cleaned.',
   };
 
   if (json) {
@@ -639,7 +636,7 @@ async function runQuit(args) {
     if (closedViaGateway > 0) {
       console.log(`Gracefully closed ${closedViaGateway} connected session(s) via gateway.`);
     }
-    console.log('All Chrome processes have been terminated.');
+    console.log('All Chrome processes have been terminated and stale locks cleaned.');
   }
 }
 
