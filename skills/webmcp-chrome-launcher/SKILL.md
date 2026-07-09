@@ -98,6 +98,23 @@ WEBMCP_HOME=/tmp/webmcp webmcp launch --name test --gateway --json
 WEBMCP_CHROME_BINARY=/path/to/chrome webmcp launch --name test --dry-run --json
 ```
 
+## Closing Chrome Instances
+
+Close a specific Chrome profile instance (via its connected extension session or PID):
+
+```bash
+webmcp close --profile-id "Chrome:Default"
+# Or using email/name matching
+webmcp close hieu2906090@gmail.com
+webmcp close uyencss1
+```
+
+Close all connected Chrome profile instances:
+
+```bash
+webmcp close --all
+```
+
 ## API Reference
 
 Read `references/api-reference.md` when modifying launcher code or using the Node API directly.

@@ -11,6 +11,8 @@ const {
 const {
   hasLiveManagedSession,
   rememberManagedSession,
+  loadSessions,
+  saveSessions,
 } = require('./sessions');
 
 const WEBMCP_EXTENSION_ID = 'lbodkmkjbcemodklopcfdmpjomdoapae';
@@ -317,6 +319,113 @@ async function launchChrome(options = {}) {
   return annotate(result);
 }
 
+async function closeChrome(options = {}) {
+  const { profileId, all, gatewayUrl = 'http://localhost:7865', token = process.env.WEBMCP_GATEWAY_TOKEN } = options;
+  
+  // 1. Collect connected profiles from the gateway health endpoint if it is running
+  let connectedDetails = [];
+  let gatewayRunning = false;
+  try {
+    const res = await fetch(`${gatewayUrl}/health`, { signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      const data = await res.json();
+      connectedDetails = data.profileDetails || [];
+      gatewayRunning = true;
+    }
+  } catch {
+    // Gateway not running or timeout
+  }
+  
+  let closedCount = 0;
+  
+  // 2. Identify which profileIds to close
+  const targetsToClose = [];
+  if (all) {
+    for (const d of connectedDetails) {
+      targetsToClose.push(d.profileId);
+    }
+  } else if (profileId) {
+    // Find matching profileId by exact id, or by email, or by name
+    for (const d of connectedDetails) {
+      if (d.profileId.toLowerCase() === profileId.toLowerCase() ||
+          (d.email && d.email.toLowerCase() === profileId.toLowerCase()) ||
+          (d.name && d.name.toLowerCase() === profileId.toLowerCase())) {
+        targetsToClose.push(d.profileId);
+        break;
+      }
+    }
+  }
+  
+  // 3. Send closeBrowser to targets
+  for (const targetId of targetsToClose) {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${gatewayUrl}/api`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          method: 'closeBrowser',
+          params: {},
+          profileId: targetId
+        })
+      });
+      if (res.ok) {
+        closedCount++;
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+  
+  // 4. Force-kill any managed session processes we have recorded in sessions.json
+  try {
+    const sessionsFile = options.sessionsFile || SESSIONS_FILE;
+    const state = loadSessions(sessionsFile);
+    let changed = false;
+    
+    for (const [userDataDir, session] of Object.entries(state.managedSessions)) {
+      let shouldKill = false;
+      
+      if (all) {
+        shouldKill = true;
+      } else if (profileId) {
+        // Match managed session by userDataDir path, or name in .webmcp-meta.json
+        const baseName = path.basename(userDataDir);
+        let meta = {};
+        try {
+          meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
+        } catch {}
+        
+        if (profileId.toLowerCase() === `managed:${baseName}`.toLowerCase() ||
+            profileId.toLowerCase() === baseName.toLowerCase() ||
+            (meta.name && meta.name.toLowerCase() === profileId.toLowerCase())) {
+          shouldKill = true;
+        }
+      }
+      
+      if (shouldKill && session?.pid) {
+        try {
+          process.kill(session.pid, 'SIGKILL');
+          delete state.managedSessions[userDataDir];
+          changed = true;
+          closedCount++;
+        } catch {
+          // already dead or not permitted
+        }
+      }
+    }
+    
+    if (changed) {
+      saveSessions(state, sessionsFile);
+    }
+  } catch (err) {
+    // ignore
+  }
+  
+  return { ok: true, closedCount };
+}
+
 module.exports = {
   WEBMCP_EXTENSION_ID,
   WEBMCP_EXTENSION_STORE_URL,
@@ -335,4 +444,5 @@ module.exports = {
   quitChrome,
   waitForUnlock,
   launchChrome,
+  closeChrome,
 };

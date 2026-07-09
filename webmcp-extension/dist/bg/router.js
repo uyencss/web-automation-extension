@@ -18,6 +18,19 @@ export async function handleIncomingMessage(msg) {
     return;
   }
 
+  if (msg.method === 'closeBrowser') {
+    try {
+      const windows = await chrome.windows.getAll();
+      for (const win of windows) {
+        await chrome.windows.remove(win.id);
+      }
+      sendResult(msg.id, { success: true });
+    } catch (err) {
+      sendError(msg.id, -1, err.message || String(err));
+    }
+    return;
+  }
+
   // Orchestration primitive: run several commands in-process, one round-trip.
   // Handled before the generic dispatch so it never needs to live in
   // commandHandlers (avoids circular import + nested-batch recursion).

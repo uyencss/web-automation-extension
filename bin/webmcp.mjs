@@ -33,6 +33,7 @@ Usage:
   webmcp gateway health [--json]
   webmcp health [--json]
   webmcp launch [--name <name> | --profile-id <id>] [--gateway] [--relaunch] [--dry-run] [--json]
+  webmcp close [--profile-id <id>] [--all] [--json]
   webmcp profiles list [--json]
   webmcp call <method> [jsonParams]
   webmcp vault <command> [options]
@@ -567,6 +568,42 @@ async function runStore(args) {
   });
 }
 
+async function runClose(args) {
+  const { flags, positional } = parseFlags(args);
+  const json = Boolean(flags.json);
+  const all = Boolean(flags.all);
+  const profileId = flags['profile-id'] || positional[0];
+  
+  if (!all && !profileId) {
+    console.error('Usage:\n  webmcp close --profile-id <id> [--json]\n  webmcp close --all [--json]\n  webmcp close <profile-id-or-email-or-name>');
+    process.exit(1);
+  }
+  
+  const { closeChrome } = getChromeLauncher();
+  const gatewayUrl = process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL;
+  
+  try {
+    const res = await closeChrome({
+      profileId,
+      all,
+      gatewayUrl,
+    });
+    
+    if (json) {
+      console.log(JSON.stringify(res, null, 2));
+    } else {
+      console.log(`Successfully closed ${res.closedCount} Chrome instance(s).`);
+    }
+  } catch (err) {
+    if (json) {
+      console.log(JSON.stringify({ ok: false, error: err.message }, null, 2));
+    } else {
+      console.error(`Error closing Chrome:`, err.message);
+    }
+    process.exit(1);
+  }
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
 
@@ -597,6 +634,11 @@ async function main() {
 
   if (command === 'launch') {
     await runLaunch(args);
+    return;
+  }
+
+  if (command === 'close') {
+    await runClose(args);
     return;
   }
 
