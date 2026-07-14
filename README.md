@@ -28,6 +28,8 @@ The kit has three layers:
      `webmcp profiles list`, `webmcp health`, and `webmcp call`.
    - Exposes an optional `webmcp workflow` bridge when
      `@gyga-browser/webmcp-workflow` is installed separately.
+   - Exposes an optional `webmcp ai` bridge when
+     `@gyga-browser/webmcp-ai` is installed separately.
    - Supports npm/npx-style MCP configs without absolute repo paths through the
      released npm package.
 5. Chrome launcher: `chrome-launcher/`
@@ -416,6 +418,15 @@ npx -y -p @gyga-browser/webmcp-browser-automation-kit -p @gyga-browser/webmcp-wo
 npx -y @gyga-browser/webmcp-workflow run workflow.json
 ```
 
+The AI provider CLI is also an independent package. The umbrella command only
+forwards arguments and stdio; workflow integrations should call `webmcp-ai`
+directly through the versioned tool protocol.
+
+```bash
+npx -y -p @gyga-browser/webmcp-browser-automation-kit -p @gyga-browser/webmcp-ai webmcp ai doctor --json
+npx -y @gyga-browser/webmcp-ai providers list --json
+```
+
 After global install or `npm link`, the same commands are available as:
 
 ```bash
@@ -425,6 +436,7 @@ webmcp gateway health --json
 webmcp call ping
 webmcp workflow doctor
 webmcp workflow run minimal --config ../webmcp-workflow-cli/tests/fixtures/dispatcher.config.json --profile personal
+webmcp ai doctor --json
 webmcp extension-info --json
 webmcp extension-path
 ```

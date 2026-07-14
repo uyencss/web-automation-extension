@@ -23,6 +23,10 @@ const STORE_PACKAGES = [
 const VAULT_PACKAGES = [
   '@gyga-browser/webmcp-vault-kit',
 ];
+const AI_CLI_PACKAGES = [
+  '@gyga-browser/webmcp-ai',
+  'webmcp-ai-cli',
+];
 
 function printHelp() {
   console.log(`WebMCP Browser Automation
@@ -37,6 +41,7 @@ Usage:
   webmcp quit [--json]
   webmcp profiles list [--json]
   webmcp call <method> [jsonParams]
+  webmcp ai <command> [options]
   webmcp vault <command> [options]
   webmcp workflow <command> [options]
   webmcp store <command> [options]
@@ -61,6 +66,7 @@ Environment:
   WEBMCP_PROFILE_ID           Route gateway calls to this connected Chrome profile
   WEBMCP_VAULT_KEY            Unlock local encrypted WebMCP vault commands
   WEBMCP_VAULT_KEY_FILE       Read the local vault key from a file
+  WEBMCP_AI_BIN               Override standalone WebMCP AI CLI path or package name
   WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
   WEBMCP_HOME                     Shared kit data dir (default: ~/.webmcp)
   WEBMCP_DATA_DIR                 Alias of WEBMCP_HOME (back-compat)
@@ -510,6 +516,69 @@ async function runWorkflow(args) {
   });
 }
 
+// The AI provider implementation lives in the independent
+// @gyga-browser/webmcp-ai package. This umbrella command is intentionally only
+// a transparent bridge so workflows can depend on webmcp-ai directly without
+// depending on the browser kit.
+function getAiBin() {
+  const override = process.env.WEBMCP_AI_BIN;
+  if (override) {
+    const overridePath = resolve(process.cwd(), override);
+    if (existsSync(overridePath)) return overridePath;
+    try {
+      return requireFromCli.resolve(`${override}/bin`);
+    } catch {
+      return overridePath;
+    }
+  }
+
+  const siblingBin = resolve(ROOT, '..', 'webmcp-ai-cli', 'bin', 'webmcp-ai.mjs');
+  if (existsSync(siblingBin)) return siblingBin;
+
+  for (const packageName of AI_CLI_PACKAGES) {
+    try {
+      return requireFromCli.resolve(`${packageName}/bin`);
+    } catch {
+      // Try the next known package name.
+    }
+  }
+
+  return null;
+}
+
+async function runAi(args) {
+  const aiBin = getAiBin();
+  if (!aiBin || !existsSync(aiBin)) {
+    console.error([
+      'WebMCP AI CLI not found.',
+      'Install @gyga-browser/webmcp-ai, run from the webmcp-automation-kit checkout, or set WEBMCP_AI_BIN.',
+    ].join('\n'));
+    return 1;
+  }
+
+  const aiArgs = args.length > 0 ? args : ['--help'];
+  const child = spawn(process.execPath, [aiBin, ...aiArgs], {
+    cwd: process.cwd(),
+    env: { ...process.env, WEBMCP_AI_COMMAND_NAME: 'webmcp ai' },
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start WebMCP AI CLI: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`WebMCP AI CLI exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 1);
+    });
+  });
+}
+
 function getStoreBin() {
   const override = process.env.WEBMCP_STORE_BIN;
   if (override) {
@@ -685,6 +754,10 @@ async function main() {
 
   if (command === 'workflow') {
     process.exit(await runWorkflow(args));
+  }
+
+  if (command === 'ai') {
+    process.exit(await runAi(args));
   }
 
   if (command === 'store') {

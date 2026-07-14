@@ -54,6 +54,43 @@ test('webmcp workflow reports a clear install hint when dispatcher is unavailabl
   assert.match(result.stderr, /Install @gyga-browser\/webmcp-workflow/);
 });
 
+test('webmcp ai delegates to the standalone AI CLI', () => {
+  const result = spawnSync(process.execPath, [BIN, 'ai', 'providers', 'list', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.providers.map((provider) => provider.id), ['agy', 'claude', 'codex']);
+});
+
+test('webmcp ai help uses the umbrella command name', () => {
+  const result = spawnSync(process.execPath, [BIN, 'ai', '--help'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /webmcp ai <command>/);
+});
+
+test('webmcp ai reports a clear install hint when the CLI is unavailable', () => {
+  const result = spawnSync(process.execPath, [BIN, 'ai', '--help'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_AI_BIN: './missing-webmcp-ai.mjs',
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /WebMCP AI CLI not found/);
+  assert.match(result.stderr, /Install @gyga-browser\/webmcp-ai/);
+});
+
 test('webmcp extension-info prints published Chrome Web Store metadata', () => {
   const result = spawnSync(process.execPath, [BIN, 'extension-info', '--json'], {
     cwd: WORKSPACE_ROOT,
@@ -94,4 +131,3 @@ test('webmcp vault reports a clear install hint when vault is unavailable', () =
   assert.match(result.stderr, /WebMCP vault CLI not found/);
   assert.match(result.stderr, /Install @gyga-browser\/webmcp-vault-kit/);
 });
-

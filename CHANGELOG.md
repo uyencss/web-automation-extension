@@ -2,6 +2,15 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.34 - 2026-07-14
+
+### Added
+
+- Added an optional `webmcp ai` bridge to the independent
+  `@gyga-browser/webmcp-ai` package. Resolution follows
+  `WEBMCP_AI_BIN` override → sibling checkout → installed package, and the
+  bridge forwards arguments, stdio, working directory, signals, and exit code.
+
 ## 1.0.29 - 2026-07-05
 
 ### Added
