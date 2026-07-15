@@ -17,7 +17,7 @@ const WORKFLOW_DISPATCHER_PACKAGES = [
   'webmcp-workflow-cli',
 ];
 const STORE_PACKAGES = [
-  '@gyga-browser/webmcp-store',
+  '@gyga-browser/webmcp-site-store',
   'webmcp-workflow-store',
 ];
 const VAULT_PACKAGES = [
@@ -610,7 +610,7 @@ async function runStore(args) {
   if (!storeBin || !existsSync(storeBin)) {
     console.error([
       'WebMCP store CLI not found.',
-      'Install @gyga-browser/webmcp-store, run from the webmcp-automation-kit checkout, or set WEBMCP_STORE_BIN.',
+      'Install @gyga-browser/webmcp-site-store, run from the webmcp-automation-kit checkout, or set WEBMCP_STORE_BIN.',
     ].join('\n'));
     return 1;
   }
