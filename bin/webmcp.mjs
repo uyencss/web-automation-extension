@@ -18,7 +18,7 @@ const WORKFLOW_DISPATCHER_PACKAGES = [
 ];
 const STORE_PACKAGES = [
   '@gyga-browser/webmcp-site-store',
-  'webmcp-workflow-store',
+  'webmcp-site-store',
 ];
 const VAULT_PACKAGES = [
   '@gyga-browser/webmcp-vault-kit',
@@ -44,7 +44,8 @@ Usage:
   webmcp ai <command> [options]
   webmcp vault <command> [options]
   webmcp workflow <command> [options]
-  webmcp store <command> [options]
+  webmcp site <command> [options]
+  webmcp store <command> [options]       Deprecated alias for webmcp site
   webmcp extension-info [--json]
   webmcp extension-path
 
@@ -591,7 +592,10 @@ function getStoreBin() {
     }
   }
 
-  const siblingBin = resolve(ROOT, '..', 'webmcp-workflow-store', 'bin', 'webmcp-store.mjs');
+  // In the monorepo a package lives at packages/<name>, while the Site Store
+  // lives at stores/webmcp-site-store. Keep this checkout fallback separate
+  // from npm resolution so published installs do not rely on the monorepo.
+  const siblingBin = resolve(ROOT, '..', '..', 'stores', 'webmcp-site-store', 'bin', 'webmcp-store.mjs');
   if (existsSync(siblingBin)) return siblingBin;
 
   for (const packageName of STORE_PACKAGES) {
@@ -605,11 +609,11 @@ function getStoreBin() {
   return null;
 }
 
-async function runStore(args) {
+async function runSite(args, { legacyAlias = false } = {}) {
   const storeBin = getStoreBin();
   if (!storeBin || !existsSync(storeBin)) {
     console.error([
-      'WebMCP store CLI not found.',
+      'WebMCP Site CLI not found.',
       'Install @gyga-browser/webmcp-site-store, run from the webmcp-automation-kit checkout, or set WEBMCP_STORE_BIN.',
     ].join('\n'));
     return 1;
@@ -618,18 +622,22 @@ async function runStore(args) {
   const storeArgs = args.length > 0 ? args : ['--help'];
   const child = spawn(process.execPath, [storeBin, ...storeArgs], {
     cwd: process.cwd(),
-    env: { ...process.env, WEBMCP_STORE_COMMAND_NAME: 'webmcp store' },
+    env: {
+      ...process.env,
+      WEBMCP_SITE_COMMAND_NAME: legacyAlias ? 'webmcp store' : 'webmcp site',
+      ...(legacyAlias ? { WEBMCP_SITE_LEGACY_ALIAS: '1' } : {}),
+    },
     stdio: 'inherit',
   });
 
   return new Promise((resolveExitCode) => {
     child.on('error', (err) => {
-      console.error(`Failed to start store CLI: ${err.message}`);
+      console.error(`Failed to start Site CLI: ${err.message}`);
       resolveExitCode(1);
     });
     child.on('exit', (code, signal) => {
       if (signal) {
-        console.error(`Store CLI exited after signal ${signal}`);
+        console.error(`Site CLI exited after signal ${signal}`);
         resolveExitCode(1);
         return;
       }
@@ -760,8 +768,12 @@ async function main() {
     process.exit(await runAi(args));
   }
 
+  if (command === 'site') {
+    process.exit(await runSite(args));
+  }
+
   if (command === 'store') {
-    process.exit(await runStore(args));
+    process.exit(await runSite(args, { legacyAlias: true }));
   }
 
   if (command === 'health') {

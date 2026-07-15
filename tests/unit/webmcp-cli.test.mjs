@@ -54,6 +54,29 @@ test('webmcp workflow reports a clear install hint when dispatcher is unavailabl
   assert.match(result.stderr, /Install @gyga-browser\/webmcp-workflow/);
 });
 
+test('webmcp site resolves the Site Store from a monorepo checkout', () => {
+  const result = spawnSync(process.execPath, [BIN, 'site', 'list-capabilities', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.ok(payload.capabilities.length > 0);
+  assert.match(payload.capabilities[0].id, /^[a-z0-9-]+\/[a-z0-9-]+$/);
+});
+
+test('webmcp store remains a deprecated compatibility route', () => {
+  const result = spawnSync(process.execPath, [BIN, 'store', 'list'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Deprecation: 'webmcp store' is now 'webmcp site'/);
+  assert.match(result.stdout, /Site Store Capabilities/);
+});
+
 test('webmcp ai delegates to the standalone AI CLI', () => {
   const result = spawnSync(process.execPath, [BIN, 'ai', 'providers', 'list', '--json'], {
     cwd: WORKSPACE_ROOT,
