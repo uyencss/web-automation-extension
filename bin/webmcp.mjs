@@ -922,8 +922,18 @@ function publicSkillNames(inventory, mode) {
     .filter((skill) => mode === 'separate'
       ? skill.name !== 'webmcp'
       : skill.exposure === 'public' || !skill.exposure)
+    .filter((skill) => skill.defaultInstall !== false)
     .map((skill) => skill.name)
     .sort();
+}
+
+function doctorSkillNames(inventory, receipt, mode) {
+  const expected = new Set(publicSkillNames(inventory, mode));
+  const installed = new Set(Object.values(receipt?.providers || {}).flatMap((value) => value.entries || []));
+  for (const skill of inventory.skills) {
+    if (installed.has(skill.name)) expected.add(skill.name);
+  }
+  return expected;
 }
 
 function receiptRemovalPlan(receipt, inventory, providerFilter, mode) {
@@ -1014,7 +1024,7 @@ function runSkills(args) {
   if (subcommand === 'doctor') {
     const receipt = readSkillsReceipt();
     const mode = resolveSkillsMode(receipt);
-    const expected = new Set(publicSkillNames(inventory, mode));
+    const expected = doctorSkillNames(inventory, receipt, mode);
     const relevantSkills = skills.filter((skill) => expected.has(skill.name));
     const missing = relevantSkills.filter((skill) => !skill.available).map((skill) => skill.name);
     const known = new Set(Object.values(receipt?.providers || {}).flatMap((value) => value.entries || []));
