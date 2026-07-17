@@ -30,6 +30,10 @@ The kit has three layers:
      `@gyga-browser/webmcp-workflow` is installed separately.
    - Exposes an optional `webmcp ai` bridge when
      `@gyga-browser/webmcp-ai` is installed separately.
+   - Exposes optional `webmcp automation` and `webmcp mobile` bridges when the
+     Automation Store and ADB Kit are installed.
+   - Reads the kit inventory for `webmcp skills list|path|doctor` without
+     taking ownership of component skill content.
    - Supports npm/npx-style MCP configs without absolute repo paths through the
      released npm package.
 5. Chrome launcher: `chrome-launcher/`
@@ -437,6 +441,9 @@ webmcp call ping
 webmcp workflow doctor
 webmcp workflow run minimal --config ../webmcp-workflow-cli/tests/fixtures/dispatcher.config.json --profile personal
 webmcp ai doctor --json
+webmcp automation list
+webmcp skills doctor
+webmcp mobile --help
 webmcp extension-info --json
 webmcp extension-path
 ```

@@ -4,6 +4,7 @@ import process from 'node:process';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +28,12 @@ const AI_CLI_PACKAGES = [
   '@gyga-browser/webmcp-ai',
   'webmcp-ai-cli',
 ];
+const AUTOMATION_PACKAGES = [
+  '@gyga-browser/webmcp-automation-store',
+];
+const ADB_PACKAGES = [
+  '@gyga-browser/webmcp-adb-kit',
+];
 
 function printHelp() {
   console.log(`WebMCP Browser Automation
@@ -45,6 +52,12 @@ Usage:
   webmcp vault <command> [options]
   webmcp workflow <command> [options]
   webmcp site <command> [options]
+  webmcp automation <command> [options]
+  webmcp mobile mcp
+  webmcp adb mcp                         Alias for webmcp mobile mcp
+  webmcp skills list [--json]
+  webmcp skills path <name>
+  webmcp skills doctor [--json]
   webmcp store <command> [options]       Deprecated alias for webmcp site
   webmcp extension-info [--json]
   webmcp extension-path
@@ -69,6 +82,9 @@ Environment:
   WEBMCP_VAULT_KEY_FILE       Read the local vault key from a file
   WEBMCP_AI_BIN               Override standalone WebMCP AI CLI path or package name
   WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
+  WEBMCP_AUTOMATION_BIN           Override Automation Store CLI path or package name
+  WEBMCP_ADB_MCP_BIN              Override ADB MCP server path or package name
+  WEBMCP_KIT_MANIFEST             Override webmcp-kit.json inventory path
   WEBMCP_HOME                     Shared kit data dir (default: ~/.webmcp)
   WEBMCP_DATA_DIR                 Alias of WEBMCP_HOME (back-compat)
   WEBMCP_CHROME_BINARY            Override Chrome/Chromium binary path
@@ -646,6 +662,282 @@ async function runSite(args, { legacyAlias = false } = {}) {
   });
 }
 
+function getAutomationBin() {
+  const override = process.env.WEBMCP_AUTOMATION_BIN;
+  if (override) {
+    const overridePath = resolve(process.cwd(), override);
+    if (existsSync(overridePath)) return overridePath;
+    try {
+      return requireFromCli.resolve(`${override}/bin/webmcp-automation.mjs`);
+    } catch {
+      return overridePath;
+    }
+  }
+
+  const siblingBin = resolve(ROOT, '..', '..', 'stores', 'webmcp-automation-store', 'bin', 'webmcp-automation.mjs');
+  if (existsSync(siblingBin)) return siblingBin;
+
+  for (const packageName of AUTOMATION_PACKAGES) {
+    try {
+      return requireFromCli.resolve(`${packageName}/bin/webmcp-automation.mjs`);
+    } catch {
+      // Try the next known package name.
+    }
+  }
+
+  return null;
+}
+
+async function runAutomation(args) {
+  const automationBin = getAutomationBin();
+  if (!automationBin || !existsSync(automationBin)) {
+    console.error([
+      'WebMCP Automation Store CLI not found.',
+      'Install the full WebMCP kit, run from the webmcp-automation-kit checkout, or set WEBMCP_AUTOMATION_BIN.',
+    ].join('\n'));
+    return 1;
+  }
+
+  const automationArgs = args.length > 0 ? args : ['--help'];
+  const child = spawn(process.execPath, [automationBin, ...automationArgs], {
+    cwd: process.cwd(),
+    env: { ...process.env, WEBMCP_AUTOMATION_COMMAND_NAME: 'webmcp automation' },
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start Automation Store CLI: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`Automation Store CLI exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 1);
+    });
+  });
+}
+
+function getAdbMcpBin() {
+  const override = process.env.WEBMCP_ADB_MCP_BIN;
+  if (override) {
+    const overridePath = resolve(process.cwd(), override);
+    if (existsSync(overridePath)) return overridePath;
+    try {
+      return requireFromCli.resolve(`${override}/server/mcp_server.mjs`);
+    } catch {
+      return overridePath;
+    }
+  }
+
+  const siblingBin = resolve(ROOT, '..', 'webmcp-adb-kit', 'server', 'mcp_server.mjs');
+  if (existsSync(siblingBin)) return siblingBin;
+
+  for (const packageName of ADB_PACKAGES) {
+    try {
+      return requireFromCli.resolve(`${packageName}/server/mcp_server.mjs`);
+    } catch {
+      // Try the next known package name.
+    }
+  }
+
+  return null;
+}
+
+function printMobileHelp() {
+  console.log(`WebMCP Mobile Automation
+
+Usage:
+  webmcp mobile mcp
+  webmcp adb mcp       Alias for webmcp mobile mcp
+`);
+}
+
+async function runMobile(args) {
+  const [subcommand] = args;
+  if (!subcommand || subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {
+    printMobileHelp();
+    return 0;
+  }
+  if (subcommand !== 'mcp') {
+    console.error(`Unknown mobile command: ${subcommand}`);
+    printMobileHelp();
+    return 1;
+  }
+
+  const adbMcpBin = getAdbMcpBin();
+  if (!adbMcpBin || !existsSync(adbMcpBin)) {
+    console.error([
+      'WebMCP ADB MCP server not found.',
+      'Install @gyga-browser/webmcp-adb-kit, run from the webmcp-automation-kit checkout, or set WEBMCP_ADB_MCP_BIN.',
+    ].join('\n'));
+    return 1;
+  }
+
+  const child = spawn(process.execPath, [adbMcpBin], {
+    cwd: process.cwd(),
+    env: { ...process.env },
+    stdio: 'inherit',
+  });
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start ADB MCP server: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`ADB MCP server exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 1);
+    });
+  });
+}
+
+function getWebmcpHome() {
+  return resolve(process.env.WEBMCP_HOME || process.env.WEBMCP_DATA_DIR || resolve(homedir(), '.webmcp'));
+}
+
+function readSkillInventory() {
+  const explicit = process.env.WEBMCP_KIT_MANIFEST;
+  const candidates = explicit
+    ? [resolve(process.cwd(), explicit)]
+    : [
+        resolve(ROOT, '..', '..', 'webmcp-kit.json'),
+        resolve(getWebmcpHome(), 'webmcp-kit.json'),
+        resolve(getWebmcpHome(), 'skills', 'catalog.json'),
+      ];
+
+  for (const file of candidates) {
+    if (!existsSync(file)) continue;
+    try {
+      const data = JSON.parse(readFileSync(file, 'utf8'));
+      if (data.schema === 'webmcp-kit/1' && Array.isArray(data.skills)) {
+        return { file, root: dirname(file), skills: data.skills };
+      }
+      if (data.schema === 'webmcp-skill-catalog/1' && Array.isArray(data.skills)) {
+        return { file, root: resolve(dirname(file), '..'), skills: data.skills };
+      }
+    } catch {
+      // Try the next inventory candidate.
+    }
+  }
+  return null;
+}
+
+function installedSkillPaths(name) {
+  return [
+    resolve(homedir(), '.codex', 'skills', name),
+    resolve(homedir(), '.claude', 'skills', name),
+    resolve(homedir(), '.gemini', 'config', 'skills', name),
+  ];
+}
+
+function skillPath(inventory, skill) {
+  const canonical = resolve(inventory.root, skill.source);
+  if (existsSync(canonical)) return canonical;
+  return installedSkillPaths(skill.name).find((candidate) => existsSync(candidate)) || null;
+}
+
+function skillReport(inventory) {
+  return [...inventory.skills]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((skill) => {
+      const path = skillPath(inventory, skill);
+      return { ...skill, path, available: Boolean(path) };
+    });
+}
+
+function printSkillsHelp() {
+  console.log(`WebMCP Skills
+
+Usage:
+  webmcp skills list [--json]
+  webmcp skills path <name>
+  webmcp skills doctor [--json]
+`);
+}
+
+function runSkills(args) {
+  const first = args[0];
+  if (first === '--help' || first === '-h' || first === 'help') {
+    printSkillsHelp();
+    return 0;
+  }
+  const subcommand = first && !first.startsWith('--') ? first : 'list';
+  const options = subcommand === 'list' && first !== 'list' ? args : args.slice(1);
+
+  const inventory = readSkillInventory();
+  if (!inventory) {
+    console.error([
+      'WebMCP skill inventory not found.',
+      'Run from the webmcp-automation-kit checkout, install the full kit, or set WEBMCP_KIT_MANIFEST.',
+    ].join('\n'));
+    return 1;
+  }
+  const skills = skillReport(inventory);
+
+  if (subcommand === 'list') {
+    if (options.includes('--json')) {
+      console.log(JSON.stringify({
+        schema: 'webmcp-skills/1',
+        inventory: inventory.file,
+        skills,
+      }, null, 2));
+    } else {
+      console.log(`WebMCP Skills (${skills.length})`);
+      for (const skill of skills) {
+        const state = skill.available ? skill.path : 'not installed';
+        console.log(`  ${skill.name.padEnd(28)} ${skill.owner.padEnd(18)} ${state}`);
+      }
+    }
+    return 0;
+  }
+
+  if (subcommand === 'path') {
+    const name = options[0];
+    if (!name) {
+      console.error('Usage: webmcp skills path <name>');
+      return 1;
+    }
+    const skill = skills.find((entry) => entry.name === name);
+    if (!skill) {
+      console.error(`Unknown WebMCP skill: ${name}`);
+      return 1;
+    }
+    if (!skill.path) {
+      console.error(`WebMCP skill is registered but not available locally: ${name}`);
+      return 1;
+    }
+    console.log(skill.path);
+    return 0;
+  }
+
+  if (subcommand === 'doctor') {
+    const missing = skills.filter((skill) => !skill.available).map((skill) => skill.name);
+    const report = {
+      schema: 'webmcp-skills-doctor/1',
+      ok: missing.length === 0,
+      inventory: inventory.file,
+      total: skills.length,
+      available: skills.length - missing.length,
+      missing,
+    };
+    if (options.includes('--json')) console.log(JSON.stringify(report, null, 2));
+    else if (report.ok) console.log(`Skills OK: ${report.available}/${report.total} available`);
+    else console.error(`Skills incomplete: ${report.available}/${report.total} available; missing ${missing.join(', ')}`);
+    return report.ok ? 0 : 1;
+  }
+
+  console.error(`Unknown skills command: ${subcommand}`);
+  printSkillsHelp();
+  return 1;
+}
+
 async function runClose(args) {
   const { flags, positional } = parseFlags(args);
   const json = Boolean(flags.json);
@@ -770,6 +1062,18 @@ async function main() {
 
   if (command === 'site') {
     process.exit(await runSite(args));
+  }
+
+  if (command === 'automation') {
+    process.exit(await runAutomation(args));
+  }
+
+  if (command === 'mobile' || command === 'adb') {
+    process.exit(await runMobile(args));
+  }
+
+  if (command === 'skills') {
+    process.exit(runSkills(args));
   }
 
   if (command === 'store') {
