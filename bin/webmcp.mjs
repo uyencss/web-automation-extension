@@ -819,11 +819,12 @@ function readSkillInventory() {
     if (!existsSync(file)) continue;
     try {
       const data = JSON.parse(readFileSync(file, 'utf8'));
+      const superseded = Array.isArray(data.supersededSkills) ? data.supersededSkills : [];
       if (data.schema === 'webmcp-kit/1' && Array.isArray(data.skills)) {
-        return { file, root: dirname(file), skills: data.skills };
+        return { file, root: dirname(file), skills: data.skills, superseded };
       }
       if (data.schema === 'webmcp-skill-catalog/1' && Array.isArray(data.skills)) {
-        return { file, root: resolve(dirname(file), '..'), skills: data.skills };
+        return { file, root: resolve(dirname(file), '..'), skills: data.skills, superseded };
       }
     } catch {
       // Try the next inventory candidate.
@@ -898,6 +899,24 @@ function receiptTarget(root, name) {
   return target;
 }
 
+// Directories this kit could plausibly have installed: what the registry
+// declares now, plus the names it used to declare before a rename. A
+// `webmcp-*` prefix is not evidence of ownership — the user may have authored
+// one — so it is never used to decide adoptability.
+function adoptableNames(inventory) {
+  return new Set([
+    ...inventory.skills.map((skill) => skill.name),
+    ...(inventory.superseded || []),
+  ]);
+}
+
+// One default for every call site. `doctor` and `prune`/`uninstall` disagreeing
+// here means the same receipt gets diagnosed under one mode and pruned under
+// another.
+function resolveSkillsMode(receipt) {
+  return receipt?.skillsMode === 'separate' ? 'separate' : 'umbrella';
+}
+
 function publicSkillNames(inventory, mode) {
   return inventory.skills
     .filter((skill) => mode === 'separate'
@@ -947,14 +966,14 @@ function runSkills(args) {
   const options = subcommand === 'list' && first !== 'list' ? args : args.slice(1);
 
   const inventory = readSkillInventory();
-  if (!inventory && !['uninstall'].includes(subcommand)) {
+  if (!inventory) {
     console.error([
       'WebMCP skill inventory not found.',
       'Run from the webmcp-automation-kit checkout, install the full kit, or set WEBMCP_KIT_MANIFEST.',
     ].join('\n'));
     return 1;
   }
-  const skills = inventory ? skillReport(inventory) : [];
+  const skills = skillReport(inventory);
 
   if (subcommand === 'list') {
     if (options.includes('--json')) {
@@ -994,7 +1013,7 @@ function runSkills(args) {
 
   if (subcommand === 'doctor') {
     const receipt = readSkillsReceipt();
-    const mode = receipt?.skillsMode || 'separate';
+    const mode = resolveSkillsMode(receipt);
     const expected = new Set(publicSkillNames(inventory, mode));
     const relevantSkills = skills.filter((skill) => expected.has(skill.name));
     const missing = relevantSkills.filter((skill) => !skill.available).map((skill) => skill.name);
@@ -1003,7 +1022,7 @@ function runSkills(args) {
     for (const [provider, root] of Object.entries(providerSkillRoots())) {
       if (!existsSync(root)) continue;
       for (const name of readdirSync(root)) {
-        if (!known.has(name) && (name.startsWith('webmcp-') || ['workflow-dispatcher-cli', 'antigravity-sidecars'].includes(name))) {
+        if (!known.has(name) && adoptableNames(inventory).has(name)) {
           orphanCandidates.push({ provider, name, path: resolve(root, name) });
         }
       }
@@ -1033,7 +1052,7 @@ function runSkills(args) {
       console.error('Usage: webmcp skills adopt --provider <codex|claude|gemini> | --all [--dry-run] [--yes]');
       return 1;
     }
-    const knownNames = new Set([...inventory.skills.map((skill) => skill.name), 'workflow-dispatcher-cli', 'antigravity-sidecars']);
+    const knownNames = adoptableNames(inventory);
     const providers = { ...(readSkillsReceipt()?.providers || {}) };
     for (const provider of selected) {
       const root = roots[provider];
@@ -1059,10 +1078,6 @@ function runSkills(args) {
       console.error('No WebMCP install receipt found; refusing to remove unowned skills.');
       return 1;
     }
-    if (!inventory) {
-      console.error('WebMCP skill inventory is required for prune/uninstall.');
-      return 1;
-    }
     const { flags } = parseFlags(options);
     const provider = flags.provider;
     const all = Boolean(flags.all);
@@ -1070,7 +1085,7 @@ function runSkills(args) {
       console.error('Usage: webmcp skills uninstall --provider <name> | --all [--dry-run] [--yes]');
       return 1;
     }
-    const mode = receipt.skillsMode || 'umbrella';
+    const mode = resolveSkillsMode(receipt);
     const removals = receiptRemovalPlan(receipt, inventory, subcommand === 'uninstall' ? (all ? '*' : provider) : null, mode);
     const dryRun = options.includes('--dry-run') || !options.includes('--yes');
     if (!removals.length) {
