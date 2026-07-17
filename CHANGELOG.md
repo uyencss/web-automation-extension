@@ -2,6 +2,17 @@
 
 All notable changes to `@gyga-browser/webmcp-browser-automation-kit` are documented here.
 
+## 1.0.35 - 2026-07-17
+
+### Fixed
+
+- Browser automation guidance is now native-MCP-first: when direct WebMCP tools
+  are available in an agent runtime, they are mandatory for browser operations;
+  gateway HTTP and `curl` are explicit fallbacks only.
+- Bumped the package version after adding the umbrella command surface so a
+  published package cannot silently share a version with an older facade that
+  lacks `automation`, `mobile`, and `skills` commands.
+
 ## 1.0.34 - 2026-07-14
 
 ### Added

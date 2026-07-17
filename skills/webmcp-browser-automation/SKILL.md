@@ -10,6 +10,21 @@ description: >
 
 # WebMCP Browser Automation
 
+## Native MCP is mandatory when available
+
+Before starting a browser task, inspect the agent runtime's tool surface. If it
+exposes direct WebMCP tools (for example `mcp__webmcp__getPageText`,
+`mcp__webmcp__getAriaSnapshot`, `mcp__webmcp__clickByRef`, or
+`mcp__webmcp__webmcp_invoke_tool`), call those tools directly. This is the
+required first choice, including for tab discovery, navigation, reading, and
+interaction.
+
+Do **not** use `curl`, gateway HTTP requests, or `browser_raw_command` when a
+direct native tool can perform the operation. Use gateway transport only if the
+runtime exposes no usable native WebMCP tool or the needed command is missing;
+record that fallback reason. Do not treat an HTTP health check as a prerequisite
+when direct native tools are already usable.
+
 ## Mental Model
 
 The WebMCP extension exposes three different tool layers. Do not mix them up.
@@ -62,10 +77,10 @@ When `/health` reports an older extension, do **not** call the gated commands â€
 use the fallback path silently. Do **not** ask the user to upgrade unless the
 fallback is insufficient for the task.
 
-## First Choice Transport
+## Gateway fallback transport
 
-When no native WebMCP/browser tool is already available in the agent runtime,
-use the local HTTP gateway:
+Only when no usable native WebMCP/browser tool is available in the agent
+runtime, use the local HTTP gateway:
 
 ```bash
 cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
