@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -217,7 +219,7 @@ test('webmcp mobile reports a clear install hint when ADB Kit is unavailable', (
   assert.match(result.stderr, /WEBMCP_ADB_MCP_BIN/);
 });
 
-test('webmcp skills exposes the central 14-skill inventory', () => {
+test('webmcp skills exposes the central 15-skill inventory', () => {
   const result = spawnSync(process.execPath, [BIN, 'skills', 'list', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
@@ -226,7 +228,7 @@ test('webmcp skills exposes the central 14-skill inventory', () => {
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.schema, 'webmcp-skills/1');
-  assert.equal(payload.skills.length, 14);
+  assert.equal(payload.skills.length, 15);
   assert.ok(payload.skills.every((skill) => skill.available));
 });
 
@@ -244,4 +246,30 @@ test('webmcp skills path and doctor resolve canonical local sources', () => {
   });
   assert.equal(doctor.status, 0, doctor.stderr);
   assert.deepEqual(JSON.parse(doctor.stdout).missing, []);
+});
+
+test('webmcp skills adopt and prune remove an explicitly adopted legacy skill', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-cli-skills-'));
+  const legacy = path.join(home, '.codex/skills/workflow-dispatcher-cli');
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(path.join(legacy, 'SKILL.md'), '---\nname: workflow-dispatcher-cli\ndescription: legacy\n---\n');
+  const env = {
+    ...process.env,
+    HOME: home,
+    WEBMCP_HOME: path.join(home, '.webmcp'),
+    WEBMCP_KIT_MANIFEST: path.resolve(ROOT, '..', '..', 'webmcp-kit.json'),
+  };
+
+  let result = spawnSync(process.execPath, [BIN, 'skills', 'adopt', '--provider', 'codex', '--yes'], {
+    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const receipt = JSON.parse(readFileSync(path.join(home, '.webmcp/skills/install-receipt.json'), 'utf8'));
+  assert.ok(receipt.providers.codex.entries.includes('workflow-dispatcher-cli'));
+
+  result = spawnSync(process.execPath, [BIN, 'skills', 'prune', '--yes'], {
+    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!existsSync(legacy));
 });

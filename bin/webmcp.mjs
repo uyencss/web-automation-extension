@@ -2,10 +2,10 @@
 
 import process from 'node:process';
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,6 +58,9 @@ Usage:
   webmcp skills list [--json]
   webmcp skills path <name>
   webmcp skills doctor [--json]
+  webmcp skills adopt [--provider <name> | --all] [--dry-run] [--yes]
+  webmcp skills prune [--dry-run] [--yes]
+  webmcp skills uninstall [--provider <name> | --all] [--dry-run] [--yes]
   webmcp store <command> [options]       Deprecated alias for webmcp site
   webmcp extension-info [--json]
   webmcp extension-path
@@ -859,7 +862,79 @@ Usage:
   webmcp skills list [--json]
   webmcp skills path <name>
   webmcp skills doctor [--json]
+  webmcp skills adopt [--provider <name> | --all] [--dry-run] [--yes]
+  webmcp skills prune [--dry-run] [--yes]
+  webmcp skills uninstall [--provider <name> | --all] [--dry-run] [--yes]
 `);
+}
+
+function skillsReceiptPath() {
+  return resolve(getWebmcpHome(), 'skills', 'install-receipt.json');
+}
+
+function readSkillsReceipt() {
+  const file = skillsReceiptPath();
+  if (!existsSync(file)) return null;
+  try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+function providerSkillRoots() {
+  return {
+    codex: resolve(homedir(), '.codex', 'skills'),
+    claude: resolve(homedir(), '.claude', 'skills'),
+    gemini: resolve(homedir(), '.gemini', 'config', 'skills'),
+  };
+}
+
+function receiptTarget(root, name) {
+  if (!root || !name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+    throw new Error(`Invalid skill receipt target: ${root}/${name}`);
+  }
+  const target = resolve(root, name);
+  const rel = relative(root, target);
+  if (!rel || rel.startsWith('..') || rel.includes('/') || rel.includes('\\')) {
+    throw new Error(`Skill receipt target escapes provider root: ${target}`);
+  }
+  return target;
+}
+
+function publicSkillNames(inventory, mode) {
+  return inventory.skills
+    .filter((skill) => mode === 'separate'
+      ? skill.name !== 'webmcp'
+      : skill.exposure === 'public' || !skill.exposure)
+    .map((skill) => skill.name)
+    .sort();
+}
+
+function receiptRemovalPlan(receipt, inventory, providerFilter, mode) {
+  const desired = new Set(publicSkillNames(inventory, mode));
+  const removals = [];
+  for (const [provider, value] of Object.entries(receipt?.providers || {})) {
+    if (providerFilter && providerFilter !== '*' && provider !== providerFilter) continue;
+    const keep = providerFilter ? new Set() : desired;
+    for (const name of value.entries || []) {
+      if (!keep.has(name)) removals.push({ provider, name, path: receiptTarget(value.root, name) });
+    }
+  }
+  return removals;
+}
+
+function applyReceiptRemovals(removals, dryRun) {
+  for (const item of removals) {
+    if (dryRun) console.log(`${item.provider}\t${item.path}`);
+    else if (existsSync(item.path)) rmSync(item.path, { recursive: true, force: true });
+  }
+}
+
+function writeSkillsReceipt(receipt, providers, mode) {
+  const file = skillsReceiptPath();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify({
+    schema: 'webmcp-install-receipt/1', version: 1,
+    installedAt: new Date().toISOString(), skillsMode: mode,
+    providers,
+  }, null, 2)}\n`);
 }
 
 function runSkills(args) {
@@ -872,14 +947,14 @@ function runSkills(args) {
   const options = subcommand === 'list' && first !== 'list' ? args : args.slice(1);
 
   const inventory = readSkillInventory();
-  if (!inventory) {
+  if (!inventory && !['uninstall'].includes(subcommand)) {
     console.error([
       'WebMCP skill inventory not found.',
       'Run from the webmcp-automation-kit checkout, install the full kit, or set WEBMCP_KIT_MANIFEST.',
     ].join('\n'));
     return 1;
   }
-  const skills = skillReport(inventory);
+  const skills = inventory ? skillReport(inventory) : [];
 
   if (subcommand === 'list') {
     if (options.includes('--json')) {
@@ -918,19 +993,110 @@ function runSkills(args) {
   }
 
   if (subcommand === 'doctor') {
-    const missing = skills.filter((skill) => !skill.available).map((skill) => skill.name);
+    const receipt = readSkillsReceipt();
+    const mode = receipt?.skillsMode || 'separate';
+    const expected = new Set(publicSkillNames(inventory, mode));
+    const relevantSkills = skills.filter((skill) => expected.has(skill.name));
+    const missing = relevantSkills.filter((skill) => !skill.available).map((skill) => skill.name);
+    const known = new Set(Object.values(receipt?.providers || {}).flatMap((value) => value.entries || []));
+    const orphanCandidates = [];
+    for (const [provider, root] of Object.entries(providerSkillRoots())) {
+      if (!existsSync(root)) continue;
+      for (const name of readdirSync(root)) {
+        if (!known.has(name) && (name.startsWith('webmcp-') || ['workflow-dispatcher-cli', 'antigravity-sidecars'].includes(name))) {
+          orphanCandidates.push({ provider, name, path: resolve(root, name) });
+        }
+      }
+    }
     const report = {
       schema: 'webmcp-skills-doctor/1',
       ok: missing.length === 0,
       inventory: inventory.file,
-      total: skills.length,
-      available: skills.length - missing.length,
+      total: relevantSkills.length,
+      available: relevantSkills.length - missing.length,
       missing,
+      receipt: skillsReceiptPath(),
+      receiptPresent: Boolean(receipt),
+      orphanCandidates,
     };
     if (options.includes('--json')) console.log(JSON.stringify(report, null, 2));
     else if (report.ok) console.log(`Skills OK: ${report.available}/${report.total} available`);
     else console.error(`Skills incomplete: ${report.available}/${report.total} available; missing ${missing.join(', ')}`);
     return report.ok ? 0 : 1;
+  }
+
+  if (subcommand === 'adopt') {
+    const { flags } = parseFlags(options);
+    const roots = providerSkillRoots();
+    const selected = flags.all ? Object.keys(roots) : [flags.provider].filter(Boolean);
+    if (!selected.length || selected.some((provider) => !roots[provider])) {
+      console.error('Usage: webmcp skills adopt --provider <codex|claude|gemini> | --all [--dry-run] [--yes]');
+      return 1;
+    }
+    const knownNames = new Set([...inventory.skills.map((skill) => skill.name), 'workflow-dispatcher-cli', 'antigravity-sidecars']);
+    const providers = { ...(readSkillsReceipt()?.providers || {}) };
+    for (const provider of selected) {
+      const root = roots[provider];
+      const entries = existsSync(root)
+        ? readdirSync(root).filter((name) => knownNames.has(name) && existsSync(receiptTarget(root, name))).sort()
+        : [];
+      providers[provider] = { root, entries };
+      for (const name of entries) console.log(`${provider}\t${receiptTarget(root, name)}`);
+    }
+    if (!options.includes('--yes') || options.includes('--dry-run')) {
+      console.log('Dry run only; pass --yes to adopt these directories into the WebMCP install receipt.');
+      return 0;
+    }
+    const mode = Object.values(providers).some((value) => value.entries.includes('webmcp')) ? 'umbrella' : 'separate';
+    writeSkillsReceipt(readSkillsReceipt(), providers, mode);
+    console.log(`Adopted receipt entries for ${selected.join(', ')}.`);
+    return 0;
+  }
+
+  if (subcommand === 'prune' || subcommand === 'uninstall') {
+    const receipt = readSkillsReceipt();
+    if (!receipt) {
+      console.error('No WebMCP install receipt found; refusing to remove unowned skills.');
+      return 1;
+    }
+    if (!inventory) {
+      console.error('WebMCP skill inventory is required for prune/uninstall.');
+      return 1;
+    }
+    const { flags } = parseFlags(options);
+    const provider = flags.provider;
+    const all = Boolean(flags.all);
+    if (subcommand === 'uninstall' && !provider && !all) {
+      console.error('Usage: webmcp skills uninstall --provider <name> | --all [--dry-run] [--yes]');
+      return 1;
+    }
+    const mode = receipt.skillsMode || 'umbrella';
+    const removals = receiptRemovalPlan(receipt, inventory, subcommand === 'uninstall' ? (all ? '*' : provider) : null, mode);
+    const dryRun = options.includes('--dry-run') || !options.includes('--yes');
+    if (!removals.length) {
+      console.log('No receipt-owned skill directories require removal.');
+    } else if (dryRun) {
+      console.log(`Planned removals (${removals.length}):`);
+      applyReceiptRemovals(removals, true);
+    } else {
+      applyReceiptRemovals(removals, false);
+      if (subcommand === 'uninstall' && all) {
+        rmSync(resolve(getWebmcpHome(), 'skills'), { recursive: true, force: true });
+      } else if (subcommand === 'uninstall' && provider) {
+        const providers = { ...receipt.providers };
+        delete providers[provider];
+        writeSkillsReceipt(receipt, providers, mode);
+      } else {
+        const desired = new Set(publicSkillNames(inventory, mode));
+        const providers = {};
+        for (const [name, value] of Object.entries(receipt.providers || {})) {
+          providers[name] = { root: value.root, entries: (value.entries || []).filter((entry) => desired.has(entry)) };
+        }
+        writeSkillsReceipt(receipt, providers, mode);
+      }
+      console.log(`Removed ${removals.length} receipt-owned skill director${removals.length === 1 ? 'y' : 'ies'}.`);
+    }
+    return 0;
   }
 
   console.error(`Unknown skills command: ${subcommand}`);

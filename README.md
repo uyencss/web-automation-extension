@@ -32,7 +32,7 @@ The kit has three layers:
      `@gyga-browser/webmcp-ai` is installed separately.
    - Exposes optional `webmcp automation` and `webmcp mobile` bridges when the
      Automation Store and ADB Kit are installed.
-   - Reads the kit inventory for `webmcp skills list|path|doctor` without
+   - Reads the kit inventory for `webmcp skills list|path|doctor|adopt|prune|uninstall` without
      taking ownership of component skill content.
    - Supports npm/npx-style MCP configs without absolute repo paths through the
      released npm package.
