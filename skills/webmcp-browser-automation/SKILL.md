@@ -10,20 +10,32 @@ description: >
 
 # WebMCP Browser Automation
 
-## Native MCP is mandatory when available
+## MCP transport is mandatory
 
-Before starting a browser task, inspect the agent runtime's tool surface. If it
-exposes direct WebMCP tools (for example `mcp__webmcp__getPageText`,
-`mcp__webmcp__getAriaSnapshot`, `mcp__webmcp__clickByRef`, or
-`mcp__webmcp__webmcp_invoke_tool`), call those tools directly. This is the
-required first choice, including for tab discovery, navigation, reading, and
-interaction.
+Every browser action must pass through the WebMCP MCP server.
 
-Do **not** use `curl`, gateway HTTP requests, or `browser_raw_command` when a
-direct native tool can perform the operation. Use gateway transport only if the
-runtime exposes no usable native WebMCP tool or the needed command is missing;
-record that fallback reason. Do not treat an HTTP health check as a prerequisite
-when direct native tools are already usable.
+1. Inspect the agent runtime's tool surface. If it exposes direct WebMCP MCP
+   tools (for example `mcp__webmcp__getPageText`,
+   `mcp__webmcp__getAriaSnapshot`, `mcp__webmcp__clickByRef`, or
+   `mcp__webmcp__webmcp_invoke_tool`), call them directly. This is the required
+   path for tab discovery, navigation, reading, and interaction. These tools
+   already use the WebMCP MCP server, so do not start a duplicate server.
+2. If no usable WebMCP MCP tool is exposed, initialize the gateway first:
+   `webmcp gateway start`, or
+   `webmcp launch --name task-name --gateway --json` when Chrome/the extension
+   also needs bootstrapping.
+3. Start or connect the stdio MCP adapter with `webmcp mcp`, then
+   refresh/discover the runtime tool surface and continue with
+   `mcp__webmcp__*` tool calls.
+4. If the runtime cannot attach the MCP server dynamically, stop and report the
+   transport blocker. Do **not** replace MCP with `curl`, `webmcp call`, direct
+   `POST /api`, or a different browser automation stack.
+
+`browser_raw_command` is acceptable only as a tool call exposed by the WebMCP
+MCP server and only when the required command has no first-class MCP tool. An
+HTTP health check or launcher command may be used for bootstrap/diagnostics, but
+not for browser actions. Do not treat an HTTP health check as a prerequisite
+when direct MCP tools are already usable.
 
 ## Mental Model
 
@@ -45,15 +57,18 @@ The WebMCP extension exposes three different tool layers. Do not mix them up.
 3. **Page WebMCP tools** are registered by
    `webmcp-extension/dist/content-scripts/register-tools.js` into
    `navigator.modelContext`. These are page-local tools. You must discover them
-   with `webmcp.listTools` and invoke them with `webmcp.invokeTool`.
+   through the MCP tool `webmcp_list_tools` and invoke them through the MCP tool
+   `webmcp_invoke_tool`.
 
 Critical rule: a page tool name such as `query_selector_all` or
 `click_element` is not an extension JSON-RPC method. It must be passed as
-`params.toolName` to `webmcp.invokeTool`.
+`toolName` (or `tool_name` when that is what the runtime schema exposes) to the
+MCP `webmcp_invoke_tool` tool.
 
 ## Extension Version Compatibility
 
-> This skill assumes **extension ≥ v2.1.10** (the latest bundled version).
+> This skill assumes **extension ≥ v2.1.10**; the current bundled version is
+> **v2.1.11**.
 > The `/health` response includes `profileDetails[].extensionVersion` for each
 > connected profile — you already read this in *Mandatory Run Loop* step 1, so
 > version detection is zero-cost. If the reported version is older, some
@@ -63,7 +78,7 @@ Critical rule: a page tool name such as `query_selector_all` or
 | Command | Min Version | Fallback when unavailable |
 |---|---|---|
 | `activateTab` | v2.1.10 | Use `navigate` to the tab's URL, or skip the focus step |
-| `batch` | v2.1.9 | Call each command sequentially as separate `/api` calls |
+| `batch` | v2.1.9 | Call each command sequentially as separate MCP tool calls |
 | `getPageText` | v2.1.6 | `getPageContent` with `{ "format": "text" }` |
 | `readPage` | v2.1.6 | `navigate` → `waitForStable` → `getPageContent` |
 | `getAriaSnapshot` (fast path) | v2.1.3 | Always has automatic CDP fallback (`mode: "native"`) |
@@ -77,20 +92,13 @@ When `/health` reports an older extension, do **not** call the gated commands �
 use the fallback path silently. Do **not** ask the user to upgrade unless the
 fallback is insufficient for the task.
 
-## Gateway fallback transport
+## Gateway and MCP bootstrap
 
-Only when no usable native WebMCP/browser tool is available in the agent
-runtime, use the local HTTP gateway:
-
-```bash
-cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
-npm run gateway
-```
-
-With the released npm package, the portable equivalent is:
+Only when no usable WebMCP MCP tool is available in the agent runtime,
+initialize the local gateway before attaching the MCP server:
 
 ```bash
-npx -y @gyga-browser/webmcp-browser-automation-kit gateway start
+webmcp gateway start
 ```
 
 If the gateway is unreachable or `/health` reports `extensionConnected: false`,
@@ -103,77 +111,54 @@ webmcp launch --name task-name --gateway --json
 Use the `webmcp-chrome-launcher` skill for profile selection, managed browser sessions,
 and safe `--relaunch` handling for already-running user Chrome profiles.
 
-The Chrome extension connects to `ws://localhost:7865`; scripts and agents call:
+Then start or attach the MCP adapter:
 
 ```bash
-curl -sS http://localhost:7865/api \
-  -H 'Content-Type: application/json' \
-  -d '{"method":"ping","params":{}}'
+webmcp mcp
 ```
 
-Request shape:
-
-```json
-{ "method": "getActiveTab", "params": {} }
-```
+The gateway and MCP commands are long-running services; keep them in their
+runtime-managed sessions. Refresh/discover tools only after both are ready.
+The Chrome extension connects to the gateway, and the MCP adapter calls the
+gateway internally. Agents call only the exposed MCP tools.
 
 ### Targeting a profile (multi-profile gateways)
 
 One gateway can serve several Chrome profiles at once — one WebSocket per
 profile. Each profile self-identifies with a stable `profileId` (a UUID it
-persists in its own `chrome.storage.local`). To route a call to a specific
-profile, add a **top-level** `profileId` field to the request body — a sibling
-of `params`, **not** inside it:
+persists in its own `chrome.storage.local`). Discover connected profiles with
+the MCP `list_profiles` tool:
 
 ```json
-{ "method": "getActiveTab", "params": {}, "profileId": "a1b2c3d4-..." }
+{}
 ```
 
-Routing rules enforced by the gateway:
+Then pass `profileId` directly in every MCP browser tool's arguments:
+
+```json
+{ "profileId": "a1b2c3d4-..." }
+```
+
+Routing rules surfaced by MCP:
 
 - **Exactly one profile connected** — `profileId` is optional; the call routes
   to that single profile.
 - **Two or more profiles connected** — `profileId` is **required**. Omitting it
-  returns HTTP 400 listing the connected ids.
-- **Unknown / disconnected `profileId`** — HTTP 404.
-- **No profile connected** — HTTP 503.
+  returns a tool error listing the connected ids.
+- **Unknown / disconnected `profileId`** — the MCP tool returns a routing error.
+- **No profile connected** — the MCP tool reports that the extension is not
+  connected.
 
-Discover the currently connected profiles with `GET /health`:
-
-```bash
-curl -sS http://localhost:7865/health
-```
-
-```json
-{ "ok": true, "extensionConnected": true,
-  "profiles": ["a1b2c3d4-...", "e5f6a7b8-..."], "profileCount": 2 }
-```
-
-Pick a `profileId` from `profiles` and pass it on **every** subsequent `/api`
-call for that browser. Over a direct WebSocket connection you are already bound
-to one profile's socket, so no `profileId` is needed there.
-
-Response shape:
-
-```json
-{ "result": { "tabId": 123, "url": "https://example.com" } }
-```
-
-If you are connected directly over WebSocket, send the same method and params
-inside JSON-RPC 2.0:
-
-```json
-{ "jsonrpc": "2.0", "id": 1, "method": "getActiveTab", "params": {} }
-```
-
-If an MCP client is available, use `server/mcp_server.mjs` or
-`webmcp mcp` as a stdio MCP adapter. Best-practice installs keep the
+Use `server/mcp_server.mjs` or `webmcp mcp` as the stdio MCP adapter. Keep the
 gateway lifecycle explicit: start the gateway first, then let MCP connect to it.
 For local development only, set `WEBMCP_GATEWAY_AUTOSTART=1` if MCP should spawn
-the gateway when no local gateway is listening. MCP tool names replace dots with
+the gateway when no local gateway is listening. After attaching MCP,
+refresh/discover the runtime tool surface and call the exposed tools; do not use
+direct HTTP as an action fallback. MCP tool names replace dots with
 underscores, so `webmcp.listTools` becomes `webmcp_list_tools` and
 `webmcp.invokeTool` becomes `webmcp_invoke_tool`. The adapter also exposes
-`browser_raw_command` for raw gateway calls.
+`browser_raw_command` for raw gateway commands that must still travel through
+MCP.
 
 If the environment exposes Codex's native WebMCP capability instead, the naming
 is different:
@@ -183,9 +168,9 @@ webmcp_list_tools({ browser_id, tab_id })
 webmcp_invoke_tool({ browser_id, tab_id, tool_name, input, timeout_ms? })
 ```
 
-Gateway/direct extension calls use `webmcp.listTools`, `webmcp.invokeTool`, and
-`toolName`. Codex native calls use `webmcp_list_tools`,
-`webmcp_invoke_tool`, and `tool_name`.
+The MCP adapter exposes page operations as `webmcp_list_tools` and
+`webmcp_invoke_tool`; pass the page tool name using the input field shown by the
+runtime schema (`toolName` or `tool_name`).
 
 ## Reading vs Interacting (decide first)
 
@@ -212,12 +197,13 @@ app shell with little readable prose).
 
 For every browser automation task:
 
-1. Health check: call `GET /health` (or `ping`). If the gateway is
-   unreachable, start `npm run gateway` or `webmcp gateway start`. If the
+1. MCP/gateway readiness: call the MCP tool `list_profiles` or `ping`. If MCP
+   tools are not exposed, bootstrap the gateway and attach `webmcp mcp` as
+   described in *Gateway and MCP bootstrap*, then retry through MCP. If the
    gateway is up but no extension is connected (`profileCount` is 0), reload
    the unpacked extension from `webmcp-extension/dist`. **If `profileCount`
-   is greater than 1, pick a `profileId` from `health.profiles` and include
-   it as a top-level field on every `/api` call** (see *Targeting a profile*).
+   is greater than 1, pick a `profileId` from the MCP `list_profiles` result and
+   include it on every subsequent MCP browser tool call** (see *Targeting a profile*).
    Note the `extensionVersion` in `profileDetails[]` — if it is older than
    v2.1.10, consult *Extension Version Compatibility* for per-command
    availability and use the documented fallback for any gated command.
@@ -234,7 +220,7 @@ For every browser automation task:
    - **If you need to act on the page**, call `getAriaSnapshot` to get a
      ref-based accessibility tree — the preferred way to understand structure
      for interaction.
-   - Call `webmcp.listTools` for page-registered tools.
+   - Call the MCP tool `webmcp_list_tools` for page-registered tools.
 5. Pick the smallest reliable action (in order of preference):
    - **ARIA ref interaction** (preferred): use `clickByRef`, `typeByRef`,
      `selectByRef` with refs from `getAriaSnapshot`. These are robust against
@@ -259,58 +245,50 @@ For every browser automation task:
 
 ## Calling Page WebMCP Tools
 
-List tools:
+Call the MCP `webmcp_list_tools` tool:
 
 ```json
-{
-  "method": "webmcp.listTools",
-  "params": { "tabId": 123 }
-}
+{ "tabId": 123 }
 ```
 
-Invoke one page tool:
+Call the MCP `webmcp_invoke_tool` tool:
 
 ```json
 {
-  "method": "webmcp.invokeTool",
-  "params": {
-    "tabId": 123,
-    "toolName": "query_selector_all",
-    "input": {
-      "selector": "button, a, input",
-      "max_results": 20,
-      "attributes": ["id", "class", "name", "type", "aria-label", "href"]
-    }
+  "tabId": 123,
+  "toolName": "query_selector_all",
+  "input": {
+    "selector": "button, a, input",
+    "max_results": 20,
+    "attributes": ["id", "class", "name", "type", "aria-label", "href"]
   }
 }
 ```
 
-Typical nested result from the HTTP gateway:
+Typical page-tool payload returned through MCP:
 
 ```json
 {
+  "tabId": 123,
   "result": {
-    "tabId": 123,
-    "result": {
-      "content": [
-        {
-          "type": "text",
-          "text": "{\"count\":1,\"elements\":[...]}"
-        }
-      ]
-    }
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"count\":1,\"elements\":[...]}"
+      }
+    ]
   }
 }
 ```
 
-Parse `response.result.result.content[0].text` as JSON when possible. Errors
-are usually returned the same way:
+Parse the nested `content[0].text` as JSON when possible. Errors are usually
+returned the same way:
 
 ```json
 { "error": true, "message": "No element found for selector: ..." }
 ```
 
-Do not treat a successful JSON-RPC response as proof the page action worked;
+Do not treat a successful MCP tool call as proof the page action worked;
 inspect the parsed WebMCP payload.
 
 ## Extension Commands
@@ -439,7 +417,7 @@ return rows.map(tr => [...tr.cells].map(td => td.innerText.trim()));
 ## Page-Registered Tools
 
 These tools are registered by `register-tools.js` and should be called only via
-`webmcp.invokeTool`.
+the MCP tool `webmcp_invoke_tool`.
 
 | Tool | Use for | Required input |
 |---|---|---|
@@ -465,9 +443,10 @@ selector/page commands accept a `frame` object such as `{ cdpFrameId }`,
 
 Page-registered iframe forwarding is implemented for `query_selector_all`,
 `click_element`, `fill_form_field`, `extract_table_data`, `wait_for_element`,
-and `get_computed_styles`. These page tools accept `frame_selector`,
+and `get_computed_styles`. Pass these page tools through the MCP
+`webmcp_invoke_tool`; they accept `frame_selector`,
 `frame_path`, and `frame_timeout_ms` inside the `input` passed to
-`webmcp.invokeTool`.
+that MCP tool.
 
 Use standard CSS selectors only. Playwright-only selectors such as
 `:has-text("Login")` are invalid here. To click by visible text, first call
@@ -484,14 +463,14 @@ Use standard CSS selectors only. Playwright-only selectors such as
 | Click a button/link on SPA | `getAriaSnapshot` → `clickByRef` (robust) |
 | Fill a text field on SPA | `getAriaSnapshot` → `typeByRef` (robust) |
 | Select a dropdown option | `getAriaSnapshot` → `selectByRef` (robust) |
-| Extract visible repeated DOM data | `webmcp.invokeTool` -> `query_selector_all` |
-| Extract page title/meta/headings/links | `webmcp.invokeTool` -> `get_page_metadata` |
-| Fill ordinary form field (simple page) | `webmcp.invokeTool` -> `fill_form_field` |
-| Submit form | `webmcp.invokeTool` -> `submit_form`, then wait |
+| Extract visible repeated DOM data | MCP `webmcp_invoke_tool` -> `query_selector_all` |
+| Extract page title/meta/headings/links | MCP `webmcp_invoke_tool` -> `get_page_metadata` |
+| Fill ordinary form field (simple page) | MCP `webmcp_invoke_tool` -> `fill_form_field` |
+| Submit form | MCP `webmcp_invoke_tool` -> `submit_form`, then wait |
 | Anti-bot/framework requires real input | `getElementBounds` → `dispatchClick`, then `pressKey` (minimal-friendly). `getInteractiveElements`/`typeText` are hidden on minimal — use `browser_raw_command`/`core` |
 | Wait for page to settle | `waitForStable` (auto-applied after click/type/clickByRef/typeByRef) |
 | Infinite scroll | `scroll` or `scroll_page`, then query count again |
-| Table extraction | `webmcp.invokeTool` -> `extract_table_data` |
+| Table extraction | MCP `webmcp_invoke_tool` -> `extract_table_data` |
 | Need XHR/fetch body | `start_network_capture`, trigger action, `wait_for_network_response`, `stop_network_capture` |
 | Need console errors/logs | `startConsoleCapture`, trigger action, `readConsoleMessages`, `stopConsoleCapture` |
 | Need app state/local globals | `evaluateJS` or `execute_javascript` |
@@ -501,27 +480,24 @@ Use standard CSS selectors only. Playwright-only selectors such as
 
 ### Navigate, discover, extract
 
-```json
-{ "method": "newTab", "params": { "url": "https://example.com" } }
+```text
+newTab({ url: "https://example.com" })
 ```
 
-```json
-{ "method": "webmcp.listTools", "params": { "tabId": 123 } }
+```text
+webmcp_list_tools({ tabId: 123 })
 ```
 
-```json
-{
-  "method": "webmcp.invokeTool",
-  "params": {
-    "tabId": 123,
-    "toolName": "query_selector_all",
-    "input": {
-      "selector": "main a, main button, main article",
-      "max_results": 50,
-      "attributes": ["href", "role", "aria-label", "data-testid"]
-    }
+```text
+webmcp_invoke_tool({
+  tabId: 123,
+  toolName: "query_selector_all",
+  input: {
+    selector: "main a, main button, main article",
+    max_results: 50,
+    attributes: ["href", "role", "aria-label", "data-testid"]
   }
-}
+})
 ```
 
 ### Click and type with ARIA refs (preferred)
@@ -555,33 +531,30 @@ Use standard CSS selectors only. Playwright-only selectors such as
 
 ### Form fill with page tools (alternative)
 
-1. `webmcp.invokeTool` -> `wait_for_element` with `selector: "form"`.
-2. `webmcp.invokeTool` -> `query_selector_all` with
+1. MCP `webmcp_invoke_tool` -> `wait_for_element` with `selector: "form"`.
+2. MCP `webmcp_invoke_tool` -> `query_selector_all` with
    `selector: "form input, form select, form textarea, form button"`.
-3. `webmcp.invokeTool` -> `fill_form_field` for each field.
-4. `webmcp.invokeTool` -> `click_element` or `submit_form`.
+3. MCP `webmcp_invoke_tool` -> `fill_form_field` for each field.
+4. MCP `webmcp_invoke_tool` -> `click_element` or `submit_form`.
 5. Wait for the expected success selector or navigation.
 
 ### Batch several commands in one round-trip
 
 When you already know the next few steps (a predictable sequence, not a decision
 that depends on the previous result), collapse them into one `batch` call
-instead of N separate `/api` / tool calls. Each action is `{ method, params }` —
-the same shape as a standalone command.
+through MCP instead of N separate MCP tool calls. Inside the MCP `batch` input,
+each action is `{ method, params }`.
 
 ```json
 {
-  "method": "batch",
-  "params": {
-    "onError": "stop-on-error",
-    "actions": [
-      { "method": "getAriaSnapshot", "params": { "maxNodes": 60 } },
-      { "method": "typeByRef",   "params": { "ref": "r32", "text": "hello" } },
-      { "method": "clickByRef",  "params": { "ref": "r37" } },
-      { "method": "delay",       "params": { "ms": 4000 } },
-      { "method": "getPageText", "params": { "maxLength": 1200 } }
-    ]
-  }
+  "onError": "stop-on-error",
+  "actions": [
+    { "method": "getAriaSnapshot", "params": { "maxNodes": 60 } },
+    { "method": "typeByRef",   "params": { "ref": "r32", "text": "hello" } },
+    { "method": "clickByRef",  "params": { "ref": "r37" } },
+    { "method": "delay",       "params": { "ms": 4000 } },
+    { "method": "getPageText", "params": { "maxLength": 1200 } }
+  ]
 }
 ```
 
@@ -595,14 +568,15 @@ the same shape as a standalone command.
   prefer inserting a `screenshot` action at a checkpoint instead.
 - Returns `{ total, executed, success, errors, results:[{ index, method, ok,
   result?, error?, duration, screenshot? }] }`. Sub-results are **not**
-  auto-unwrapped — a `webmcp.invokeTool` inside a batch returns the raw
+  auto-unwrapped — a `webmcp.invokeTool` internal command inside an MCP batch
+  returns the raw
   `{ tabId, result:{ content:[{ text }] } }`, so parse it yourself.
 - Not a replacement for `webmcp-workflow` JSON: batch is ad-hoc, live sequencing
   for the exploration phase; workflows are deterministic, stored, and verifiable.
 
 ### Network capture
 
-1. `webmcp.invokeTool` -> `start_network_capture` with a URL substring such as
+1. MCP `webmcp_invoke_tool` -> `start_network_capture` with a URL substring such as
    `"graphql"` or `"/api/search"`. Call it again with other substrings to watch
    several endpoints at once.
 2. Trigger the page action with a click/type/form submit. Note: synthetic CDP
@@ -614,7 +588,7 @@ the same shape as a standalone command.
      consumes it; call again to get the following response.
    - `get_captured_requests` — pull the full list at once (set
      `include_bodies: true` for bodies); does not consume.
-4. `webmcp.invokeTool` -> `stop_network_capture`.
+4. MCP `webmcp_invoke_tool` -> `stop_network_capture`.
 
 Captured records include `method`, `status`, `mimeType`, `durationMs`,
 `fromCache`, and (for `wait_for_network_response` / `include_bodies`) `body` plus
@@ -652,9 +626,9 @@ Captured records include `method`, `status`, `mimeType`, `durationMs`,
 |---|---|
 | Gateway is not reachable | Start `npm run gateway`, `webmcp gateway start`, or use `WEBMCP_GATEWAY_AUTOSTART=1` for local dev autostart. |
 | `Chrome extension is not connected to the gateway` | Gateway is up but no extension is attached: reload the unpacked extension. |
-| `Method not found` | You called a page tool as a background command. Use `webmcp.invokeTool` with `toolName`, or choose one of the extension commands above. |
+| `Method not found` | You called a page tool as a background command. Use the MCP `webmcp_invoke_tool` with `toolName`, or choose one of the extension commands above. |
 | `navigator.modelContext not found` | Use a normal web page, wait for load, navigate/reload the tab, and confirm `register-tools.js` is injected. Chrome internal pages cannot use it. |
-| Empty `webmcp.listTools` result | Reload extension and page; make sure the unpacked extension points at `webmcp-extension/dist`. |
+| Empty `webmcp_list_tools` result | Reload extension and page; make sure the unpacked extension points at `webmcp-extension/dist`. |
 | `No element found` | Wait, scroll, call `query_selector_all` with broader selectors, or use `getInteractiveElements`. |
 | `Another debugger is already attached` | Only one debugger client can attach to a tab. Close conflicting automation extensions or use another tab. |
 | Network capture says not started | Call `start_network_capture` before triggering the request, on the same tab. |

@@ -5,24 +5,42 @@ description: Launch Google Chrome or Chromium with the bundled WebMCP extension,
 
 # WebMCP Chrome Launcher
 
-## Standard Flow
+## MCP browser transport is mandatory
 
-Use this skill before `webmcp-browser-automation` when `webmcp health --json` fails, `extensionConnected` is false, or a fresh isolated browser is better than using the user's current Chrome.
+Use this skill before `webmcp-browser-automation` when no
+`mcp__webmcp__*` tool is available, `webmcp health --json` fails,
+`extensionConnected` is false, or a fresh isolated browser is better than using
+the user's current Chrome.
 
-1. Start the gateway and launch an isolated managed Chrome profile:
+1. Initialize the gateway first:
+
+```bash
+webmcp gateway start
+```
+
+   If Chrome/the extension also needs bootstrapping, initialize both with an
+   isolated managed Chrome profile instead:
 
 ```bash
 webmcp launch --name task-name --gateway --json
 ```
 
 2. Parse the JSON output. Save `profileId` when present.
-3. Verify the gateway if needed:
+3. Start or connect the WebMCP MCP adapter:
 
 ```bash
-curl -sS http://localhost:7865/health
+webmcp mcp
 ```
 
-4. Continue with `webmcp-browser-automation`. If more than one profile is connected, pass the saved `profileId` as a top-level field on every gateway `/api` call.
+4. Refresh/discover the runtime's `mcp__webmcp__*` tools and verify readiness
+   with the MCP `list_profiles` or `ping` tool.
+5. Continue with `webmcp-browser-automation`. If more than one profile is
+   connected, pass the saved `profileId` on every MCP browser tool call.
+
+Browser actions must go through the MCP server. Do not use `curl`,
+`webmcp call`, or direct gateway `POST /api` requests as the action path. If the
+runtime cannot attach the MCP server dynamically, report the transport blocker;
+do not silently substitute `curl` or direct HTTP action calls.
 
 ## Profile Selection
 

@@ -219,7 +219,7 @@ test('webmcp mobile reports a clear install hint when ADB Kit is unavailable', (
   assert.match(result.stderr, /WEBMCP_ADB_MCP_BIN/);
 });
 
-test('webmcp skills exposes the central 15-skill inventory', () => {
+test('webmcp skills exposes the central 16-skill inventory', () => {
   const result = spawnSync(process.execPath, [BIN, 'skills', 'list', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
@@ -228,7 +228,7 @@ test('webmcp skills exposes the central 15-skill inventory', () => {
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.schema, 'webmcp-skills/1');
-  assert.equal(payload.skills.length, 15);
+  assert.equal(payload.skills.length, 16);
   assert.ok(payload.skills.every((skill) => skill.available));
 });
 
