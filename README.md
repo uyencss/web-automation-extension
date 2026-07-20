@@ -122,6 +122,7 @@ In another terminal, verify the extension is connected:
 
 ```bash
 npx -y @gyga-browser/webmcp-browser-automation-kit health --json
+npx -y @gyga-browser/webmcp-browser-automation-kit doctor --json
 ```
 
 Call any extension command:
@@ -431,7 +432,7 @@ npx -y -p @gyga-browser/webmcp-browser-automation-kit -p @gyga-browser/webmcp-ai
 npx -y @gyga-browser/webmcp-ai providers list --json
 ```
 
-After global install or `npm link`, the same commands are available as:
+After a global install, the same commands are available as:
 
 ```bash
 webmcp mcp
@@ -495,6 +496,7 @@ webmcp -h
 | `npm run install:codex`                 | Copy skill to `~/.codex/skills` and add MCP to `~/.codex/config.toml`.              |
 | `npm run install:cursor`                | Write global `~/.cursor/mcp.json` if absent.                                        |
 | `npm run health`                        | Send `ping` through the gateway to confirm extension connectivity.                  |
+| `npm run cli -- doctor --json`          | Check Node/MCP dependencies, client registration, gateway, and extension readiness. |
 | `npm run call -- <method> [jsonParams]` | Call one extension command through `POST /api`.                                     |
 | `npm run tools:generate`                | Rebuild the generated skill reference from runtime source files.                    |
 | `npm run tools:check`                   | Fail if the generated reference is stale or capability announcements lack handlers. |

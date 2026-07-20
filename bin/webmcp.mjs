@@ -9,7 +9,7 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
+const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:7865';
 const PACKAGE_NAME = '@gyga-browser/webmcp-browser-automation-kit';
 const PACKAGE_VERSION = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')).version;
 const requireFromCli = createRequire(import.meta.url);
@@ -40,9 +40,11 @@ function printHelp() {
 
 Usage:
   webmcp mcp
+  webmcp mcp --help
   webmcp gateway start
   webmcp gateway health [--json]
   webmcp health [--json]
+  webmcp doctor [--json]
   webmcp launch [--name <name> | --profile-id <id>] [--gateway] [--relaunch] [--dry-run] [--json]
   webmcp close [--profile-id <id>] [--all] [--json]
   webmcp quit [--json]
@@ -91,6 +93,19 @@ Environment:
   WEBMCP_HOME                     Shared kit data dir (default: ~/.webmcp)
   WEBMCP_DATA_DIR                 Alias of WEBMCP_HOME (back-compat)
   WEBMCP_CHROME_BINARY            Override Chrome/Chromium binary path
+`);
+}
+
+function printMcpHelp() {
+  console.log(`WebMCP stdio MCP adapter
+
+Usage:
+  webmcp mcp
+
+The adapter is normally started by an MCP client from its registered config.
+It exposes WebMCP gateway commands as mcp__webmcp__* tools and keeps browser
+actions on the MCP transport. Start the gateway separately with:
+  webmcp gateway start
 `);
 }
 
@@ -146,6 +161,166 @@ async function fetchJsonOrNull(url, options = {}) {
   } catch {
     return null;
   }
+}
+
+function readMcpJsonConfig(file, serverPath) {
+  const result = { file, registered: false, healthy: false };
+  if (!existsSync(file)) return result;
+  try {
+    const config = JSON.parse(readFileSync(file, 'utf8'));
+    const entry = config?.mcpServers?.webmcp;
+    if (!entry) return result;
+    result.registered = true;
+    result.command = entry.command;
+    result.args = Array.isArray(entry.args) ? entry.args : [];
+    result.mode = result.command === process.execPath ? 'durable' : result.command === 'npx' ? 'published' : 'unknown';
+    result.healthy = (result.command === process.execPath && result.args.length === 1 && result.args[0] === serverPath)
+      || (result.command === 'npx' && JSON.stringify(result.args) === JSON.stringify(['-y', PACKAGE_NAME, 'mcp']));
+    if (!result.healthy) result.error = 'Registered MCP entry does not point to the WebMCP adapter';
+  } catch (error) {
+    result.error = `Invalid JSON: ${error.message}`;
+  }
+  return result;
+}
+
+function readMcpTomlConfig(file, serverPath) {
+  const result = { file, registered: false, healthy: false };
+  if (!existsSync(file)) return result;
+  const text = readFileSync(file, 'utf8');
+  const match = text.match(/(?:^|\n)\[mcp_servers\.webmcp\]\s*\n([\s\S]*?)(?=\n\s*\[[^\]]+\]|$)/);
+  if (!match) return result;
+  result.registered = true;
+  const command = match[1].match(/^\s*command\s*=\s*"((?:\\.|[^"])*)"\s*$/m);
+  const args = match[1].match(/^\s*args\s*=\s*(\[[^\n]*\])\s*$/m);
+  try { result.command = command ? JSON.parse(`"${command[1]}"`) : undefined; } catch { result.command = undefined; }
+  try { result.args = args ? JSON.parse(args[1]) : []; } catch { result.args = []; }
+  result.mode = result.command === process.execPath ? 'durable' : result.command === 'npx' ? 'published' : 'unknown';
+  result.healthy = (result.command === process.execPath && result.args.length === 1 && result.args[0] === serverPath)
+    || (result.command === 'npx' && JSON.stringify(result.args) === JSON.stringify(['-y', PACKAGE_NAME, 'mcp']));
+  if (!result.command || !args) result.error = 'MCP command or args is missing';
+  else if (!result.healthy) result.error = 'Registered MCP entry does not point to the WebMCP adapter';
+  return result;
+}
+
+async function probeMcpTools(serverPath) {
+  return new Promise((resolveProbe) => {
+    const child = spawn(process.execPath, [serverPath], {
+      cwd: ROOT,
+      env: { ...process.env, WEBMCP_NO_AUTOSTART: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timer;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill('SIGTERM');
+      resolveProbe(result);
+    };
+    timer = setTimeout(() => finish({ ok: false, error: 'MCP adapter handshake timed out' }), 4000);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+      for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        let message;
+        try { message = JSON.parse(line); } catch { continue; }
+        if (message.id !== 2) continue;
+        if (message.error) finish({ ok: false, error: message.error.message || 'tools/list failed' });
+        else finish({
+          ok: true,
+          toolCount: Array.isArray(message.result?.tools) ? message.result.tools.length : 0,
+          toolNames: Array.isArray(message.result?.tools) ? message.result.tools.map((tool) => tool.name) : [],
+        });
+      }
+    });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', (error) => finish({ ok: false, error: error.message }));
+    child.on('exit', (code) => {
+      if (!settled) finish({ ok: false, error: stderr.trim() || `MCP adapter exited with code ${code}` });
+    });
+
+    const write = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    write({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'webmcp-doctor', version: '1' },
+      },
+    });
+    write({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+    write({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  });
+}
+
+async function runDoctor(args) {
+  const json = args.includes('--json');
+  const serverPath = resolve(ROOT, 'server', 'mcp_server.mjs');
+  const packageInfo = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'));
+  const nodeVersion = process.versions.node;
+  const nodeOk = Number.parseInt(nodeVersion.split('.')[0], 10) >= 18;
+
+  let sdkPath = null;
+  let sdkError = null;
+  try {
+    sdkPath = requireFromCli.resolve('@modelcontextprotocol/sdk/server/index.js');
+  } catch (error) {
+    sdkError = error.message;
+  }
+
+  const mcp = existsSync(serverPath) && sdkPath
+    ? await probeMcpTools(serverPath)
+    : { ok: false, error: sdkError || `Adapter not found: ${serverPath}` };
+  const gatewayResult = await fetchJsonOrNull(`${getGatewayBaseUrl()}/health`, {
+    headers: gatewayHeaders(),
+  });
+  const gatewayPayload = gatewayResult?.payload || {};
+  const gatewayReachable = Boolean(gatewayResult?.response?.ok && !gatewayPayload.error);
+  const extensionConnected = Boolean(gatewayPayload.extensionConnected);
+  const gateway = {
+    url: getGatewayBaseUrl(),
+    ok: gatewayReachable && extensionConnected,
+    reachable: gatewayReachable,
+    extensionConnected,
+    profileCount: gatewayPayload.profileCount || 0,
+    extensionVersion: gatewayPayload.profileDetails?.[0]?.extensionVersion || null,
+    error: !gatewayReachable
+      ? (gatewayResult ? gatewayPayload.error || 'Gateway health check failed' : 'Gateway is unreachable')
+      : (extensionConnected ? undefined : 'Gateway is reachable but no WebMCP extension profile is connected'),
+  };
+
+  const home = homedir();
+  const config = {
+    codex: readMcpTomlConfig(resolve(home, '.codex', 'config.toml'), serverPath),
+    gemini: readMcpJsonConfig(resolve(home, '.gemini', 'config', 'mcp_config.json'), serverPath),
+    antigravity: readMcpJsonConfig(resolve(home, '.gemini', 'antigravity-ide', 'mcp_config.json'), serverPath),
+  };
+  const configHealthy = Object.values(config).some((entry) => entry.healthy);
+  const report = {
+    schema: 'webmcp-doctor/1',
+    ok: nodeOk && Boolean(sdkPath) && mcp.ok && configHealthy && gateway.ok,
+    node: { ok: nodeOk, version: nodeVersion, execPath: process.execPath, required: '>=18' },
+    package: { ok: true, name: packageInfo.name, version: packageInfo.version, root: ROOT },
+    mcp: { ...mcp, serverPath, sdk: { ok: Boolean(sdkPath), path: sdkPath, error: sdkError } },
+    config,
+    gateway,
+    next: 'If Codex tools are absent after registration, restart Codex and open a new task; MCP servers are not attached dynamically to an active task.',
+  };
+
+  if (json) console.log(JSON.stringify(report, null, 2));
+  else {
+    console.log(`WebMCP doctor: ${report.ok ? 'OK' : 'NOT READY'}`);
+    console.log(`  MCP adapter: ${mcp.ok ? `${mcp.toolCount} tools` : mcp.error}`);
+    console.log(`  Gateway: ${gateway.ok ? 'reachable' : gateway.error}`);
+    console.log(`  Codex config: ${config.codex.healthy ? 'registered' : 'missing or stale'}`);
+  }
+  return report.ok ? 0 : 1;
 }
 
 async function printHealth({ json = false } = {}) {
@@ -1214,8 +1389,16 @@ async function main() {
   }
 
   if (command === 'mcp') {
+    if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
+      printMcpHelp();
+      return;
+    }
     await import('../server/mcp_server.mjs');
     return;
+  }
+
+  if (command === 'doctor') {
+    process.exit(await runDoctor(args));
   }
 
   if (command === 'gateway') {

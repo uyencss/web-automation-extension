@@ -31,6 +31,16 @@ Every browser action must pass through the WebMCP MCP server.
    transport blocker. Do **not** replace MCP with `curl`, `webmcp call`, direct
    `POST /api`, or a different browser automation stack.
 
+### Codex Desktop attachment boundary
+
+Codex Desktop reads MCP server registrations when a task starts. It cannot
+attach a newly registered MCP server to an already-running task. If no
+`mcp__webmcp__*` tools are exposed, do not start the stdio adapter manually or
+route browser actions around MCP. Run `webmcp doctor --json`, register/fix the
+server with the installer, then restart Codex and open a new task. Until that
+new task exposes the tools, treat the situation as a transport blocker and
+report it explicitly.
+
 `browser_raw_command` is acceptable only as a tool call exposed by the WebMCP
 MCP server and only when the required command has no first-class MCP tool. An
 HTTP health check or launcher command may be used for bootstrap/diagnostics, but

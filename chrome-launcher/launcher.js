@@ -390,7 +390,7 @@ async function launchChrome(options = {}) {
 }
 
 async function closeChrome(options = {}) {
-  const { profileId, all, gatewayUrl = 'http://localhost:7865', token = process.env.WEBMCP_GATEWAY_TOKEN } = options;
+  const { profileId, all, gatewayUrl = 'http://127.0.0.1:7865', token = process.env.WEBMCP_GATEWAY_TOKEN } = options;
   
   // 1. Collect connected profiles from the gateway health endpoint if it is running
   let connectedDetails = [];

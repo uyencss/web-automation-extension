@@ -2,7 +2,7 @@
 
 const process = require('process');
 
-const DEFAULT_GATEWAY_URL = 'http://localhost:7865/api';
+const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:7865/api';
 const gatewayUrl = process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL;
 const profileId = process.env.WEBMCP_PROFILE_ID || undefined;
 

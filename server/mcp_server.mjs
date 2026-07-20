@@ -13,7 +13,7 @@ import {
 
 import { buildMcpTools } from './mcp-tool-catalog.mjs';
 
-const DEFAULT_GATEWAY_URL = 'http://localhost:7865';
+const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:7865';
 const gatewayUrl = normalizeGatewayUrl(process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL);
 const profileId = process.env.WEBMCP_PROFILE_ID || undefined;
 const serverDir = dirname(fileURLToPath(import.meta.url));

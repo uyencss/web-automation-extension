@@ -30,6 +30,50 @@ test('webmcp workflow delegates to the workflow dispatcher CLI', () => {
   assert.equal(payload.validation.valid, true);
 });
 
+test('webmcp mcp --help exits without starting the stdio adapter', () => {
+  const result = spawnSync(process.execPath, [BIN, 'mcp', '--help'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 3000,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /webmcp mcp/);
+  assert.match(result.stdout, /stdio MCP adapter/);
+});
+
+test('webmcp doctor reports MCP readiness, config state, and gateway health as JSON', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-'));
+  mkdirSync(path.join(home, '.codex'), { recursive: true });
+  writeFileSync(path.join(home, '.codex', 'config.toml'), [
+    '[mcp_servers.webmcp]',
+    `command = ${JSON.stringify(process.execPath)}`,
+    `args = ${JSON.stringify([path.join(ROOT, 'server', 'mcp_server.mjs')])}`,
+    '',
+  ].join('\n'));
+
+  const result = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 10000,
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
+      WEBMCP_NO_AUTOSTART: '1',
+    },
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.schema, 'webmcp-doctor/1');
+  assert.equal(report.mcp.ok, true, report.mcp.error);
+  assert.ok(report.mcp.toolCount > 0);
+  assert.equal(report.config.codex.registered, true);
+  assert.equal(report.config.codex.healthy, true);
+  assert.equal(report.gateway.ok, false);
+});
+
 test('webmcp workflow help uses the webmcp workflow command name', () => {
   const result = spawnSync(process.execPath, [BIN, 'workflow', '--help'], {
     cwd: WORKSPACE_ROOT,
