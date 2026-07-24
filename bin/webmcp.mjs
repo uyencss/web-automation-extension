@@ -996,7 +996,7 @@ function readSkillInventory() {
       const data = JSON.parse(readFileSync(file, 'utf8'));
       const superseded = Array.isArray(data.supersededSkills) ? data.supersededSkills : [];
       if (data.schema === 'webmcp-kit/1' && Array.isArray(data.skills)) {
-        return { file, root: dirname(file), skills: data.skills, superseded };
+        return { file, root: dirname(file), kitId: data.kitId ?? 'webmcp-automation-kit', skills: data.skills, superseded };
       }
       if (data.schema === 'webmcp-skill-catalog/1' && Array.isArray(data.skills)) {
         return { file, root: resolve(dirname(file), '..'), skills: data.skills, superseded };
@@ -1092,6 +1092,33 @@ function resolveSkillsMode(receipt) {
   return receipt?.skillsMode === 'separate' ? 'separate' : 'umbrella';
 }
 
+function receiptOwners(receipt) {
+  if (!receipt) return {};
+  if (receipt.schema === 'webmcp-install-receipt/2' && receipt.owners && typeof receipt.owners === 'object') {
+    return receipt.owners;
+  }
+  if (receipt.schema === 'webmcp-install-receipt/1' || receipt.providers) {
+    return {
+      'webmcp-automation-kit': {
+        installedAt: receipt.installedAt ?? null,
+        skillsMode: receipt.skillsMode ?? 'umbrella',
+        providers: receipt.providers ?? {},
+      },
+    };
+  }
+  return {};
+}
+
+function receiptOwner(receipt, kitId) {
+  return receiptOwners(receipt)[kitId] ?? null;
+}
+
+function receiptInstalledEntries(receipt) {
+  return Object.values(receiptOwners(receipt))
+    .flatMap((owner) => Object.values(owner.providers || {}))
+    .flatMap((provider) => provider.entries || []);
+}
+
 function publicSkillNames(inventory, mode) {
   return inventory.skills
     .filter((skill) => mode === 'separate'
@@ -1104,21 +1131,26 @@ function publicSkillNames(inventory, mode) {
 
 function doctorSkillNames(inventory, receipt, mode) {
   const expected = new Set(publicSkillNames(inventory, mode));
-  const installed = new Set(Object.values(receipt?.providers || {}).flatMap((value) => value.entries || []));
+  const installed = new Set(receiptInstalledEntries(receipt));
   for (const skill of inventory.skills) {
     if (installed.has(skill.name)) expected.add(skill.name);
   }
   return expected;
 }
 
-function receiptRemovalPlan(receipt, inventory, providerFilter, mode) {
+function receiptRemovalPlan(receipt, ownerReceipt, kitId, inventory, providerFilter, mode) {
   const desired = new Set(publicSkillNames(inventory, mode));
   const removals = [];
-  for (const [provider, value] of Object.entries(receipt?.providers || {})) {
+  const otherOwners = Object.entries(receiptOwners(receipt)).filter(([ownerId]) => ownerId !== kitId);
+  for (const [provider, value] of Object.entries(ownerReceipt?.providers || {})) {
     if (providerFilter && providerFilter !== '*' && provider !== providerFilter) continue;
     const keep = providerFilter ? new Set() : desired;
     for (const name of value.entries || []) {
-      if (!keep.has(name)) removals.push({ provider, name, path: receiptTarget(value.root, name) });
+      const shared = otherOwners.some(([, owner]) => {
+        const other = owner.providers?.[provider];
+        return other && resolve(other.root) === resolve(value.root) && (other.entries || []).includes(name);
+      });
+      if (!keep.has(name) && !shared) removals.push({ provider, name, path: receiptTarget(value.root, name) });
     }
   }
   return removals;
@@ -1131,13 +1163,16 @@ function applyReceiptRemovals(removals, dryRun) {
   }
 }
 
-function writeSkillsReceipt(receipt, providers, mode) {
+function writeSkillsReceipt(receipt, providers, mode, kitId) {
   const file = skillsReceiptPath();
   mkdirSync(dirname(file), { recursive: true });
+  const updatedAt = new Date().toISOString();
+  const owners = {
+    ...receiptOwners(receipt),
+    [kitId]: { installedAt: updatedAt, skillsMode: mode, providers },
+  };
   writeFileSync(file, `${JSON.stringify({
-    schema: 'webmcp-install-receipt/1', version: 1,
-    installedAt: new Date().toISOString(), skillsMode: mode,
-    providers,
+    schema: 'webmcp-install-receipt/2', version: 2, updatedAt, owners,
   }, null, 2)}\n`);
 }
 
@@ -1159,6 +1194,7 @@ function runSkills(args) {
     return 1;
   }
   const skills = skillReport(inventory);
+  const kitId = process.env.WEBMCP_KIT_ID || inventory.kitId || 'webmcp-automation-kit';
 
   if (subcommand === 'list') {
     if (options.includes('--json')) {
@@ -1198,11 +1234,11 @@ function runSkills(args) {
 
   if (subcommand === 'doctor') {
     const receipt = readSkillsReceipt();
-    const mode = resolveSkillsMode(receipt);
+    const mode = resolveSkillsMode(receiptOwner(receipt, kitId));
     const expected = doctorSkillNames(inventory, receipt, mode);
     const relevantSkills = skills.filter((skill) => expected.has(skill.name));
     const missing = relevantSkills.filter((skill) => !skill.available).map((skill) => skill.name);
-    const known = new Set(Object.values(receipt?.providers || {}).flatMap((value) => value.entries || []));
+    const known = new Set(receiptInstalledEntries(receipt));
     const orphanCandidates = [];
     for (const [provider, root] of Object.entries(providerSkillRoots())) {
       if (!existsSync(root)) continue;
@@ -1238,7 +1274,8 @@ function runSkills(args) {
       return 1;
     }
     const knownNames = adoptableNames(inventory);
-    const providers = { ...(readSkillsReceipt()?.providers || {}) };
+    const currentReceipt = readSkillsReceipt();
+    const providers = { ...(receiptOwner(currentReceipt, kitId)?.providers || {}) };
     for (const provider of selected) {
       const root = roots[provider];
       const entries = existsSync(root)
@@ -1252,7 +1289,7 @@ function runSkills(args) {
       return 0;
     }
     const mode = Object.values(providers).some((value) => value.entries.includes('webmcp')) ? 'umbrella' : 'separate';
-    writeSkillsReceipt(readSkillsReceipt(), providers, mode);
+    writeSkillsReceipt(currentReceipt, providers, mode, kitId);
     console.log(`Adopted receipt entries for ${selected.join(', ')}.`);
     return 0;
   }
@@ -1270,8 +1307,20 @@ function runSkills(args) {
       console.error('Usage: webmcp skills uninstall --provider <name> | --all [--dry-run] [--yes]');
       return 1;
     }
-    const mode = resolveSkillsMode(receipt);
-    const removals = receiptRemovalPlan(receipt, inventory, subcommand === 'uninstall' ? (all ? '*' : provider) : null, mode);
+    const owner = receiptOwner(receipt, kitId);
+    if (!owner) {
+      console.error(`No install receipt ownership found for ${kitId}; refusing to remove skills.`);
+      return 1;
+    }
+    const mode = resolveSkillsMode(owner);
+    const removals = receiptRemovalPlan(
+      receipt,
+      owner,
+      kitId,
+      inventory,
+      subcommand === 'uninstall' ? (all ? '*' : provider) : null,
+      mode,
+    );
     const dryRun = options.includes('--dry-run') || !options.includes('--yes');
     if (!removals.length) {
       console.log('No receipt-owned skill directories require removal.');
@@ -1281,18 +1330,26 @@ function runSkills(args) {
     } else {
       applyReceiptRemovals(removals, false);
       if (subcommand === 'uninstall' && all) {
-        rmSync(resolve(getWebmcpHome(), 'skills'), { recursive: true, force: true });
+        const owners = { ...receiptOwners(receipt) };
+        delete owners[kitId];
+        if (Object.keys(owners).length === 0) rmSync(skillsReceiptPath(), { force: true });
+        else writeFileSync(skillsReceiptPath(), `${JSON.stringify({
+          schema: 'webmcp-install-receipt/2',
+          version: 2,
+          updatedAt: new Date().toISOString(),
+          owners,
+        }, null, 2)}\n`);
       } else if (subcommand === 'uninstall' && provider) {
-        const providers = { ...receipt.providers };
+        const providers = { ...owner.providers };
         delete providers[provider];
-        writeSkillsReceipt(receipt, providers, mode);
+        writeSkillsReceipt(receipt, providers, mode, kitId);
       } else {
         const desired = new Set(publicSkillNames(inventory, mode));
         const providers = {};
-        for (const [name, value] of Object.entries(receipt.providers || {})) {
+        for (const [name, value] of Object.entries(owner.providers || {})) {
           providers[name] = { root: value.root, entries: (value.entries || []).filter((entry) => desired.has(entry)) };
         }
-        writeSkillsReceipt(receipt, providers, mode);
+        writeSkillsReceipt(receipt, providers, mode, kitId);
       }
       console.log(`Removed ${removals.length} receipt-owned skill director${removals.length === 1 ? 'y' : 'ies'}.`);
     }

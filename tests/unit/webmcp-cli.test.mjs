@@ -309,11 +309,60 @@ test('webmcp skills adopt and prune remove an explicitly adopted legacy skill', 
   });
   assert.equal(result.status, 0, result.stderr);
   const receipt = JSON.parse(readFileSync(path.join(home, '.webmcp/skills/install-receipt.json'), 'utf8'));
-  assert.ok(receipt.providers.codex.entries.includes('workflow-dispatcher-cli'));
+  assert.ok(receipt.owners['webmcp-automation-kit'].providers.codex.entries.includes('workflow-dispatcher-cli'));
 
   result = spawnSync(process.execPath, [BIN, 'skills', 'prune', '--yes'], {
     cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.ok(!existsSync(legacy));
+});
+
+test('webmcp skills doctor unions owners and uninstall removes only the selected kit ownership', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-cli-multi-owner-'));
+  const codexRoot = path.join(home, '.codex/skills');
+  const webmcp = path.join(codexRoot, 'webmcp');
+  const zalo = path.join(codexRoot, 'zalo-bot-messaging');
+  mkdirSync(webmcp, { recursive: true });
+  mkdirSync(zalo, { recursive: true });
+  writeFileSync(path.join(webmcp, 'SKILL.md'), 'automation owned');
+  writeFileSync(path.join(zalo, 'SKILL.md'), 'ops owned');
+  const receiptPath = path.join(home, '.webmcp/skills/install-receipt.json');
+  mkdirSync(path.dirname(receiptPath), { recursive: true });
+  writeFileSync(receiptPath, JSON.stringify({
+    schema: 'webmcp-install-receipt/2',
+    version: 2,
+    owners: {
+      'webmcp-automation-kit': {
+        skillsMode: 'umbrella',
+        providers: { codex: { root: codexRoot, entries: ['webmcp'] } },
+      },
+      'webmcp-ops-kit': {
+        skillsMode: 'separate',
+        providers: { codex: { root: codexRoot, entries: ['zalo-bot-messaging'] } },
+      },
+    },
+  }));
+  const env = {
+    ...process.env,
+    HOME: home,
+    WEBMCP_HOME: path.join(home, '.webmcp'),
+    WEBMCP_KIT_MANIFEST: path.resolve(ROOT, '..', '..', 'webmcp-kit.json'),
+  };
+
+  let result = spawnSync(process.execPath, [BIN, 'skills', 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).receiptPresent, true);
+
+  result = spawnSync(process.execPath, [BIN, 'skills', 'uninstall', '--all', '--yes'], {
+    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!existsSync(webmcp));
+  assert.ok(existsSync(zalo));
+  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+  assert.ok(!receipt.owners['webmcp-automation-kit']);
+  assert.deepEqual(receipt.owners['webmcp-ops-kit'].providers.codex.entries, ['zalo-bot-messaging']);
 });
