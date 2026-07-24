@@ -87,6 +87,7 @@ async function run() {
     }, 'both profiles registered');
 
     const health = await getHealth();
+    assert.strictEqual(health.schema, 'webmcp-browser-gateway-health/1', 'health schema is pinned');
     assert.ok(health.profiles.includes('profile-A'), 'health lists profile-A');
     assert.ok(health.profiles.includes('profile-B'), 'health lists profile-B');
     assert.strictEqual(health.profileCount, 2, 'profileCount is 2');

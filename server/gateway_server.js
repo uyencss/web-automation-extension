@@ -170,6 +170,7 @@ const server = http.createServer((req, res) => {
     const profileDetails = connectedProfileDetails();
     return writeJson(res, 200, {
       ok: true,
+      schema: 'webmcp-browser-gateway-health/1',
       extensionConnected: profiles.length > 0,
       profiles,
       profileDetails,
