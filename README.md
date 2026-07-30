@@ -496,7 +496,22 @@ webmcp -h
 | `npm run install:codex`                 | Copy skill to `~/.codex/skills` and add MCP to `~/.codex/config.toml`.              |
 | `npm run install:cursor`                | Write global `~/.cursor/mcp.json` if absent.                                        |
 | `npm run health`                        | Send `ping` through the gateway to confirm extension connectivity.                  |
-| `npm run cli -- doctor --json`          | Check Node/MCP dependencies, client registration, gateway, and extension readiness. |
+| `npm run cli -- doctor --json`          | Check Node/MCP dependencies, client registration, gateway, extension, dispatcher, skills, role, service, and Tailnet readiness. |
+| `npm run cli -- bootstrap canary --json` | Report redacted live-canary readiness blockers and next actions before running a Vault/profile canary. |
+| `npm run cli -- bootstrap vault-key-plan --json` | Check redacted Vault key-provider readiness and next actions without printing keys or key paths. |
+| `npm run cli -- bootstrap binding-plan --json` | Check redacted canary profile alias and bounded re-auth binding readiness without printing profile IDs or Vault refs. |
+| `npm run cli -- bootstrap tailnet-plan --json` | Check redacted Tailnet/Tailscale CLI and online readiness without printing hostnames, DNS names, or IPs. |
+| `npm run cli -- bootstrap tailnet-apply --yes --json` | Write a redacted Tailnet enrollment receipt only after the machine is already online; it does not perform SSO, ACL, or `tailscale up`. |
+| `npm run cli -- bootstrap profile-candidates --json` | List redacted profile candidates before private operator profile-ID selection. |
+| `npm run cli -- bootstrap enroll-role --json` | Dry-run or write the reviewed local machine role (`operator`, `runner-node`, or `fleet-node`) with `--yes`; writes a redacted enrollment receipt only when applied. |
+| `npm run cli -- bootstrap service-plan --json` | Preview reviewed local service templates for the enrolled role without writing files. |
+| `npm run cli -- bootstrap service-apply --json` | Render reviewed local service templates and a redacted receipt; it does not load OS services. |
+| `npm run cli -- bootstrap service-install-plan --json` | Preview copying reviewed service templates into the OS user-service directory without writing files. |
+| `npm run cli -- bootstrap service-install --yes --json` | Copy reviewed service files into the OS user-service directory and write a redacted receipt; it still does not call `launchctl`, `systemctl`, sudo, or a Windows service loader. |
+| `npm run cli -- bootstrap service-load-plan --json` | Preview loading installed user services through the OS user service manager without changing state. |
+| `npm run cli -- bootstrap service-load --yes --json` | Load installed user services through launchd or systemd user scope and write a redacted receipt; it never uses sudo. |
+| `npm run cli -- bootstrap enroll-alias --json` | Dry-run or write a logical dispatcher profile alias with `--yes`, using `--profile-id` or redacted `--candidate-ordinal`; writes a redacted enrollment receipt only when applied. |
+| `npm run cli -- bootstrap enroll-binding --json` | Dry-run or write reviewed dispatcher `profileBindings` metadata with `--yes`; writes a redacted enrollment receipt only when applied. |
 | `npm run call -- <method> [jsonParams]` | Call one extension command through `POST /api`.                                     |
 | `npm run tools:generate`                | Rebuild the generated skill reference from runtime source files.                    |
 | `npm run tools:check`                   | Fail if the generated reference is stale or capability announcements lack handlers. |

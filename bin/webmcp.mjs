@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
@@ -34,6 +34,10 @@ const AUTOMATION_PACKAGES = [
 const ADB_PACKAGES = [
   '@gyga-browser/webmcp-adb-kit',
 ];
+const SAFE_BOOTSTRAP_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+const BOOTSTRAP_BINDING_DECISIONS = new Set(['approved', 'pending', 'rejected']);
+const BOOTSTRAP_REAUTH_POLICIES = new Set(['manual', 'disabled', 'bounded-one-attempt']);
+const BOOTSTRAP_NODE_ROLES = new Set(['operator', 'runner-node', 'fleet-node']);
 
 function printHelp() {
   console.log(`WebMCP Browser Automation
@@ -45,6 +49,7 @@ Usage:
   webmcp gateway health [--json]
   webmcp health [--json]
   webmcp doctor [--json]
+  webmcp bootstrap plan|apply|canary|vault-key-plan|binding-plan|tailnet-plan|tailnet-apply|profile-candidates|enroll-role|service-plan|service-apply|service-install-plan|service-install|service-load-plan|service-load|enroll-alias|enroll-binding [--json]
   webmcp launch [--name <name> | --profile-id <id>] [--gateway] [--relaunch] [--dry-run] [--json]
   webmcp close [--profile-id <id>] [--all] [--json]
   webmcp quit [--json]
@@ -109,6 +114,34 @@ actions on the MCP transport. Start the gateway separately with:
 `);
 }
 
+function printBootstrapHelp() {
+  console.log(`webmcp bootstrap — local WebMCP machine bootstrap
+
+Usage:
+  webmcp bootstrap plan [--json]
+  webmcp bootstrap apply [--json]
+  webmcp bootstrap canary [--json]
+  webmcp bootstrap vault-key-plan [--json]
+  webmcp bootstrap binding-plan [--json]
+  webmcp bootstrap tailnet-plan [--json]
+  webmcp bootstrap tailnet-apply [--yes] [--json]
+  webmcp bootstrap profile-candidates [--json]
+  webmcp bootstrap enroll-role --role <operator|runner-node|fleet-node> [--yes] [--json]
+  webmcp bootstrap service-plan [--json]
+  webmcp bootstrap service-apply [--json]
+  webmcp bootstrap service-install-plan [--json]
+  webmcp bootstrap service-install [--yes] [--json]
+  webmcp bootstrap service-load-plan [--json]
+  webmcp bootstrap service-load [--yes] [--json]
+  webmcp bootstrap enroll-alias --gateway <id> --alias <id> (--candidate-ordinal <n>|--profile-id <id>) [--yes] [--json]
+  webmcp bootstrap enroll-binding --id <id> --gateway <id> --profile-alias <id> --decision <approved|pending|rejected> [--reauth-policy <policy>] [--credential-purpose-ref <ref>] [--site-account-ref <ref>] [--download-policy <policy>] [--yes] [--json]
+
+Notes:
+  plan/canary/binding-plan/vault-key-plan/profile-candidates are read-only.
+  enroll-* and service apply/install/load write only with --yes and redact local profile,
+  Vault, account, Tailnet, and service path details from command output.`);
+}
+
 function getGatewayBaseUrl() {
   const raw = process.env.WEBMCP_GATEWAY_URL || DEFAULT_GATEWAY_URL;
   const trimmed = raw.replace(/\/+$/, '');
@@ -126,6 +159,558 @@ function gatewayHeaders(extra = {}) {
   const token = process.env.WEBMCP_GATEWAY_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
+}
+
+function readJsonFile(file) {
+  try {
+    return { ok: true, data: JSON.parse(readFileSync(file, 'utf8')) };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
+
+function profileIdFromDispatcherEntry(entry) {
+  if (typeof entry === 'string') return entry.trim();
+  if (!entry || typeof entry !== 'object') return '';
+  const raw = entry.profileId ?? entry.id;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function normalizedReviewDecision(entry) {
+  if (!entry || typeof entry !== 'object') return 'unknown';
+  const raw = entry.decision ?? entry.reviewDecision ?? entry.review?.decision ?? entry.status;
+  if (typeof raw !== 'string') return 'unknown';
+  const value = raw.trim().toLowerCase();
+  if (['approved', 'allow', 'allowed', 'reviewed', 'accepted'].includes(value)) return 'approved';
+  if (['rejected', 'deny', 'denied', 'blocked'].includes(value)) return 'rejected';
+  if (['pending', 'todo', 'unreviewed', 'needs-review'].includes(value)) return 'pending';
+  return 'other';
+}
+
+function summarizeDispatcherProfiles(rawProfiles) {
+  const profiles = rawProfiles && typeof rawProfiles === 'object' && !Array.isArray(rawProfiles)
+    ? rawProfiles
+    : {};
+  const decisions = { approved: 0, rejected: 0, pending: 0, other: 0, unknown: 0 };
+  const trustDomains = new Set();
+  const physicalRefs = new Map();
+  let stringEntries = 0;
+  let objectEntries = 0;
+  let invalidEntries = 0;
+  let missingProfileId = 0;
+  let missingTrustDomain = 0;
+
+  for (const [alias, entry] of Object.entries(profiles)) {
+    const profileId = profileIdFromDispatcherEntry(entry);
+    if (typeof entry === 'string') {
+      stringEntries += 1;
+    } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      objectEntries += 1;
+      decisions[normalizedReviewDecision(entry)] += 1;
+      const trustDomain = typeof entry.trustDomain === 'string' ? entry.trustDomain.trim() : '';
+      if (trustDomain) trustDomains.add(trustDomain);
+      else missingTrustDomain += 1;
+      const physicalRef = entry.physicalProfileHash ?? entry.profileHash ?? entry.physicalProfileIdHash;
+      if (typeof physicalRef === 'string' && physicalRef.trim()) {
+        const key = physicalRef.trim();
+        physicalRefs.set(key, (physicalRefs.get(key) || 0) + 1);
+      }
+    } else {
+      invalidEntries += 1;
+    }
+    if (!profileId) missingProfileId += 1;
+    if (typeof alias !== 'string' || !alias.trim()) invalidEntries += 1;
+  }
+
+  const physicalGroupSizes = [...physicalRefs.values()];
+  return {
+    profileAliases: Object.keys(profiles).length,
+    stringEntries,
+    objectEntries,
+    invalidEntries,
+    missingProfileId,
+    decisions,
+    trustDomains: {
+      count: trustDomains.size,
+      missing: missingTrustDomain,
+    },
+    physicalProfiles: {
+      hashedEntries: physicalGroupSizes.reduce((sum, size) => sum + size, 0),
+      distinctGroups: physicalGroupSizes.length,
+      sharedGroups: physicalGroupSizes.filter((size) => size > 1).length,
+      largestGroupSize: physicalGroupSizes.length ? Math.max(...physicalGroupSizes) : 0,
+    },
+  };
+}
+
+function summarizeDispatcherGatewayProfiles(rawGateways) {
+  const gateways = rawGateways && typeof rawGateways === 'object' && !Array.isArray(rawGateways)
+    ? rawGateways
+    : {};
+  const aggregate = {
+    profileAliases: 0,
+    stringEntries: 0,
+    objectEntries: 0,
+    invalidEntries: 0,
+    missingProfileId: 0,
+    decisions: { approved: 0, rejected: 0, pending: 0, other: 0, unknown: 0 },
+    trustDomains: { count: 0, missing: 0 },
+    physicalProfiles: { hashedEntries: 0, distinctGroups: 0, sharedGroups: 0, largestGroupSize: 0 },
+  };
+  const trustDomains = new Set();
+  const physicalRefs = new Map();
+
+  for (const gateway of Object.values(gateways)) {
+    const summary = summarizeDispatcherProfiles(gateway?.profiles);
+    aggregate.profileAliases += summary.profileAliases;
+    aggregate.stringEntries += summary.stringEntries;
+    aggregate.objectEntries += summary.objectEntries;
+    aggregate.invalidEntries += summary.invalidEntries;
+    aggregate.missingProfileId += summary.missingProfileId;
+    for (const [key, value] of Object.entries(summary.decisions)) aggregate.decisions[key] += value;
+    aggregate.trustDomains.missing += summary.trustDomains.missing;
+    aggregate.physicalProfiles.hashedEntries += summary.physicalProfiles.hashedEntries;
+    aggregate.physicalProfiles.sharedGroups += summary.physicalProfiles.sharedGroups;
+    aggregate.physicalProfiles.largestGroupSize = Math.max(
+      aggregate.physicalProfiles.largestGroupSize,
+      summary.physicalProfiles.largestGroupSize,
+    );
+
+    const profiles = gateway?.profiles && typeof gateway.profiles === 'object' && !Array.isArray(gateway.profiles)
+      ? gateway.profiles
+      : {};
+    for (const entry of Object.values(profiles)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const trustDomain = typeof entry.trustDomain === 'string' ? entry.trustDomain.trim() : '';
+      if (trustDomain) trustDomains.add(trustDomain);
+      const physicalRef = entry.physicalProfileHash ?? entry.profileHash ?? entry.physicalProfileIdHash;
+      if (typeof physicalRef === 'string' && physicalRef.trim()) {
+        const key = physicalRef.trim();
+        physicalRefs.set(key, (physicalRefs.get(key) || 0) + 1);
+      }
+    }
+  }
+
+  const physicalGroupSizes = [...physicalRefs.values()];
+  aggregate.trustDomains.count = trustDomains.size;
+  aggregate.physicalProfiles.distinctGroups = physicalGroupSizes.length;
+  if (physicalGroupSizes.length) {
+    aggregate.physicalProfiles.sharedGroups = physicalGroupSizes.filter((size) => size > 1).length;
+    aggregate.physicalProfiles.largestGroupSize = Math.max(...physicalGroupSizes);
+  }
+  return aggregate;
+}
+
+function summarizeProfileBindings(rawBindings) {
+  const bindings = rawBindings && typeof rawBindings === 'object' && !Array.isArray(rawBindings)
+    ? rawBindings
+    : {};
+  const decisions = { approved: 0, rejected: 0, pending: 0, other: 0, unknown: 0 };
+  let missingGateway = 0;
+  let missingProfileAlias = 0;
+  let withCredentialRefs = 0;
+  let withSiteAccountRef = 0;
+  let withProfileIdentityRef = 0;
+  let runStagingDownloads = 0;
+  let boundedReauth = 0;
+
+  for (const binding of Object.values(bindings)) {
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
+      decisions.unknown += 1;
+      missingGateway += 1;
+      missingProfileAlias += 1;
+      continue;
+    }
+    decisions[normalizedReviewDecision(binding)] += 1;
+    if (typeof binding.gateway !== 'string' || !binding.gateway.trim()) missingGateway += 1;
+    if (typeof binding.profileAlias !== 'string' || !binding.profileAlias.trim()) missingProfileAlias += 1;
+    if (binding.credentialRefs && typeof binding.credentialRefs === 'object' && !Array.isArray(binding.credentialRefs)) {
+      withCredentialRefs += 1;
+    }
+    if (typeof binding.siteAccountRef === 'string' && binding.siteAccountRef.trim()) withSiteAccountRef += 1;
+    if (typeof binding.profileIdentityRef === 'string' && binding.profileIdentityRef.trim()) withProfileIdentityRef += 1;
+    if (binding.downloadPolicy === 'run-staging') runStagingDownloads += 1;
+    if (typeof binding.reauthPolicy === 'string' && binding.reauthPolicy !== 'manual' && binding.reauthPolicy !== 'disabled') {
+      boundedReauth += 1;
+    }
+  }
+
+  return {
+    count: Object.keys(bindings).length,
+    missingGateway,
+    missingProfileAlias,
+    decisions,
+    withCredentialRefs,
+    withSiteAccountRef,
+    withProfileIdentityRef,
+    runStagingDownloads,
+    boundedReauth,
+  };
+}
+
+function readDispatcherReadiness() {
+  const file = resolve(getWebmcpHome(), 'dispatcher.config.json');
+  if (!existsSync(file)) {
+    return {
+      schema: 'webmcp-dispatcher-readiness/1',
+      configured: false,
+      readable: false,
+      path: file,
+      warning: 'dispatcher.config.json not found',
+    };
+  }
+
+  const parsed = readJsonFile(file);
+  if (!parsed.ok) {
+    return {
+      schema: 'webmcp-dispatcher-readiness/1',
+      configured: true,
+      readable: false,
+      path: file,
+      error: parsed.error,
+    };
+  }
+
+  const data = parsed.data && typeof parsed.data === 'object' ? parsed.data : {};
+  const gateways = data.gateways && typeof data.gateways === 'object' && !Array.isArray(data.gateways)
+    ? data.gateways
+    : {};
+  return {
+    schema: 'webmcp-dispatcher-readiness/1',
+    configured: true,
+    readable: true,
+    path: file,
+    configSchema: typeof data.schema === 'string' ? data.schema : null,
+    defaultGatewayConfigured: typeof data.defaultGateway === 'string' && Boolean(data.defaultGateway.trim()),
+    gatewayCount: Object.keys(gateways).length,
+    profiles: data.profiles
+      ? summarizeDispatcherProfiles(data.profiles)
+      : summarizeDispatcherGatewayProfiles(gateways),
+    profileBindings: summarizeProfileBindings(data.profileBindings),
+  };
+}
+
+function dispatcherConfigPath() {
+  return resolve(getWebmcpHome(), 'dispatcher.config.json');
+}
+
+function readDispatcherConfigForWrite() {
+  const file = dispatcherConfigPath();
+  if (!existsSync(file)) {
+    throw new Error('dispatcher.config.json not found');
+  }
+  const parsed = readJsonFile(file);
+  if (!parsed.ok || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
+    throw new Error(`dispatcher.config.json is not a JSON object: ${parsed.error || 'invalid JSON'}`);
+  }
+  return { file, config: parsed.data };
+}
+
+function safeBootstrapId(value, name) {
+  if (typeof value !== 'string' || !SAFE_BOOTSTRAP_ID.test(value)) {
+    throw new Error(`${name} must be a safe id`);
+  }
+  return value;
+}
+
+function maybeSafeBootstrapId(value, name) {
+  if (value === undefined || value === null || value === '') return null;
+  return safeBootstrapId(value, name);
+}
+
+function safeBootstrapProfileId(value, name) {
+  if (typeof value !== 'string'
+    || value.length < 2
+    || value.length > 160
+    || /[\u0000-\u001f\u007f]/.test(value)
+    || value.includes('..')
+    || value.includes('//')
+    || value.includes('\\\\')) {
+    throw new Error(`${name} must be a safe profile id`);
+  }
+  return value;
+}
+
+function shippedDownloadPolicyReadiness() {
+  const installationRoot = resolve(ROOT, '..', '..', 'installation');
+  const checks = [
+    {
+      platform: 'macos',
+      file: resolve(installationRoot, 'extension', 'macos', 'WebMCP-ForceInstall.mobileconfig'),
+      validate: (text) => (
+        text.includes('PromptForDownloadLocation')
+        && text.includes('DownloadDirectory')
+        && !/PromptForDownload(?!Location)/.test(text)
+        && text.includes('/Users/Shared/WebMCP/Downloads')
+      ),
+    },
+    {
+      platform: 'linux',
+      file: resolve(installationRoot, 'extension', 'ubuntu', 'install.sh'),
+      validate: (text) => (
+        text.includes('"PromptForDownloadLocation": false')
+        && text.includes('"DownloadDirectory": "${DOWNLOAD_DIR}"')
+        && text.includes('/var/lib/webmcp/downloads')
+      ),
+    },
+    {
+      platform: 'windows',
+      file: resolve(installationRoot, 'extension', 'windows', 'install.ps1'),
+      validate: (text) => (
+        text.includes('PromptForDownloadLocation')
+        && text.includes('DownloadDirectory')
+        && text.includes('C:\\WebMCP\\Downloads')
+      ),
+    },
+  ];
+  const platforms = checks.map((check) => {
+    if (!existsSync(check.file)) {
+      return { platform: check.platform, ok: false, configured: false, error: 'installer artifact missing' };
+    }
+    const text = readFileSync(check.file, 'utf8');
+    return { platform: check.platform, ok: check.validate(text), configured: true };
+  });
+  return {
+    schema: 'webmcp-download-policy-readiness/1',
+    ok: platforms.every((entry) => entry.ok),
+    policy: {
+      promptForDownloadLocation: false,
+      managedDownloadDirectory: true,
+    },
+    platforms,
+  };
+}
+
+function findExecutable(name) {
+  if (typeof name !== 'string' || !name.trim()) return null;
+  if (name.includes('/') || name.includes('\\')) return existsSync(name) ? name : null;
+  const pathEntries = (process.env.PATH || '').split(':').filter(Boolean);
+  for (const entry of pathEntries) {
+    const candidate = resolve(entry, name);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function readMachineRoleReadiness() {
+  const roleFile = machineRoleConfigPath();
+  let role = typeof process.env.WEBMCP_NODE_ROLE === 'string' && process.env.WEBMCP_NODE_ROLE.trim()
+    ? process.env.WEBMCP_NODE_ROLE.trim()
+    : null;
+  let source = role ? 'env' : 'missing';
+  if (!role && existsSync(roleFile)) {
+    const parsed = readJsonFile(roleFile);
+    if (parsed.ok && parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) {
+      role = typeof parsed.data.role === 'string' && parsed.data.role.trim() ? parsed.data.role.trim() : null;
+      source = role ? 'file' : 'invalid';
+    } else {
+      source = 'invalid';
+    }
+  }
+  const safeRole = role && SAFE_BOOTSTRAP_ID.test(role) ? role : null;
+  return {
+    schema: 'webmcp-machine-role-readiness/1',
+    ok: Boolean(safeRole),
+    role: safeRole,
+    source,
+  };
+}
+
+function machineRoleConfigPath() {
+  return resolve(getWebmcpHome(), 'bootstrap', 'role.config.json');
+}
+
+function expectedServiceIdsForRole(role) {
+  if (role === 'operator') return ['webmcp-gateway'];
+  if (role === 'runner-node') return ['webmcp-gateway', 'webmcp-node-executor'];
+  if (role === 'fleet-node') return ['webmcp-gateway', 'webmcp-node-executor', 'webmcp-fleet-hub'];
+  return ['webmcp-gateway'];
+}
+
+function serviceFileName(id) {
+  if (process.platform === 'darwin') return `io.${id}.plist`;
+  if (process.platform === 'win32') return `${id}.xml`;
+  return `${id}.service`;
+}
+
+function serviceLabel(id) {
+  if (process.platform === 'darwin') return `io.${id}`;
+  return id;
+}
+
+function serviceRegistryDir() {
+  return typeof process.env.WEBMCP_BOOTSTRAP_SERVICE_DIR === 'string' && process.env.WEBMCP_BOOTSTRAP_SERVICE_DIR.trim()
+    ? process.env.WEBMCP_BOOTSTRAP_SERVICE_DIR.trim()
+    : resolve(getWebmcpHome(), 'bootstrap', 'services');
+}
+
+function osServiceInstallDir() {
+  if (typeof process.env.WEBMCP_BOOTSTRAP_OS_SERVICE_DIR === 'string' && process.env.WEBMCP_BOOTSTRAP_OS_SERVICE_DIR.trim()) {
+    return process.env.WEBMCP_BOOTSTRAP_OS_SERVICE_DIR.trim();
+  }
+  if (process.platform === 'darwin') return resolve(homedir(), 'Library', 'LaunchAgents');
+  if (process.platform === 'win32') return resolve(getWebmcpHome(), 'bootstrap', 'os-services');
+  return resolve(homedir(), '.config', 'systemd', 'user');
+}
+
+function serviceLoadStateFile() {
+  return typeof process.env.WEBMCP_BOOTSTRAP_SERVICE_LOAD_STATE_FILE === 'string' && process.env.WEBMCP_BOOTSTRAP_SERVICE_LOAD_STATE_FILE.trim()
+    ? process.env.WEBMCP_BOOTSTRAP_SERVICE_LOAD_STATE_FILE.trim()
+    : null;
+}
+
+function readServiceLoadState() {
+  const file = serviceLoadStateFile();
+  if (!file || !existsSync(file)) return { loadedServices: [] };
+  const parsed = readJsonFile(file);
+  if (!parsed.ok || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
+    return { loadedServices: [] };
+  }
+  return {
+    loadedServices: Array.isArray(parsed.data.loadedServices)
+      ? parsed.data.loadedServices.filter((id) => typeof id === 'string')
+      : [],
+  };
+}
+
+function writeServiceLoadState(ids) {
+  const file = serviceLoadStateFile();
+  if (!file) return false;
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  try { chmodSync(dirname(file), 0o700); } catch { /* best effort */ }
+  writeFileSync(file, `${JSON.stringify({
+    schema: 'webmcp-bootstrap-service-load-state/1',
+    loadedServices: [...new Set(ids)].sort(),
+  }, null, 2)}\n`, { mode: 0o600 });
+  try { chmodSync(file, 0o600); } catch { /* best effort */ }
+  return true;
+}
+
+function isServiceLoaded(id) {
+  const stateFile = serviceLoadStateFile();
+  if (stateFile) return readServiceLoadState().loadedServices.includes(id);
+  if (process.platform === 'darwin') {
+    if (typeof process.getuid !== 'function') return false;
+    const result = spawnSync('launchctl', ['print', `gui/${process.getuid()}/${serviceLabel(id)}`], {
+      encoding: 'utf8',
+      timeout: 3000,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return result.status === 0;
+  }
+  if (process.platform === 'win32') return false;
+  const result = spawnSync('systemctl', ['--user', 'is-active', '--quiet', serviceFileName(id)], {
+    encoding: 'utf8',
+    timeout: 3000,
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  return result.status === 0;
+}
+
+function loadService(id, file) {
+  const stateFile = serviceLoadStateFile();
+  if (stateFile) {
+    const state = readServiceLoadState();
+    writeServiceLoadState([...state.loadedServices, id]);
+    return { ok: true, mode: 'state-file' };
+  }
+  if (process.platform === 'darwin') {
+    if (typeof process.getuid !== 'function') throw new Error('launchd user domain is unavailable');
+    if (isServiceLoaded(id)) return { ok: true, mode: 'already-loaded' };
+    const result = spawnSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, file], {
+      encoding: 'utf8',
+      timeout: 10000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.status !== 0) {
+      throw new Error(`launchd bootstrap failed: ${(result.stderr || result.stdout || 'unknown').trim().slice(0, 200)}`);
+    }
+    return { ok: true, mode: 'launchd' };
+  }
+  if (process.platform === 'win32') {
+    throw new Error('Windows service loading is not automated by this user-scope bootstrap command');
+  }
+  const reload = spawnSync('systemctl', ['--user', 'daemon-reload'], {
+    encoding: 'utf8',
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (reload.status !== 0) {
+    throw new Error(`systemd daemon-reload failed: ${(reload.stderr || reload.stdout || 'unknown').trim().slice(0, 200)}`);
+  }
+  const enable = spawnSync('systemctl', ['--user', 'enable', '--now', serviceFileName(id)], {
+    encoding: 'utf8',
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (enable.status !== 0) {
+    throw new Error(`systemd enable --now failed: ${(enable.stderr || enable.stdout || 'unknown').trim().slice(0, 200)}`);
+  }
+  return { ok: true, mode: 'systemd' };
+}
+
+function collectServiceReadiness(roleReadiness) {
+  const role = roleReadiness.role || 'operator';
+  const serviceRoot = serviceRegistryDir();
+  const osRoot = osServiceInstallDir();
+  const serviceIds = expectedServiceIdsForRole(role);
+  const services = serviceIds.map((id) => {
+    const fileName = serviceFileName(id);
+    const localTemplate = existsSync(resolve(serviceRoot, fileName));
+    const osService = existsSync(resolve(osRoot, fileName));
+    const installed = localTemplate || osService;
+    const loaded = osService ? isServiceLoaded(id) : false;
+    return {
+      id,
+      required: true,
+      installed,
+      loaded,
+      manager: process.platform === 'darwin' ? 'launchd' : process.platform === 'win32' ? 'windows-service' : 'systemd',
+      source: osService ? 'os-user-service' : (localTemplate ? 'local-template' : 'missing'),
+    };
+  });
+  return {
+    schema: 'webmcp-service-readiness/1',
+    ok: services.every((entry) => entry.installed),
+    role,
+    services,
+  };
+}
+
+async function collectTailnetReadiness() {
+  const configuredBin = typeof process.env.WEBMCP_TAILSCALE_BIN === 'string' && process.env.WEBMCP_TAILSCALE_BIN.trim()
+    ? process.env.WEBMCP_TAILSCALE_BIN.trim()
+    : 'tailscale';
+  const bin = findExecutable(configuredBin);
+  let statusPayload = null;
+  let statusAvailable = false;
+  const statusFile = typeof process.env.WEBMCP_TAILSCALE_STATUS_FILE === 'string' && process.env.WEBMCP_TAILSCALE_STATUS_FILE.trim()
+    ? process.env.WEBMCP_TAILSCALE_STATUS_FILE.trim()
+    : null;
+  if (statusFile && existsSync(statusFile)) {
+    const parsed = readJsonFile(statusFile);
+    if (parsed.ok) {
+      statusPayload = parsed.data;
+      statusAvailable = true;
+    }
+  } else if (bin) {
+    const status = await runJsonChild(bin, ['status', '--json'], { timeoutMs: 2500 });
+    if (status.payload) {
+      statusPayload = status.payload;
+      statusAvailable = status.ok;
+    }
+  }
+  const self = statusPayload && typeof statusPayload === 'object' && !Array.isArray(statusPayload)
+    ? statusPayload.Self
+    : null;
+  return {
+    schema: 'webmcp-tailnet-readiness/1',
+    ok: Boolean(bin && self?.Online === true),
+    cliAvailable: Boolean(bin),
+    statusAvailable,
+    online: self?.Online === true,
+    redacted: true,
+  };
 }
 
 function parseJsonParams(raw) {
@@ -259,8 +844,7 @@ async function probeMcpTools(serverPath) {
   });
 }
 
-async function runDoctor(args) {
-  const json = args.includes('--json');
+async function collectDoctorReport() {
   const serverPath = resolve(ROOT, 'server', 'mcp_server.mjs');
   const packageInfo = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8'));
   const nodeVersion = process.versions.node;
@@ -301,26 +885,1314 @@ async function runDoctor(args) {
     gemini: readMcpJsonConfig(resolve(home, '.gemini', 'config', 'mcp_config.json'), serverPath),
     antigravity: readMcpJsonConfig(resolve(home, '.gemini', 'antigravity-ide', 'mcp_config.json'), serverPath),
   };
+  const dispatcher = readDispatcherReadiness();
+  const downloadPolicy = shippedDownloadPolicyReadiness();
+  const skills = buildSkillsDoctorReport();
+  const role = readMachineRoleReadiness();
+  const services = collectServiceReadiness(role);
+  const tailnet = await collectTailnetReadiness();
   const configHealthy = Object.values(config).some((entry) => entry.healthy);
-  const report = {
+  const bootstrap = {
+    schema: 'webmcp-machine-bootstrap-readiness/1',
+    ok: nodeOk && Boolean(sdkPath) && mcp.ok && configHealthy && dispatcher.readable && downloadPolicy.ok && skills.ok && skills.receiptPresent,
+    mcpRegistered: configHealthy,
+    dispatcherConfigured: dispatcher.readable === true,
+    downloadPolicyReady: downloadPolicy.ok === true,
+    skillsReady: skills.ok === true,
+    gatewayReady: gateway.ok === true,
+    receiptPresent: skills.receiptPresent === true,
+    roleConfigured: role.ok === true,
+    serviceReady: services.ok === true,
+    tailnetReady: tailnet.ok === true,
+  };
+  bootstrap.ok = bootstrap.ok && bootstrap.roleConfigured && bootstrap.serviceReady && bootstrap.tailnetReady;
+  return {
     schema: 'webmcp-doctor/1',
-    ok: nodeOk && Boolean(sdkPath) && mcp.ok && configHealthy && gateway.ok,
+    ok: bootstrap.ok && gateway.ok,
     node: { ok: nodeOk, version: nodeVersion, execPath: process.execPath, required: '>=18' },
     package: { ok: true, name: packageInfo.name, version: packageInfo.version, root: ROOT },
     mcp: { ...mcp, serverPath, sdk: { ok: Boolean(sdkPath), path: sdkPath, error: sdkError } },
     config,
     gateway,
+    dispatcher,
+    downloadPolicy,
+    skills,
+    role,
+    services,
+    tailnet,
+    bootstrap,
     next: 'If Codex tools are absent after registration, restart Codex and open a new task; MCP servers are not attached dynamically to an active task.',
   };
+}
+
+async function runDoctor(args) {
+  const json = args.includes('--json');
+  const report = await collectDoctorReport();
 
   if (json) console.log(JSON.stringify(report, null, 2));
   else {
     console.log(`WebMCP doctor: ${report.ok ? 'OK' : 'NOT READY'}`);
-    console.log(`  MCP adapter: ${mcp.ok ? `${mcp.toolCount} tools` : mcp.error}`);
-    console.log(`  Gateway: ${gateway.ok ? 'reachable' : gateway.error}`);
-    console.log(`  Codex config: ${config.codex.healthy ? 'registered' : 'missing or stale'}`);
+    console.log(`  MCP adapter: ${report.mcp.ok ? `${report.mcp.toolCount} tools` : report.mcp.error}`);
+    console.log(`  Gateway: ${report.gateway.ok ? 'reachable' : report.gateway.error}`);
+    console.log(`  Codex config: ${report.config.codex.healthy ? 'registered' : 'missing or stale'}`);
+    console.log(`  Dispatcher config: ${report.dispatcher.readable ? `${report.dispatcher.profiles.profileAliases} profile aliases` : report.dispatcher.warning || report.dispatcher.error}`);
+    console.log(`  Download policy: ${report.downloadPolicy.ok ? 'managed downloads configured in shipped installers' : 'installer policy needs review'}`);
+    console.log(`  Skills: ${report.skills.ok ? `${report.skills.available}/${report.skills.total} available` : `missing ${report.skills.missing.join(', ') || 'inventory'}`}`);
+    console.log(`  Role: ${report.role.ok ? report.role.role : 'missing'}`);
+    console.log(`  Services: ${report.services.ok ? 'ready' : 'missing service registration'}`);
+    console.log(`  Tailnet: ${report.tailnet.ok ? 'online' : 'not ready'}`);
   }
   return report.ok ? 0 : 1;
+}
+
+function bootstrapReceiptPath() {
+  return resolve(getWebmcpHome(), 'bootstrap', 'install-receipt.json');
+}
+
+function bootstrapEnrollmentReceiptPath(kind, id) {
+  return resolve(getWebmcpHome(), 'bootstrap', 'enrollments', `${kind}-${id}.json`);
+}
+
+function plannedStateDirs() {
+  return [
+    { code: 'CREATE_RUNS_DIR', key: 'runs', path: resolve(getWebmcpHome(), 'runs') },
+    { code: 'CREATE_DOWNLOADS_DIR', key: 'downloads', path: resolve(getWebmcpHome(), 'downloads') },
+    { code: 'CREATE_VAULT_DIR', key: 'vault', path: resolve(getWebmcpHome(), 'vault') },
+  ];
+}
+
+function safeBootstrapReceipt(doctor, { applied }) {
+  return {
+    schema: 'webmcp-bootstrap-receipt/1',
+    version: 1,
+    redacted: true,
+    applied: Boolean(applied),
+    createdAt: new Date().toISOString(),
+    package: {
+      name: doctor.package.name,
+      version: doctor.package.version,
+    },
+    node: {
+      ok: doctor.node.ok,
+      version: doctor.node.version,
+      required: doctor.node.required,
+    },
+    readiness: {
+      mcpRegistered: doctor.bootstrap.mcpRegistered,
+      dispatcherConfigured: doctor.bootstrap.dispatcherConfigured,
+      downloadPolicyReady: doctor.bootstrap.downloadPolicyReady,
+      skillsReady: doctor.bootstrap.skillsReady,
+      gatewayReady: doctor.bootstrap.gatewayReady,
+      receiptPresent: true,
+      roleConfigured: doctor.bootstrap.roleConfigured,
+      serviceReady: doctor.bootstrap.serviceReady,
+      tailnetReady: doctor.bootstrap.tailnetReady,
+    },
+    counts: {
+      dispatcherProfiles: doctor.dispatcher?.profiles?.profileAliases ?? 0,
+      profileBindings: doctor.dispatcher?.profileBindings?.count ?? 0,
+      skillsAvailable: doctor.skills?.available ?? 0,
+      skillsTotal: doctor.skills?.total ?? 0,
+      roleServices: Array.isArray(doctor.services?.services) ? doctor.services.services.length : 0,
+      installedRoleServices: Array.isArray(doctor.services?.services)
+        ? doctor.services.services.filter((entry) => entry.installed).length
+        : 0,
+    },
+  };
+}
+
+function safeBootstrapEnrollmentReceipt({ kind, subject }) {
+  return {
+    schema: 'webmcp-bootstrap-enrollment-receipt/1',
+    version: 1,
+    redacted: true,
+    kind,
+    createdAt: new Date().toISOString(),
+    package: {
+      name: PACKAGE_NAME,
+      version: PACKAGE_VERSION,
+    },
+    subject,
+  };
+}
+
+function writeBootstrapEnrollmentReceipt(kind, id, subject) {
+  const receipt = safeBootstrapEnrollmentReceipt({ kind, subject });
+  const receiptFile = bootstrapEnrollmentReceiptPath(kind, id);
+  mkdirSync(dirname(receiptFile), { recursive: true, mode: 0o700 });
+  try { chmodSync(dirname(receiptFile), 0o700); } catch { /* best effort */ }
+  writeFileSync(receiptFile, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  try { chmodSync(receiptFile, 0o600); } catch { /* best effort */ }
+  return receipt;
+}
+
+async function buildBootstrapPlan({ apply = false } = {}) {
+  const doctor = await collectDoctorReport();
+  const dirs = plannedStateDirs();
+  const missingDirs = dirs.filter((entry) => !existsSync(entry.path));
+  const mutations = dirs.map((entry) => ({
+    code: entry.code,
+    status: existsSync(entry.path) ? 'already-present' : (apply ? 'created' : 'pending'),
+    target: entry.key,
+  }));
+  const operatorActions = [];
+  if (!doctor.bootstrap.mcpRegistered) operatorActions.push({ code: 'REGISTER_MCP', status: 'required' });
+  if (!doctor.bootstrap.dispatcherConfigured) operatorActions.push({ code: 'WRITE_DISPATCHER_CONFIG', status: 'required' });
+  if (!doctor.bootstrap.skillsReady || !doctor.skills.receiptPresent) operatorActions.push({ code: 'INSTALL_SKILLS', status: 'required' });
+  if (!doctor.bootstrap.gatewayReady) operatorActions.push({ code: 'START_GATEWAY', status: 'required' });
+  if (!doctor.bootstrap.downloadPolicyReady) operatorActions.push({ code: 'INSTALL_CHROME_POLICY', status: 'required' });
+  if (!doctor.bootstrap.roleConfigured) operatorActions.push({ code: 'SET_NODE_ROLE', status: 'required' });
+  if (!doctor.bootstrap.serviceReady) operatorActions.push({ code: 'INSTALL_ROLE_SERVICES', status: 'required' });
+  if (!doctor.bootstrap.tailnetReady) operatorActions.push({ code: 'CONNECT_TAILNET', status: 'required' });
+
+  let receipt = null;
+  if (apply) {
+    for (const entry of missingDirs) {
+      mkdirSync(entry.path, { recursive: true, mode: 0o700 });
+      try { chmodSync(entry.path, 0o700); } catch { /* best effort */ }
+    }
+    const receiptFile = bootstrapReceiptPath();
+    mkdirSync(dirname(receiptFile), { recursive: true, mode: 0o700 });
+    try { chmodSync(dirname(receiptFile), 0o700); } catch { /* best effort */ }
+    receipt = safeBootstrapReceipt(doctor, { applied: true });
+    writeFileSync(receiptFile, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+    try { chmodSync(receiptFile, 0o600); } catch { /* best effort */ }
+  }
+
+  return {
+    schema: 'webmcp-bootstrap-plan/1',
+    mode: apply ? 'apply' : 'plan',
+    applied: Boolean(apply),
+    ok: apply ? missingDirs.every((entry) => existsSync(entry.path)) : false,
+    readiness: {
+      schema: doctor.bootstrap.schema,
+      ok: doctor.bootstrap.ok,
+      mcpRegistered: doctor.bootstrap.mcpRegistered,
+      dispatcherConfigured: doctor.bootstrap.dispatcherConfigured,
+      downloadPolicyReady: doctor.bootstrap.downloadPolicyReady,
+      skillsReady: doctor.bootstrap.skillsReady,
+      gatewayReady: doctor.bootstrap.gatewayReady,
+      receiptPresent: apply ? true : doctor.bootstrap.receiptPresent,
+      roleConfigured: doctor.bootstrap.roleConfigured,
+      serviceReady: doctor.bootstrap.serviceReady,
+      tailnetReady: doctor.bootstrap.tailnetReady,
+    },
+    mutations,
+    operatorActions,
+    receipt,
+  };
+}
+
+function runJsonChild(command, args, { timeoutMs = 8000 } = {}) {
+  return new Promise((resolveChild) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: { ...process.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveChild(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      finish({ ok: false, status: null, error: 'command timed out' });
+    }, timeoutMs);
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', (error) => finish({ ok: false, status: null, error: error.message }));
+    child.on('exit', (status, signal) => {
+      let payload = null;
+      try { payload = stdout.trim() ? JSON.parse(stdout) : null; } catch { payload = null; }
+      finish({
+        ok: status === 0 && payload && typeof payload === 'object',
+        status,
+        signal,
+        payload,
+        error: payload ? null : (stderr || stdout || 'command returned no JSON').slice(0, 500),
+      });
+    });
+  });
+}
+
+async function collectVaultDoctorReport() {
+  const vaultBin = getVaultBin();
+  if (!vaultBin || !existsSync(vaultBin)) {
+    return {
+      available: false,
+      initialized: false,
+      unlocked: false,
+      error: 'vault CLI not found',
+    };
+  }
+  const result = await runJsonChild(process.execPath, [vaultBin, 'doctor', '--json']);
+  const payload = result.payload && typeof result.payload === 'object' ? result.payload : {};
+  return {
+    available: true,
+    initialized: payload.initialized === true,
+    unlocked: payload.unlocked === true,
+    key: {
+      available: payload.key?.available === true,
+      source: typeof payload.key?.source === 'string' ? payload.key.source : 'unknown',
+      conflict: payload.key?.conflict === true,
+      lengthBucket: typeof payload.key?.lengthBucket === 'string' ? payload.key.lengthBucket : 'unknown',
+      strengthBucket: typeof payload.key?.strengthBucket === 'string' ? payload.key.strengthBucket : 'unknown',
+      keyFileConfigured: payload.key?.keyFile?.configured === true,
+    },
+    error: result.ok ? null : result.error || null,
+  };
+}
+
+function declaredProfileAlias(config, alias) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+  const topProfiles = config.profiles && typeof config.profiles === 'object' && !Array.isArray(config.profiles)
+    ? config.profiles
+    : {};
+  if (Object.hasOwn(topProfiles, alias)) return true;
+  const gateways = config.gateways && typeof config.gateways === 'object' && !Array.isArray(config.gateways)
+    ? config.gateways
+    : {};
+  return Object.values(gateways).some((gateway) => Object.hasOwn(
+    gateway?.profiles && typeof gateway.profiles === 'object' && !Array.isArray(gateway.profiles)
+      ? gateway.profiles
+      : {},
+    alias,
+  ));
+}
+
+function readBinding(config, id) {
+  const bindings = config?.profileBindings && typeof config.profileBindings === 'object' && !Array.isArray(config.profileBindings)
+    ? config.profileBindings
+    : {};
+  const binding = bindings[id];
+  return binding && typeof binding === 'object' && !Array.isArray(binding) ? binding : null;
+}
+
+function redactedBindingStatus(binding) {
+  const decision = normalizedReviewDecision(binding);
+  const reauthPolicy = typeof binding?.reauthPolicy === 'string' ? binding.reauthPolicy : null;
+  const hasCredentialRef = Boolean(binding?.credentialRefs && typeof binding.credentialRefs === 'object' && !Array.isArray(binding.credentialRefs));
+  const hasSiteAccountRef = typeof binding?.siteAccountRef === 'string' && Boolean(binding.siteAccountRef.trim());
+  const hasProfileIdentityRef = typeof binding?.profileIdentityRef === 'string' && Boolean(binding.profileIdentityRef.trim());
+  const downloadPolicy = typeof binding?.downloadPolicy === 'string' ? binding.downloadPolicy : null;
+  return {
+    declared: Boolean(binding),
+    gateway: typeof binding?.gateway === 'string' && binding.gateway.trim() ? binding.gateway : null,
+    profileAlias: typeof binding?.profileAlias === 'string' && binding.profileAlias.trim() ? binding.profileAlias : null,
+    decision,
+    reauthPolicy,
+    reauthReady: reauthPolicy === 'bounded-one-attempt' && hasCredentialRef,
+    hasCredentialRef,
+    hasSiteAccountRef,
+    hasProfileIdentityRef,
+    downloadPolicy,
+  };
+}
+
+function bindingPlanNextAction(action) {
+  if (action.code === 'ENROLL_CANARY_PROFILE_ALIAS') {
+    return { code: action.code, command: 'webmcp bootstrap profile-candidates --json && webmcp bootstrap enroll-alias --gateway local --alias local-auth-fixture --candidate-ordinal <n> --yes --json', note: 'Pick the operator-reviewed redacted candidate ordinal for the local auth fixture profile.' };
+  }
+  if (action.code === 'ENROLL_PROFILE_BINDING' || action.code === 'APPROVE_PROFILE_BINDING' || action.code === 'ENROLL_BOUNDED_REAUTH_BINDING') {
+    return { code: action.code, command: 'webmcp bootstrap enroll-binding --id local-auth-fixture --gateway local --profile-alias local-auth-fixture --decision approved --reauth-policy bounded-one-attempt --credential-purpose-ref <purpose-ref> --site-account-ref <site-account-ref> --download-policy run-staging --yes --json', note: 'Write only reviewed opaque refs; command output and receipt remain redacted.' };
+  }
+  if (action.code === 'ADD_SITE_ACCOUNT_REF') {
+    return { code: action.code, command: 'webmcp bootstrap enroll-binding --id local-auth-fixture --gateway local --profile-alias local-auth-fixture --decision approved --reauth-policy bounded-one-attempt --credential-purpose-ref <purpose-ref> --site-account-ref <site-account-ref> --yes --json', note: 'Add the reviewed site account opaque ref before live account verification.' };
+  }
+  return { code: action.code, command: 'webmcp bootstrap binding-plan --json', note: 'Review binding readiness.' };
+}
+
+function buildBindingPlan() {
+  const { config } = readDispatcherConfigForWrite();
+  const aliasId = 'local-auth-fixture';
+  const bindingId = 'local-auth-fixture';
+  const aliasDeclared = declaredProfileAlias(config, aliasId);
+  const binding = readBinding(config, bindingId);
+  const bindingStatus = redactedBindingStatus(binding);
+  const actions = [];
+  if (!aliasDeclared) actions.push({ code: 'ENROLL_CANARY_PROFILE_ALIAS', status: 'required' });
+  if (!bindingStatus.declared) actions.push({ code: 'ENROLL_PROFILE_BINDING', status: 'required' });
+  else {
+    if (bindingStatus.decision !== 'approved') actions.push({ code: 'APPROVE_PROFILE_BINDING', status: 'required' });
+    if (!bindingStatus.reauthReady) actions.push({ code: 'ENROLL_BOUNDED_REAUTH_BINDING', status: 'required' });
+    if (!bindingStatus.hasSiteAccountRef) actions.push({ code: 'ADD_SITE_ACCOUNT_REF', status: 'required' });
+  }
+  return {
+    schema: 'webmcp-bootstrap-binding-plan/1',
+    version: 1,
+    ok: actions.length === 0,
+    redacted: true,
+    alias: {
+      id: aliasId,
+      declared: aliasDeclared,
+    },
+    binding: {
+      id: bindingId,
+      ...bindingStatus,
+    },
+    actions,
+    nextActions: actions.map(bindingPlanNextAction),
+    next: actions.length
+      ? 'Resolve binding actions, then re-run webmcp bootstrap binding-plan --json.'
+      : 'Re-run webmcp bootstrap canary --json; canary alias and binding readiness are satisfied.',
+  };
+}
+
+async function buildBootstrapCanaryReadiness() {
+  const doctor = await collectDoctorReport();
+  const vault = await collectVaultDoctorReport();
+  const bindingSummary = doctor.dispatcher?.profileBindings ?? {};
+  const { config: dispatcherConfig } = doctor.dispatcher?.readable ? readDispatcherConfigForWrite() : { config: null };
+  const declaredCanaryProfileAlias = Boolean(dispatcherConfig && (
+    Object.hasOwn(dispatcherConfig.profiles && typeof dispatcherConfig.profiles === 'object' && !Array.isArray(dispatcherConfig.profiles)
+      ? dispatcherConfig.profiles
+      : {}, 'local-auth-fixture')
+    || Object.values(dispatcherConfig.gateways && typeof dispatcherConfig.gateways === 'object' && !Array.isArray(dispatcherConfig.gateways)
+      ? dispatcherConfig.gateways
+      : {}).some((gateway) => Object.hasOwn(gateway?.profiles && typeof gateway.profiles === 'object' && !Array.isArray(gateway.profiles)
+        ? gateway.profiles
+        : {}, 'local-auth-fixture'))
+  ));
+  const blockers = [];
+  if (!doctor.bootstrap.mcpRegistered) blockers.push({ code: 'REGISTER_MCP', status: 'required' });
+  if (!doctor.bootstrap.dispatcherConfigured) blockers.push({ code: 'WRITE_DISPATCHER_CONFIG', status: 'required' });
+  if (!doctor.bootstrap.skillsReady || !doctor.skills.receiptPresent) blockers.push({ code: 'INSTALL_SKILLS', status: 'required' });
+  if (!doctor.bootstrap.gatewayReady) blockers.push({ code: 'START_GATEWAY', status: 'required' });
+  if (!doctor.bootstrap.downloadPolicyReady) blockers.push({ code: 'INSTALL_CHROME_POLICY', status: 'required' });
+  if (!doctor.bootstrap.roleConfigured) blockers.push({ code: 'SET_NODE_ROLE', status: 'required' });
+  if (!doctor.bootstrap.serviceReady) blockers.push({ code: 'INSTALL_ROLE_SERVICES', status: 'required' });
+  if (!doctor.bootstrap.tailnetReady) blockers.push({ code: 'CONNECT_TAILNET', status: 'required' });
+  if (!vault.available) blockers.push({ code: 'INSTALL_VAULT_CLI', status: 'required' });
+  else if (!vault.initialized) blockers.push({ code: 'INITIALIZE_VAULT', status: 'required' });
+  else if (!vault.unlocked) blockers.push({ code: 'UNLOCK_VAULT', status: 'required' });
+  if (!declaredCanaryProfileAlias) blockers.push({ code: 'ENROLL_CANARY_PROFILE_ALIAS', status: 'required' });
+  if ((bindingSummary.count ?? 0) < 1) blockers.push({ code: 'ENROLL_PROFILE_BINDING', status: 'required' });
+  if ((bindingSummary.boundedReauth ?? 0) < 1) blockers.push({ code: 'ENROLL_BOUNDED_REAUTH_BINDING', status: 'required' });
+
+  const ok = blockers.length === 0;
+  const nextActions = blockers.map((blocker) => {
+    if (blocker.code === 'REGISTER_MCP') {
+      return { code: blocker.code, command: 'webmcp bootstrap apply --json', note: 'Apply local bootstrap state, then restart Codex so MCP registrations are loaded by the new task.' };
+    }
+    if (blocker.code === 'WRITE_DISPATCHER_CONFIG') {
+      return { code: blocker.code, command: 'webmcp bootstrap apply --json', note: 'Create the local dispatcher/bootstrap roots before enrollment.' };
+    }
+    if (blocker.code === 'INSTALL_SKILLS') {
+      return { code: blocker.code, command: 'webmcp skills adopt --all --yes && webmcp bootstrap apply --json', note: 'Adopt reviewed WebMCP skills, then refresh bootstrap receipt.' };
+    }
+    if (blocker.code === 'START_GATEWAY') {
+      return { code: blocker.code, command: 'webmcp gateway start', note: 'Start the local Gateway before re-running canary readiness.' };
+    }
+    if (blocker.code === 'INSTALL_CHROME_POLICY') {
+      return { code: blocker.code, command: 'webmcp bootstrap plan --json', note: 'Review the OS-specific installer action for managed downloads; policy install may require operator/admin action.' };
+    }
+    if (blocker.code === 'SET_NODE_ROLE') {
+      return { code: blocker.code, command: 'webmcp bootstrap enroll-role --role <operator|runner-node|fleet-node> --yes --json', note: 'Select and persist a reviewed node role before role-specific service install.' };
+    }
+    if (blocker.code === 'INSTALL_ROLE_SERVICES') {
+      return { code: blocker.code, command: 'webmcp bootstrap service-plan --json && webmcp bootstrap service-apply --json', note: 'Render reviewed local service templates before any OS-level service installation.' };
+    }
+    if (blocker.code === 'CONNECT_TAILNET') {
+      return { code: blocker.code, command: 'tailscale status --json && webmcp doctor --json', note: 'Connect the node to the reviewed Tailnet; doctor output remains redacted.' };
+    }
+    if (blocker.code === 'INSTALL_VAULT_CLI') {
+      return { code: blocker.code, command: 'webmcp vault doctor --json', note: 'Confirm Vault Kit availability before credential-bound canaries.' };
+    }
+    if (blocker.code === 'INITIALIZE_VAULT') {
+      return { code: blocker.code, command: 'WEBMCP_VAULT_KEY_FILE=<private-key-file> webmcp vault init --json', note: 'Initialize the encrypted local Vault with an operator-private key file.' };
+    }
+    if (blocker.code === 'UNLOCK_VAULT') {
+      return { code: blocker.code, command: 'WEBMCP_VAULT_KEY_FILE=<private-key-file> webmcp bootstrap canary --json', note: 'Re-run readiness with the key available; do not paste the key into shared logs.' };
+    }
+    if (blocker.code === 'ENROLL_CANARY_PROFILE_ALIAS') {
+      return { code: blocker.code, command: 'webmcp bootstrap profile-candidates --json && webmcp bootstrap enroll-alias --gateway local --alias local-auth-fixture --candidate-ordinal <n> --yes --json', note: 'Pick the operator-reviewed redacted candidate ordinal for the local auth fixture profile.' };
+    }
+    if (blocker.code === 'ENROLL_PROFILE_BINDING' || blocker.code === 'ENROLL_BOUNDED_REAUTH_BINDING') {
+      return { code: blocker.code, command: 'webmcp bootstrap enroll-binding --id local-auth-fixture --gateway local --profile-alias local-auth-fixture --decision approved --reauth-policy bounded-one-attempt --credential-purpose-ref <purpose-ref> --site-account-ref <site-account-ref> --download-policy run-staging --yes --json', note: 'Write only reviewed opaque refs; command output and receipt remain redacted.' };
+    }
+    return { code: blocker.code, command: 'webmcp bootstrap plan --json', note: 'Review this blocker before applying changes.' };
+  });
+  return {
+    schema: 'webmcp-bootstrap-canary-readiness/1',
+    version: 1,
+    ok,
+    redacted: true,
+    canary: 'local-auth-fixture-reauth-canary',
+    readiness: {
+      mcpRegistered: doctor.bootstrap.mcpRegistered,
+      dispatcherConfigured: doctor.bootstrap.dispatcherConfigured,
+      downloadPolicyReady: doctor.bootstrap.downloadPolicyReady,
+      skillsReady: doctor.bootstrap.skillsReady,
+      gatewayReady: doctor.bootstrap.gatewayReady,
+      roleConfigured: doctor.bootstrap.roleConfigured,
+      serviceReady: doctor.bootstrap.serviceReady,
+      tailnetReady: doctor.bootstrap.tailnetReady,
+      vaultInitialized: vault.initialized,
+      vaultUnlocked: vault.unlocked,
+      canaryProfileAliasDeclared: declaredCanaryProfileAlias,
+      profileBindings: bindingSummary.count ?? 0,
+      boundedReauthBindings: bindingSummary.boundedReauth ?? 0,
+    },
+    vault: {
+      available: vault.available,
+      initialized: vault.initialized,
+      unlocked: vault.unlocked,
+      key: vault.key ?? null,
+    },
+    blockers,
+    nextActions,
+    next: ok
+      ? 'Run the Store-owned canary through Fleet/Controller from a task with WebMCP MCP tools attached.'
+      : 'Resolve blockers, then re-run webmcp bootstrap canary --json before a live browser canary.',
+  };
+}
+
+async function buildVaultKeyPlan() {
+  const vault = await collectVaultDoctorReport();
+  const actions = [];
+  if (!vault.available) actions.push({ code: 'INSTALL_VAULT_CLI', status: 'required' });
+  else if (!vault.initialized) actions.push({ code: 'INITIALIZE_VAULT', status: 'required' });
+  if (vault.available && !vault.key?.available) actions.push({ code: 'CONFIGURE_VAULT_KEY_FILE', status: 'required' });
+  if (vault.available && vault.key?.available && !vault.unlocked) actions.push({ code: 'FIX_VAULT_KEY', status: 'required' });
+  if (vault.key?.conflict) actions.push({ code: 'REMOVE_VAULT_KEY_CONFLICT', status: 'required' });
+  const nextActions = actions.map((action) => {
+    if (action.code === 'INSTALL_VAULT_CLI') {
+      return { code: action.code, command: 'webmcp vault doctor --json', note: 'Install or expose the WebMCP Vault CLI before credential-bound canaries.' };
+    }
+    if (action.code === 'INITIALIZE_VAULT') {
+      return { code: action.code, command: 'WEBMCP_VAULT_KEY_FILE=<private-key-file> webmcp vault init --json', note: 'Initialize the local encrypted Vault with an operator-private key file.' };
+    }
+    if (action.code === 'CONFIGURE_VAULT_KEY_FILE') {
+      return { code: action.code, command: 'WEBMCP_VAULT_KEY_FILE=<private-key-file> webmcp bootstrap vault-key-plan --json', note: 'Use a private key file; do not paste the key into shared command logs.' };
+    }
+    if (action.code === 'FIX_VAULT_KEY') {
+      return { code: action.code, command: 'WEBMCP_VAULT_KEY_FILE=<private-key-file> webmcp vault doctor --json', note: 'The configured key is present but did not unlock the initialized Vault.' };
+    }
+    if (action.code === 'REMOVE_VAULT_KEY_CONFLICT') {
+      return { code: action.code, command: 'unset WEBMCP_VAULT_KEY; WEBMCP_VAULT_KEY_FILE=<private-key-file> webmcp bootstrap vault-key-plan --json', note: 'Use exactly one Vault key source for deterministic unattended runs.' };
+    }
+    return { code: action.code, command: 'webmcp bootstrap vault-key-plan --json', note: 'Review Vault key-provider readiness.' };
+  });
+  return {
+    schema: 'webmcp-bootstrap-vault-key-plan/1',
+    version: 1,
+    ok: vault.available === true && vault.initialized === true && vault.unlocked === true && vault.key?.conflict !== true,
+    redacted: true,
+    vault: {
+      available: vault.available,
+      initialized: vault.initialized,
+      unlocked: vault.unlocked,
+      key: vault.key ?? null,
+    },
+    actions,
+    nextActions,
+    next: actions.length
+      ? 'Resolve Vault key-provider actions, then re-run webmcp bootstrap vault-key-plan --json.'
+      : 'Re-run webmcp bootstrap canary --json; Vault key-provider readiness is satisfied.',
+  };
+}
+
+function buildBindingEnrollment(args) {
+  const { flags } = parseFlags(args);
+  const id = safeBootstrapId(flags.id, 'id');
+  const gateway = safeBootstrapId(flags.gateway, 'gateway');
+  const profileAlias = safeBootstrapId(flags['profile-alias'], 'profile-alias');
+  const decision = flags.decision ?? 'pending';
+  if (!BOOTSTRAP_BINDING_DECISIONS.has(decision)) {
+    throw new Error('decision must be approved, pending, or rejected');
+  }
+  const reauthPolicy = flags['reauth-policy'] ?? 'manual';
+  if (!BOOTSTRAP_REAUTH_POLICIES.has(reauthPolicy)) {
+    throw new Error('reauth-policy must be manual, disabled, or bounded-one-attempt');
+  }
+  const credentialPurposeRef = maybeSafeBootstrapId(flags['credential-purpose-ref'], 'credential-purpose-ref');
+  const siteAccountRef = maybeSafeBootstrapId(flags['site-account-ref'], 'site-account-ref');
+  const profileIdentityRef = maybeSafeBootstrapId(flags['profile-identity-ref'], 'profile-identity-ref');
+  const downloadPolicy = flags['download-policy'] ?? null;
+  if (downloadPolicy !== null && !['manual', 'run-staging'].includes(downloadPolicy)) {
+    throw new Error('download-policy must be manual or run-staging');
+  }
+  const apply = Boolean(flags.yes);
+  const { file, config } = readDispatcherConfigForWrite();
+  const gateways = config.gateways && typeof config.gateways === 'object' && !Array.isArray(config.gateways)
+    ? config.gateways
+    : {};
+  if (!gateways[gateway]) throw new Error(`gateway ${gateway} is not declared`);
+  const gatewayProfiles = gateways[gateway]?.profiles && typeof gateways[gateway].profiles === 'object' && !Array.isArray(gateways[gateway].profiles)
+    ? gateways[gateway].profiles
+    : {};
+  const topProfiles = config.profiles && typeof config.profiles === 'object' && !Array.isArray(config.profiles)
+    ? config.profiles
+    : {};
+  if (!Object.hasOwn(gatewayProfiles, profileAlias) && !Object.hasOwn(topProfiles, profileAlias)) {
+    throw new Error(`profile alias ${profileAlias} is not declared`);
+  }
+
+  const binding = {
+    gateway,
+    profileAlias,
+    decision,
+    reauthPolicy,
+  };
+  if (downloadPolicy) binding.downloadPolicy = downloadPolicy;
+  if (credentialPurposeRef) binding.credentialRefs = { login: credentialPurposeRef };
+  if (siteAccountRef) binding.siteAccountRef = siteAccountRef;
+  if (profileIdentityRef) binding.profileIdentityRef = profileIdentityRef;
+
+  let receipt = null;
+  if (apply) {
+    const next = {
+      ...config,
+      profileBindings: {
+        ...(config.profileBindings && typeof config.profileBindings === 'object' && !Array.isArray(config.profileBindings)
+          ? config.profileBindings
+          : {}),
+        [id]: binding,
+      },
+    };
+    writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    try { chmodSync(file, 0o600); } catch { /* best effort */ }
+    receipt = writeBootstrapEnrollmentReceipt('binding', id, {
+      id,
+      gateway,
+      profileAlias,
+      decision,
+      reauthPolicy,
+      reauthReady: reauthPolicy !== 'manual' && reauthPolicy !== 'disabled' && Boolean(credentialPurposeRef),
+      hasCredentialRef: Boolean(credentialPurposeRef),
+      hasSiteAccountRef: Boolean(siteAccountRef),
+      hasProfileIdentityRef: Boolean(profileIdentityRef),
+      downloadPolicy: downloadPolicy || null,
+    });
+  }
+
+  return {
+    schema: 'webmcp-bootstrap-binding-enrollment/1',
+    version: 1,
+    applied: apply,
+    redacted: true,
+    dispatcherConfigured: true,
+    binding: {
+      id,
+      gateway,
+      profileAlias,
+      decision,
+      reauthReady: reauthPolicy !== 'manual' && reauthPolicy !== 'disabled' && Boolean(credentialPurposeRef),
+      hasCredentialRef: Boolean(credentialPurposeRef),
+      hasSiteAccountRef: Boolean(siteAccountRef),
+      hasProfileIdentityRef: Boolean(profileIdentityRef),
+      downloadPolicy: downloadPolicy || null,
+    },
+    receipt,
+    next: apply
+      ? 'Re-run webmcp bootstrap canary --json to verify the binding blockers.'
+      : 'Re-run with --yes to write the reviewed profile binding metadata.',
+  };
+}
+
+function buildAliasEnrollment(args) {
+  const { flags } = parseFlags(args);
+  const gateway = safeBootstrapId(flags.gateway, 'gateway');
+  const alias = safeBootstrapId(flags.alias, 'alias');
+  const candidateOrdinal = flags['candidate-ordinal'] === undefined ? null : Number(flags['candidate-ordinal']);
+  if (candidateOrdinal !== null && (!Number.isInteger(candidateOrdinal) || candidateOrdinal < 1 || candidateOrdinal > 999)) {
+    throw new Error('candidate-ordinal must be a positive integer');
+  }
+  if (flags['profile-id'] && candidateOrdinal !== null) {
+    throw new Error('use either profile-id or candidate-ordinal, not both');
+  }
+  let profileId = flags['profile-id'] ? safeBootstrapProfileId(flags['profile-id'], 'profile-id') : null;
+  if (!profileId && candidateOrdinal !== null) {
+    const { listAllProfiles } = getChromeLauncher();
+    const profiles = listAllProfiles();
+    const candidates = [...(profiles.managed || []), ...(profiles.existing || [])];
+    const candidate = candidates[candidateOrdinal - 1];
+    if (!candidate?.id) throw new Error(`candidate ordinal ${candidateOrdinal} is not available`);
+    profileId = safeBootstrapProfileId(candidate.id, 'candidate profile id');
+  }
+  if (!profileId) throw new Error('profile-id or candidate-ordinal is required');
+  const apply = Boolean(flags.yes);
+  const { file, config } = readDispatcherConfigForWrite();
+  const gateways = config.gateways && typeof config.gateways === 'object' && !Array.isArray(config.gateways)
+    ? config.gateways
+    : {};
+  if (!gateways[gateway]) throw new Error(`gateway ${gateway} is not declared`);
+  const gatewayConfig = gateways[gateway] && typeof gateways[gateway] === 'object' && !Array.isArray(gateways[gateway])
+    ? gateways[gateway]
+    : {};
+  const profiles = gatewayConfig.profiles && typeof gatewayConfig.profiles === 'object' && !Array.isArray(gatewayConfig.profiles)
+    ? gatewayConfig.profiles
+    : {};
+
+  let receipt = null;
+  if (apply) {
+    const next = {
+      ...config,
+      gateways: {
+        ...gateways,
+        [gateway]: {
+          ...gatewayConfig,
+          profiles: {
+            ...profiles,
+            [alias]: profileId,
+          },
+        },
+      },
+    };
+    writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    try { chmodSync(file, 0o600); } catch { /* best effort */ }
+    receipt = writeBootstrapEnrollmentReceipt('alias', alias, {
+      id: alias,
+      gateway,
+      candidateOrdinal,
+      profileIdProvided: true,
+      alreadyPresent: Object.hasOwn(profiles, alias),
+    });
+  }
+
+  return {
+    schema: 'webmcp-bootstrap-alias-enrollment/1',
+    version: 1,
+    applied: apply,
+    redacted: true,
+    alias: {
+      id: alias,
+      gateway,
+      profileIdProvided: true,
+      candidateOrdinal,
+      alreadyPresent: Object.hasOwn(profiles, alias),
+    },
+    receipt,
+    next: apply
+      ? 'Re-run webmcp bootstrap canary --json, then enroll reviewed binding metadata if needed.'
+      : 'Re-run with --yes to write the reviewed logical profile alias.',
+  };
+}
+
+function buildProfileCandidates() {
+  const { listAllProfiles } = getChromeLauncher();
+  const profiles = listAllProfiles();
+  const candidates = [];
+  let ordinal = 1;
+  for (const kind of ['managed', 'existing']) {
+    const entries = Array.isArray(profiles[kind]) ? profiles[kind] : [];
+    for (const profile of entries) {
+      candidates.push({
+        ordinal,
+        kind,
+        displayName: typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : `${kind} profile ${ordinal}`,
+        hasEmail: typeof profile.email === 'string' && Boolean(profile.email.trim()),
+      });
+      ordinal += 1;
+    }
+  }
+  return {
+    schema: 'webmcp-bootstrap-profile-candidates/1',
+    version: 1,
+    redacted: true,
+    counts: {
+      managed: Array.isArray(profiles.managed) ? profiles.managed.length : 0,
+      existing: Array.isArray(profiles.existing) ? profiles.existing.length : 0,
+      total: candidates.length,
+    },
+    candidates,
+    next: 'Use bootstrap enroll-alias --candidate-ordinal <n> --yes for the reviewed candidate, or webmcp profiles list --json only in an operator-private terminal if an exact physical profile ID is required.',
+  };
+}
+
+function buildRoleEnrollment(args) {
+  const { flags } = parseFlags(args);
+  const role = safeBootstrapId(flags.role, 'role');
+  if (!BOOTSTRAP_NODE_ROLES.has(role)) {
+    throw new Error('role must be operator, runner-node, or fleet-node');
+  }
+  const apply = Boolean(flags.yes);
+  const serviceIds = expectedServiceIdsForRole(role);
+  let receipt = null;
+  if (apply) {
+    const file = machineRoleConfigPath();
+    const config = {
+      schema: 'webmcp-machine-role-config/1',
+      version: 1,
+      role,
+      serviceIds,
+      createdAt: new Date().toISOString(),
+    };
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    try { chmodSync(dirname(file), 0o700); } catch { /* best effort */ }
+    writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    try { chmodSync(file, 0o600); } catch { /* best effort */ }
+    receipt = writeBootstrapEnrollmentReceipt('role', role, {
+      role,
+      serviceCount: serviceIds.length,
+    });
+  }
+  return {
+    schema: 'webmcp-bootstrap-role-enrollment/1',
+    version: 1,
+    applied: apply,
+    redacted: true,
+    role: {
+      role,
+      serviceIds,
+    },
+    receipt,
+    next: apply
+      ? 'Re-run webmcp bootstrap plan --json to verify role readiness and review required services.'
+      : 'Re-run with --yes to write the reviewed machine role config.',
+  };
+}
+
+function renderServiceTemplate(id, role) {
+  const env = {
+    WEBMCP_HOME: getWebmcpHome(),
+    WEBMCP_GATEWAY_URL: getGatewayBaseUrl(),
+    WEBMCP_NODE_ROLE: role,
+  };
+  if (process.platform === 'darwin') {
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0">',
+      '<dict>',
+      '  <key>Label</key>',
+      `  <string>io.${id}</string>`,
+      '  <key>ProgramArguments</key>',
+      '  <array>',
+      `    <string>${process.execPath}</string>`,
+      `    <string>${resolve(ROOT, 'bin', 'webmcp.mjs')}</string>`,
+      '    <string>gateway</string>',
+      '    <string>start</string>',
+      '  </array>',
+      '  <key>EnvironmentVariables</key>',
+      '  <dict>',
+      ...Object.entries(env).flatMap(([key, value]) => [`    <key>${key}</key>`, `    <string>${value}</string>`]),
+      '  </dict>',
+      '  <key>RunAtLoad</key>',
+      '  <true/>',
+      '  <key>KeepAlive</key>',
+      '  <true/>',
+      '</dict>',
+      '</plist>',
+      '',
+    ].join('\n');
+  }
+  if (process.platform === 'win32') {
+    return [
+      '<service>',
+      `  <id>${id}</id>`,
+      `  <name>${id}</name>`,
+      `  <executable>${process.execPath}</executable>`,
+      `  <arguments>${resolve(ROOT, 'bin', 'webmcp.mjs')} gateway start</arguments>`,
+      `  <env name="WEBMCP_HOME" value="${env.WEBMCP_HOME}" />`,
+      `  <env name="WEBMCP_GATEWAY_URL" value="${env.WEBMCP_GATEWAY_URL}" />`,
+      `  <env name="WEBMCP_NODE_ROLE" value="${env.WEBMCP_NODE_ROLE}" />`,
+      '</service>',
+      '',
+    ].join('\n');
+  }
+  return [
+    '[Unit]',
+    `Description=${id}`,
+    'After=network-online.target',
+    '',
+    '[Service]',
+    'Type=simple',
+    `Environment=WEBMCP_HOME=${env.WEBMCP_HOME}`,
+    `Environment=WEBMCP_GATEWAY_URL=${env.WEBMCP_GATEWAY_URL}`,
+    `Environment=WEBMCP_NODE_ROLE=${env.WEBMCP_NODE_ROLE}`,
+    `ExecStart=${process.execPath} ${resolve(ROOT, 'bin', 'webmcp.mjs')} gateway start`,
+    'Restart=on-failure',
+    'UMask=0077',
+    '',
+    '[Install]',
+    'WantedBy=multi-user.target',
+    '',
+  ].join('\n');
+}
+
+function buildServicePlan({ apply = false } = {}) {
+  const roleReadiness = readMachineRoleReadiness();
+  if (!roleReadiness.ok) {
+    throw new Error('machine role is not enrolled; run bootstrap enroll-role first');
+  }
+  const role = roleReadiness.role;
+  const serviceRoot = serviceRegistryDir();
+  const serviceIds = expectedServiceIdsForRole(role);
+  let receipt = null;
+  const services = serviceIds.map((id) => {
+    const fileName = serviceFileName(id);
+    const target = resolve(serviceRoot, fileName);
+    const present = existsSync(target);
+    return {
+      id,
+      manager: process.platform === 'darwin' ? 'launchd' : process.platform === 'win32' ? 'windows-service' : 'systemd',
+      target: fileName,
+      status: present ? 'already-present' : (apply ? 'rendered' : 'pending'),
+    };
+  });
+
+  if (apply) {
+    mkdirSync(serviceRoot, { recursive: true, mode: 0o700 });
+    try { chmodSync(serviceRoot, 0o700); } catch { /* best effort */ }
+    for (const service of services) {
+      const target = resolve(serviceRoot, service.target);
+      writeFileSync(target, renderServiceTemplate(service.id, role), { mode: 0o600 });
+      try { chmodSync(target, 0o600); } catch { /* best effort */ }
+    }
+    receipt = writeBootstrapEnrollmentReceipt('services', role, {
+      role,
+      serviceCount: services.length,
+      manager: services[0]?.manager || null,
+    });
+  }
+
+  return {
+    schema: 'webmcp-bootstrap-service-plan/1',
+    version: 1,
+    applied: apply,
+    redacted: true,
+    role,
+    services,
+    receipt,
+    next: apply
+      ? 'Re-run webmcp doctor --json to verify local service template readiness before OS service installation.'
+      : 'Re-run bootstrap service-apply --json to render local service templates.',
+  };
+}
+
+function buildServiceInstallPlan({ apply = false } = {}) {
+  const roleReadiness = readMachineRoleReadiness();
+  if (!roleReadiness.ok) {
+    throw new Error('machine role is not enrolled; run bootstrap enroll-role first');
+  }
+  const role = roleReadiness.role;
+  const sourceRoot = serviceRegistryDir();
+  const targetRoot = osServiceInstallDir();
+  const serviceIds = expectedServiceIdsForRole(role);
+  let receipt = null;
+  const services = serviceIds.map((id) => {
+    const fileName = serviceFileName(id);
+    const source = resolve(sourceRoot, fileName);
+    const target = resolve(targetRoot, fileName);
+    const sourcePresent = existsSync(source);
+    const targetPresent = existsSync(target);
+    return {
+      id,
+      manager: process.platform === 'darwin' ? 'launchd' : process.platform === 'win32' ? 'windows-service' : 'systemd',
+      target: fileName,
+      sourceReady: sourcePresent,
+      status: targetPresent ? 'already-installed' : (apply ? 'installed' : 'pending'),
+    };
+  });
+  if (services.some((service) => !service.sourceReady)) {
+    throw new Error('service templates are not rendered; run bootstrap service-apply first');
+  }
+
+  if (apply) {
+    mkdirSync(targetRoot, { recursive: true, mode: 0o700 });
+    try { chmodSync(targetRoot, 0o700); } catch { /* best effort */ }
+    for (const service of services) {
+      const source = resolve(sourceRoot, service.target);
+      const target = resolve(targetRoot, service.target);
+      writeFileSync(target, readFileSync(source, 'utf8'), { mode: 0o600 });
+      try { chmodSync(target, 0o600); } catch { /* best effort */ }
+    }
+    receipt = writeBootstrapEnrollmentReceipt('os-services', role, {
+      role,
+      serviceCount: services.length,
+      manager: services[0]?.manager || null,
+      loaded: false,
+    });
+  }
+
+  return {
+    schema: 'webmcp-bootstrap-service-install-plan/1',
+    version: 1,
+    applied: apply,
+    redacted: true,
+    role,
+    services,
+    receipt,
+    next: apply
+      ? 'Review and load the installed user service with the OS service manager, then re-run webmcp doctor --json.'
+      : 'Re-run bootstrap service-install --yes --json to copy reviewed templates to the user service directory.',
+  };
+}
+
+function buildServiceLoadPlan({ apply = false } = {}) {
+  const roleReadiness = readMachineRoleReadiness();
+  if (!roleReadiness.ok) {
+    throw new Error('machine role is not enrolled; run bootstrap enroll-role first');
+  }
+  const role = roleReadiness.role;
+  const targetRoot = osServiceInstallDir();
+  const serviceIds = expectedServiceIdsForRole(role);
+  let receipt = null;
+  const services = serviceIds.map((id) => {
+    const fileName = serviceFileName(id);
+    const target = resolve(targetRoot, fileName);
+    const installed = existsSync(target);
+    const loaded = installed ? isServiceLoaded(id) : false;
+    return {
+      id,
+      manager: process.platform === 'darwin' ? 'launchd' : process.platform === 'win32' ? 'windows-service' : 'systemd',
+      target: fileName,
+      installed,
+      loaded: apply && installed ? true : loaded,
+      status: loaded ? 'already-loaded' : (apply ? 'loaded' : 'pending'),
+    };
+  });
+  if (services.some((service) => !service.installed)) {
+    throw new Error('OS user service files are not installed; run bootstrap service-install --yes first');
+  }
+
+  if (apply) {
+    for (const service of services) {
+      if (isServiceLoaded(service.id)) continue;
+      loadService(service.id, resolve(targetRoot, service.target));
+    }
+    receipt = writeBootstrapEnrollmentReceipt('service-load', role, {
+      role,
+      serviceCount: services.length,
+      manager: services[0]?.manager || null,
+      loaded: true,
+    });
+  }
+
+  return {
+    schema: 'webmcp-bootstrap-service-load-plan/1',
+    version: 1,
+    applied: apply,
+    redacted: true,
+    role,
+    services,
+    receipt,
+    next: apply
+      ? 'Re-run webmcp doctor --json to verify user service load status.'
+      : 'Re-run bootstrap service-load --yes --json to load reviewed user services.',
+  };
+}
+
+async function buildTailnetPlan({ apply = false } = {}) {
+  const tailnet = await collectTailnetReadiness();
+  const actions = [];
+  if (!tailnet.cliAvailable) actions.push({ code: 'INSTALL_TAILSCALE', status: 'required' });
+  if (!tailnet.online) actions.push({ code: 'CONNECT_TAILNET', status: 'required' });
+  let receipt = null;
+  if (apply) {
+    if (!tailnet.ok) {
+      throw new Error('Tailnet is not online; connect Tailscale first, then re-run tailnet-apply');
+    }
+    receipt = writeBootstrapEnrollmentReceipt('tailnet', 'current', {
+      cliAvailable: tailnet.cliAvailable,
+      statusAvailable: tailnet.statusAvailable,
+      online: tailnet.online,
+    });
+  }
+  return {
+    schema: 'webmcp-bootstrap-tailnet-plan/1',
+    version: 1,
+    ok: tailnet.ok,
+    applied: apply,
+    redacted: true,
+    tailnet,
+    actions,
+    nextActions: actions.map((action) => (action.code === 'INSTALL_TAILSCALE'
+      ? { code: action.code, command: 'Install Tailscale for this OS, then re-run webmcp bootstrap tailnet-plan --json.', note: 'Do not store auth keys or Tailnet hostnames in receipts.' }
+      : { code: action.code, command: 'tailscale up using the operator-approved account/device policy, then re-run webmcp bootstrap tailnet-apply --yes --json.', note: 'This bootstrap command verifies online state; it does not perform SSO or ACL changes.' })),
+    receipt,
+    next: tailnet.ok
+      ? (apply ? 'Re-run webmcp doctor --json to verify Tailnet readiness.' : 'Re-run bootstrap tailnet-apply --yes --json to write the redacted Tailnet receipt.')
+      : 'Resolve Tailnet actions, then re-run bootstrap tailnet-plan --json.',
+  };
+}
+
+async function runBootstrap(args) {
+  const [subcommand = 'plan'] = args.filter((arg) => !arg.startsWith('--'));
+  const json = args.includes('--json');
+  if (args.includes('--help') || args.includes('-h') || subcommand === 'help') {
+    printBootstrapHelp();
+    return 0;
+  }
+  if (!['plan', 'apply', 'canary', 'vault-key-plan', 'binding-plan', 'tailnet-plan', 'tailnet-apply', 'profile-candidates', 'enroll-role', 'service-plan', 'service-apply', 'service-install-plan', 'service-install', 'service-load-plan', 'service-load', 'enroll-alias', 'enroll-binding'].includes(subcommand)) {
+    console.error('Usage: webmcp bootstrap plan|apply|canary|vault-key-plan|binding-plan|tailnet-plan|tailnet-apply|profile-candidates|enroll-role|service-plan|service-apply|service-install-plan|service-install|service-load-plan|service-load|enroll-alias|enroll-binding [--json]');
+    return 2;
+  }
+  if (subcommand === 'canary') {
+    const readiness = await buildBootstrapCanaryReadiness();
+    if (json) console.log(JSON.stringify(readiness, null, 2));
+    else {
+      console.log(`WebMCP bootstrap canary: ${readiness.ok ? 'ready' : 'blocked'}`);
+      console.log(`  Readiness: gateway=${readiness.readiness.gatewayReady ? 'ready' : 'missing'}, vault=${readiness.readiness.vaultUnlocked ? 'unlocked' : 'locked'}`);
+      if (readiness.blockers.length) {
+        console.log(`  Blockers: ${readiness.blockers.map((item) => item.code).join(', ')}`);
+      }
+    }
+    return readiness.ok ? 0 : 1;
+  }
+  if (subcommand === 'vault-key-plan') {
+    const plan = await buildVaultKeyPlan();
+    if (json) console.log(JSON.stringify(plan, null, 2));
+    else {
+      console.log(`WebMCP bootstrap vault-key-plan: ${plan.ok ? 'ready' : 'blocked'}`);
+      if (plan.actions.length) console.log(`  Actions: ${plan.actions.map((item) => item.code).join(', ')}`);
+      console.log(`  Next: ${plan.next}`);
+    }
+    return plan.ok ? 0 : 1;
+  }
+  if (subcommand === 'binding-plan') {
+    try {
+      const plan = buildBindingPlan();
+      if (json) console.log(JSON.stringify(plan, null, 2));
+      else {
+        console.log(`WebMCP bootstrap binding-plan: ${plan.ok ? 'ready' : 'blocked'}`);
+        if (plan.actions.length) console.log(`  Actions: ${plan.actions.map((item) => item.code).join(', ')}`);
+        console.log(`  Next: ${plan.next}`);
+      }
+      return plan.ok ? 0 : 1;
+    } catch (error) {
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-binding-plan/1',
+          ok: false,
+          error: error.message,
+        }, null, 2));
+      } else console.error(error.message);
+      return 2;
+    }
+  }
+  if (subcommand === 'tailnet-plan' || subcommand === 'tailnet-apply') {
+    try {
+      const plan = await buildTailnetPlan({ apply: subcommand === 'tailnet-apply' && args.includes('--yes') });
+      if (json) console.log(JSON.stringify(plan, null, 2));
+      else {
+        console.log(`WebMCP bootstrap ${subcommand}: ${plan.ok ? 'ready' : 'blocked'}`);
+        if (plan.actions.length) console.log(`  Actions: ${plan.actions.map((item) => item.code).join(', ')}`);
+        console.log(`  Next: ${plan.next}`);
+      }
+      return plan.ok ? 0 : 1;
+    } catch (error) {
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-tailnet-plan/1',
+          ok: false,
+          error: error.message,
+        }, null, 2));
+      } else console.error(error.message);
+      return 2;
+    }
+  }
+  if (subcommand === 'profile-candidates') {
+    const candidates = buildProfileCandidates();
+    if (json) console.log(JSON.stringify(candidates, null, 2));
+    else {
+      console.log(`WebMCP bootstrap profile candidates: ${candidates.counts.total}`);
+      for (const candidate of candidates.candidates) {
+        console.log(`  ${candidate.ordinal}. ${candidate.kind}: ${candidate.displayName}${candidate.hasEmail ? ' (email present)' : ''}`);
+      }
+    }
+    return 0;
+  }
+  if (subcommand === 'enroll-role') {
+    try {
+      const enrollment = buildRoleEnrollment(args);
+      if (json) console.log(JSON.stringify(enrollment, null, 2));
+      else {
+        console.log(`WebMCP bootstrap enroll-role: ${enrollment.applied ? 'applied' : 'dry-run'}`);
+        console.log(`  Role: ${enrollment.role.role}`);
+        console.log(`  Next: ${enrollment.next}`);
+      }
+      return 0;
+    } catch (error) {
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-role-enrollment/1',
+          ok: false,
+          error: error.message,
+        }, null, 2));
+      } else console.error(error.message);
+      return 2;
+    }
+  }
+  if (subcommand === 'service-plan' || subcommand === 'service-apply') {
+    try {
+      const plan = buildServicePlan({ apply: subcommand === 'service-apply' });
+      if (json) console.log(JSON.stringify(plan, null, 2));
+      else {
+        console.log(`WebMCP bootstrap ${subcommand}: ${plan.applied ? 'rendered' : 'planned'} ${plan.services.length} service template(s)`);
+        console.log(`  Role: ${plan.role}`);
+        console.log(`  Next: ${plan.next}`);
+      }
+      return 0;
+    } catch (error) {
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-service-plan/1',
+          ok: false,
+          error: error.message,
+        }, null, 2));
+      } else console.error(error.message);
+      return 2;
+    }
+  }
+  if (subcommand === 'service-install-plan' || subcommand === 'service-install') {
+    try {
+      const plan = buildServiceInstallPlan({ apply: subcommand === 'service-install' && args.includes('--yes') });
+      if (json) console.log(JSON.stringify(plan, null, 2));
+      else {
+        console.log(`WebMCP bootstrap ${subcommand}: ${plan.applied ? 'installed' : 'planned'} ${plan.services.length} user service file(s)`);
+        console.log(`  Role: ${plan.role}`);
+        console.log(`  Next: ${plan.next}`);
+      }
+      return 0;
+    } catch (error) {
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-service-install-plan/1',
+          ok: false,
+          error: error.message,
+        }, null, 2));
+      } else console.error(error.message);
+      return 2;
+    }
+  }
+  if (subcommand === 'service-load-plan' || subcommand === 'service-load') {
+    try {
+      const plan = buildServiceLoadPlan({ apply: subcommand === 'service-load' && args.includes('--yes') });
+      if (json) console.log(JSON.stringify(plan, null, 2));
+      else {
+        console.log(`WebMCP bootstrap ${subcommand}: ${plan.applied ? 'loaded' : 'planned'} ${plan.services.length} user service(s)`);
+        console.log(`  Role: ${plan.role}`);
+        console.log(`  Next: ${plan.next}`);
+      }
+      return 0;
+    } catch (error) {
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-service-load-plan/1',
+          ok: false,
+          error: error.message,
+        }, null, 2));
+      } else console.error(error.message);
+      return 2;
+    }
+  }
+  if (subcommand === 'enroll-alias') {
+    try {
+      const enrollment = buildAliasEnrollment(args.slice(1));
+      if (json) console.log(JSON.stringify(enrollment, null, 2));
+      else {
+        console.log(`WebMCP bootstrap enroll-alias: ${enrollment.applied ? 'applied' : 'dry-run'}`);
+        console.log(`  Alias: ${enrollment.alias.id} on ${enrollment.alias.gateway}`);
+      }
+      return 0;
+    } catch (error) {
+      const message = error?.message || String(error);
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-alias-enrollment/1',
+          version: 1,
+          applied: false,
+          redacted: true,
+          ok: false,
+          error: message,
+        }, null, 2));
+      } else {
+        console.error(message);
+      }
+      return 1;
+    }
+  }
+  if (subcommand === 'enroll-binding') {
+    try {
+      const enrollment = buildBindingEnrollment(args.slice(1));
+      if (json) console.log(JSON.stringify(enrollment, null, 2));
+      else {
+        console.log(`WebMCP bootstrap enroll-binding: ${enrollment.applied ? 'applied' : 'dry-run'}`);
+        console.log(`  Binding: ${enrollment.binding.id} -> ${enrollment.binding.gateway}/${enrollment.binding.profileAlias}`);
+        console.log(`  Reauth: ${enrollment.binding.reauthReady ? 'bounded' : 'not ready'}`);
+      }
+      return 0;
+    } catch (error) {
+      const message = error?.message || String(error);
+      if (json) {
+        console.log(JSON.stringify({
+          schema: 'webmcp-bootstrap-binding-enrollment/1',
+          version: 1,
+          applied: false,
+          redacted: true,
+          ok: false,
+          error: message,
+        }, null, 2));
+      } else {
+        console.error(message);
+      }
+      return 1;
+    }
+  }
+  const plan = await buildBootstrapPlan({ apply: subcommand === 'apply' });
+  if (json) console.log(JSON.stringify(plan, null, 2));
+  else {
+    console.log(`WebMCP bootstrap ${plan.mode}: ${plan.applied ? 'applied safe local state' : 'planned safe local state'}`);
+    console.log(`  Readiness: ${plan.readiness.ok ? 'ready' : 'needs operator action'}`);
+    console.log(`  Mutations: ${plan.mutations.map((item) => `${item.target}:${item.status}`).join(', ')}`);
+    if (plan.operatorActions.length) {
+      console.log(`  Operator actions: ${plan.operatorActions.map((item) => item.code).join(', ')}`);
+    }
+  }
+  return 0;
+}
+
+function buildSkillsDoctorReport() {
+  const inventory = readSkillInventory();
+  if (!inventory) {
+    return {
+      schema: 'webmcp-skills-doctor/1',
+      ok: false,
+      inventory: null,
+      total: 0,
+      available: 0,
+      missing: [],
+      receipt: skillsReceiptPath(),
+      receiptPresent: Boolean(readSkillsReceipt()),
+      orphanCandidates: [],
+      error: 'WebMCP skill inventory not found.',
+    };
+  }
+  const receipt = readSkillsReceipt();
+  const kitId = process.env.WEBMCP_KIT_ID || inventory.kitId || 'webmcp-automation-kit';
+  const mode = resolveSkillsMode(receiptOwner(receipt, kitId));
+  const expected = doctorSkillNames(inventory, receipt, mode);
+  const skills = skillReport(inventory);
+  const relevantSkills = skills.filter((skill) => expected.has(skill.name));
+  const missing = relevantSkills.filter((skill) => !skill.available).map((skill) => skill.name);
+  const known = new Set(receiptInstalledEntries(receipt));
+  const orphanCandidates = [];
+  for (const [provider, root] of Object.entries(providerSkillRoots())) {
+    if (!existsSync(root)) continue;
+    for (const name of readdirSync(root)) {
+      if (!known.has(name) && adoptableNames(inventory).has(name)) {
+        orphanCandidates.push({ provider, name, path: resolve(root, name) });
+      }
+    }
+  }
+  return {
+    schema: 'webmcp-skills-doctor/1',
+    ok: missing.length === 0,
+    inventory: inventory.file,
+    total: relevantSkills.length,
+    available: relevantSkills.length - missing.length,
+    missing,
+    receipt: skillsReceiptPath(),
+    receiptPresent: Boolean(receipt),
+    orphanCandidates,
+  };
 }
 
 async function printHealth({ json = false } = {}) {
@@ -1456,6 +3328,10 @@ async function main() {
 
   if (command === 'doctor') {
     process.exit(await runDoctor(args));
+  }
+
+  if (command === 'bootstrap') {
+    process.exit(await runBootstrap(args));
   }
 
   if (command === 'gateway') {
