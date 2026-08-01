@@ -70,6 +70,8 @@ const COMMAND_DEFINITIONS = [
   ['stopConsoleCapture', { group: 'observability', description: 'Stop console capture for a tab and clear its buffered messages.', optionalParams: ['tabId'] }],
   ['readConsoleMessages', { group: 'observability', description: 'Read captured console messages with optional level, substring pattern, timestamp, limit, and consume-on-read filtering.', optionalParams: ['level', 'pattern', 'limit', 'since', 'clear', 'tabId'] }],
   ['clearConsoleMessages', { group: 'observability', description: 'Clear the captured console message buffer while keeping capture active.', optionalParams: ['tabId'] }],
+  ['listDownloadEvents', { group: 'observability', description: 'Read the gateway-side bounded chrome.downloads event buffer for the selected profile. Use it to build per-run staged download manifests before Runner promotion.', optionalParams: ['profileId', 'since', 'limit'] }],
+  ['clearDownloadEvents', { group: 'observability', description: 'Clear the gateway-side bounded chrome.downloads event buffer for the selected profile after staging evidence has been recorded.', optionalParams: ['profileId'] }],
 
   ['dispatchClick', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['button', 'clickCount', 'frame'] }],
   ['moveMouse', { group: 'input', requiredParams: ['x', 'y'], optionalParams: ['fromX', 'fromY', 'steps', 'frame'] }],

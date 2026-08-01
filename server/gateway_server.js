@@ -86,6 +86,12 @@ const pendingConnections = new Set();
 let nextId = 1;
 // rpcId -> { res, timeoutTimer, method, ws }
 const pendingHttpRequests = new Map();
+// profileId -> bounded download event records. These events are emitted by the
+// extension's chrome.downloads listeners and consumed later by workflow/runtime
+// code to build per-run `.incoming/downloads.json` manifests. Keep them out of
+// /health so private local filenames are never exposed in readiness probes.
+const downloadEventsByProfile = new Map();
+const MAX_DOWNLOAD_EVENTS_PER_PROFILE = Number(process.env.WEBMCP_DOWNLOAD_EVENT_LIMIT || 200);
 
 function connectedProfileIds() {
   const ids = [];
@@ -153,6 +159,70 @@ function getGatewayCommandGroups() {
     }));
 }
 
+function boundedLimit(value, fallback = 100, max = 500) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(Math.floor(parsed), max);
+}
+
+function downloadOrigin(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.origin : '';
+  } catch {
+    return '';
+  }
+}
+
+function recordDownloadEvent(profileId, type, params = {}) {
+  if (!profileId) return;
+  const events = downloadEventsByProfile.get(profileId) || [];
+  events.push({
+    schema: 'webmcp-download-event/1',
+    type,
+    observedAt: new Date().toISOString(),
+    profileId,
+    id: params.id ?? null,
+    url: params.url || null,
+    sourceOrigin: downloadOrigin(params.url),
+    filename: params.filename || null,
+    mimeType: params.mime || params.mimeType || null,
+    fileSize: Number.isFinite(Number(params.fileSize)) ? Number(params.fileSize) : null,
+    state: params.state || null,
+    error: params.error || null,
+  });
+  while (events.length > MAX_DOWNLOAD_EVENTS_PER_PROFILE) events.shift();
+  downloadEventsByProfile.set(profileId, events);
+}
+
+function listDownloadEvents(profileId, params = {}) {
+  const since = typeof params.since === 'string' ? params.since : null;
+  const limit = boundedLimit(params.limit);
+  const entries = profileId
+    ? (downloadEventsByProfile.get(profileId) || [])
+    : [...downloadEventsByProfile.values()].flat();
+  const filtered = since
+    ? entries.filter((event) => event.observedAt > since)
+    : entries;
+  return {
+    schema: 'webmcp-download-events/1',
+    profileId: profileId || null,
+    count: filtered.slice(-limit).length,
+    events: filtered.slice(-limit),
+  };
+}
+
+function clearDownloadEvents(profileId) {
+  if (profileId) {
+    const cleared = (downloadEventsByProfile.get(profileId) || []).length;
+    downloadEventsByProfile.set(profileId, []);
+    return { schema: 'webmcp-download-events-cleared/1', profileId, cleared };
+  }
+  const cleared = [...downloadEventsByProfile.values()].reduce((sum, events) => sum + events.length, 0);
+  downloadEventsByProfile.clear();
+  return { schema: 'webmcp-download-events-cleared/1', profileId: null, cleared };
+}
+
 // ── HTTP Server ──────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   // CORS Headers to allow scripts/agents to query from anywhere
@@ -207,6 +277,13 @@ const server = http.createServer((req, res) => {
       const { method, params, profileId } = requestPayload;
       if (!method) {
         return writeJson(res, 400, { error: 'Missing "method" in request' });
+      }
+
+      if (method === 'listDownloadEvents') {
+        return writeJson(res, 200, { result: listDownloadEvents(profileId || params?.profileId || null, params || {}) });
+      }
+      if (method === 'clearDownloadEvents') {
+        return writeJson(res, 200, { result: clearDownloadEvents(profileId || params?.profileId || null) });
       }
 
       const target = resolveTarget(profileId);
@@ -329,6 +406,8 @@ wss.on('connection', (ws, req) => {
         console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${profileId} | email=${ws._profileEmail} | name=${ws._profileName}`);
       } else if (method === 'heartbeat' || method === 'pong') {
         // Silent keep-alive traffic
+      } else if (method === 'downloadStarted' || method === 'downloadChanged') {
+        recordDownloadEvent(ws._profileId, method, params);
       } else {
         console.log(`[Gateway] Event from Extension: ${method}`, params);
       }

@@ -17,6 +17,7 @@ function sleep(ms) {
 // answered each forwarded command. Ignores gateway ping/keepalive notifications.
 function makeFakeExtension(profileId, label) {
   const sock = new WebSocket(`ws://localhost:${PORT}`);
+  sock.forwarded = [];
   sock.on('open', () => {
     sock.send(JSON.stringify({
       jsonrpc: '2.0',
@@ -27,6 +28,7 @@ function makeFakeExtension(profileId, label) {
   sock.on('message', (data) => {
     const msg = JSON.parse(data.toString());
     if (!('id' in msg)) return; // notification (ping/heartbeat) — ignore
+    sock.forwarded.push(msg.method);
     // Anything with an id is a forwarded command; echo a result for it.
     sock.send(JSON.stringify({
       jsonrpc: '2.0',
@@ -113,6 +115,58 @@ async function run() {
 
     const unknown = await callApi({ method: 'ping', params: {}, profileId: 'nope' });
     assert.strictEqual(unknown.status, 404, 'unknown profileId → 404');
+
+    a.send(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'downloadStarted',
+      params: {
+        id: 7,
+        url: 'https://cdn.example.test/report.pdf',
+        filename: '/private/downloads/report.pdf',
+        mime: 'application/pdf',
+        fileSize: 123,
+        state: 'in_progress',
+      },
+    }));
+    a.send(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'downloadChanged',
+      params: { id: 7, state: 'complete', filename: '/private/downloads/report.pdf' },
+    }));
+    b.send(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'downloadStarted',
+      params: {
+        id: 8,
+        url: 'https://cdn.example.test/other.pdf',
+        filename: '/private/downloads/other.pdf',
+        mime: 'application/pdf',
+        fileSize: 456,
+        state: 'complete',
+      },
+    }));
+    await waitFor(async () => {
+      const listed = await callApi({ method: 'listDownloadEvents', params: {}, profileId: 'profile-A' });
+      return listed.json.result?.events?.length === 2;
+    }, 'download events recorded');
+
+    const downloadsA = await callApi({ method: 'listDownloadEvents', params: { limit: 10 }, profileId: 'profile-A' });
+    assert.strictEqual(downloadsA.status, 200, 'download event list status 200');
+    assert.strictEqual(downloadsA.json.result.schema, 'webmcp-download-events/1');
+    assert.strictEqual(downloadsA.json.result.profileId, 'profile-A');
+    assert.deepStrictEqual(downloadsA.json.result.events.map((event) => event.type), ['downloadStarted', 'downloadChanged']);
+    assert.strictEqual(downloadsA.json.result.events[0].sourceOrigin, 'https://cdn.example.test');
+    assert.strictEqual(downloadsA.json.result.events[0].mimeType, 'application/pdf');
+    assert.strictEqual(downloadsA.json.result.events[0].filename, '/private/downloads/report.pdf');
+    assert.strictEqual(a.forwarded.includes('listDownloadEvents'), false, 'local event query is not forwarded to extension');
+
+    const cleared = await callApi({ method: 'clearDownloadEvents', params: {}, profileId: 'profile-A' });
+    assert.strictEqual(cleared.status, 200, 'download event clear status 200');
+    assert.strictEqual(cleared.json.result.cleared, 2);
+    const afterClear = await callApi({ method: 'listDownloadEvents', params: {}, profileId: 'profile-A' });
+    assert.strictEqual(afterClear.json.result.events.length, 0);
+    const downloadsB = await callApi({ method: 'listDownloadEvents', params: {}, profileId: 'profile-B' });
+    assert.strictEqual(downloadsB.json.result.events.length, 1, 'clearing A does not clear B');
 
     console.log('gateway-multi-profile.test.mjs OK');
   } finally {

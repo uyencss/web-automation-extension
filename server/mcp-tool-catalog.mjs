@@ -150,6 +150,8 @@ export const MINIMAL_HIDDEN_METHODS = new Set([
   'stopConsoleCapture',
   'readConsoleMessages',
   'clearConsoleMessages',
+  'listDownloadEvents',
+  'clearDownloadEvents',
   // Cookies / storage
   'getCookies',
   'setCookie',
