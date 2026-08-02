@@ -241,6 +241,54 @@ test('webmcp doctor blocks bootstrap when Chrome download policy is not effectiv
   assert.equal(report.bootstrap.downloadPolicyReady, false);
 });
 
+test('webmcp doctor accepts macOS Managed Preferences download policy', { skip: process.platform !== 'darwin' }, () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-managed-prefs-'));
+  const managedPrefsRoot = path.join(home, 'managed-prefs');
+  const downloadDir = path.join(home, 'managed-downloads');
+  mkdirSync(path.join(home, '.codex'), { recursive: true });
+  mkdirSync(path.join(home, '.webmcp'), { recursive: true });
+  mkdirSync(managedPrefsRoot, { recursive: true });
+  mkdirSync(downloadDir, { recursive: true });
+  writeFileSync(path.join(home, '.codex', 'config.toml'), [
+    '[mcp_servers.webmcp]',
+    `command = ${JSON.stringify(process.execPath)}`,
+    `args = ${JSON.stringify([path.join(ROOT, 'server', 'mcp_server.mjs')])}`,
+    '',
+  ].join('\n'));
+  writeFileSync(path.join(home, '.webmcp', 'dispatcher.config.json'), JSON.stringify({
+    schema: 'webmcp-dispatcher-config/2',
+    defaultGateway: 'local',
+    gateways: { local: { baseUrl: 'http://127.0.0.1:7865', profiles: {} } },
+  }, null, 2));
+  writeFileSync(path.join(managedPrefsRoot, 'com.google.Chrome.plist'), JSON.stringify({
+    ExtensionInstallForcelist: ['lbodkmkjbcemodklopcfdmpjomdoapae;https://clients2.google.com/service/update2/crx'],
+    PromptForDownloadLocation: 0,
+    DownloadDirectory: downloadDir,
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 10000,
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_HOME: path.join(home, '.webmcp'),
+      WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
+      WEBMCP_NO_AUTOSTART: '1',
+      WEBMCP_TEST_MANAGED_PREFS_ROOT: managedPrefsRoot,
+      WEBMCP_TEST_DOWNLOAD_POLICY_DIRECTORY: downloadDir,
+    },
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.downloadPolicy.current.ok, true);
+  assert.equal(report.downloadPolicy.current.source, 'managed-preferences');
+  assert.equal(report.bootstrap.downloadPolicyReady, true);
+  assert.doesNotMatch(result.stdout, /lbodkmkjbcemodklopcfdmpjomdoapae/);
+});
+
 test('webmcp bootstrap plan and apply produce redacted idempotent receipts', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-bootstrap-'));
   mkdirSync(path.join(home, '.codex'), { recursive: true });

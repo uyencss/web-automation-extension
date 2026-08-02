@@ -482,17 +482,18 @@ function shippedDownloadPolicyReadiness() {
 }
 
 function platformDownloadPolicyExpectation() {
+  const testDownloadDirectory = process.env.WEBMCP_TEST_DOWNLOAD_POLICY_DIRECTORY || null;
   if (process.platform === 'darwin') {
     return {
       platform: 'macos',
-      directory: '/Users/Shared/WebMCP/Downloads',
+      directory: testDownloadDirectory || '/Users/Shared/WebMCP/Downloads',
       source: 'configuration-profile',
     };
   }
   if (process.platform === 'linux') {
     return {
       platform: 'linux',
-      directory: '/var/lib/webmcp/downloads',
+      directory: testDownloadDirectory || '/var/lib/webmcp/downloads',
       source: 'managed-policy-file',
       files: [
         '/etc/opt/chrome/policies/managed/webmcp_forcelist.json',
@@ -504,7 +505,7 @@ function platformDownloadPolicyExpectation() {
   if (process.platform === 'win32') {
     return {
       platform: 'windows',
-      directory: 'C:\\WebMCP\\Downloads',
+      directory: testDownloadDirectory || 'C:\\WebMCP\\Downloads',
       source: 'registry-policy',
     };
   }
@@ -517,6 +518,30 @@ function textHasManagedDownloadPolicy(text, expectedDirectory) {
     && text.includes('DownloadDirectory')
     && text.includes(expectedDirectory)
     && !/PromptForDownload(?!Location)/.test(text));
+}
+
+function readMacManagedPreferencesPolicy(expectedDirectory) {
+  const root = process.env.WEBMCP_TEST_MANAGED_PREFS_ROOT || '/Library/Managed Preferences';
+  const candidates = [
+    resolve(root, 'com.google.Chrome.plist'),
+    resolve(root, process.env.USER || '', 'com.google.Chrome.plist'),
+  ];
+  for (const file of candidates) {
+    if (!file || !existsSync(file)) continue;
+    try {
+      const text = readFileSync(file, 'utf8');
+      if (textHasManagedDownloadPolicy(text, expectedDirectory)) {
+        return { installed: true, managedDownloadDirectory: true, source: 'managed-preferences' };
+      }
+      if (text.includes('com.google.Chrome') || text.includes('ExtensionInstallForcelist')) {
+        return { installed: true, managedDownloadDirectory: false, source: 'managed-preferences' };
+      }
+    } catch {
+      // Keep looking; an unreadable managed-preferences file should not make
+      // policy readiness pass.
+    }
+  }
+  return { installed: false, managedDownloadDirectory: false, source: 'managed-preferences' };
 }
 
 function currentDownloadPolicyReadiness() {
@@ -559,14 +584,21 @@ function currentDownloadPolicyReadiness() {
     const output = `${result.stdout || ''}\n${result.stderr || ''}`;
     const installed = result.status === 0 && output.includes('com.google.Chrome');
     const managedDownloadDirectory = textHasManagedDownloadPolicy(output, expectation.directory);
+    const managedPrefs = managedDownloadDirectory
+      ? { installed: false, managedDownloadDirectory: false, source: null }
+      : readMacManagedPreferencesPolicy(expectation.directory);
+    const effectiveInstalled = installed || managedPrefs.installed;
+    const effectiveManagedDirectory = managedDownloadDirectory || managedPrefs.managedDownloadDirectory;
     return {
       ...base,
-      ok: installed && managedDownloadDirectory && existsSync(expectation.directory),
-      installed,
-      promptForDownloadLocation: managedDownloadDirectory ? false : null,
-      managedDownloadDirectory,
+      ok: effectiveInstalled && effectiveManagedDirectory && existsSync(expectation.directory),
+      installed: effectiveInstalled,
+      promptForDownloadLocation: effectiveManagedDirectory ? false : null,
+      managedDownloadDirectory: effectiveManagedDirectory,
       downloadDirectoryReady: existsSync(expectation.directory),
-      source: profileOutputPath ? 'test-profile-snapshot' : expectation.source,
+      source: managedDownloadDirectory
+        ? (profileOutputPath ? 'test-profile-snapshot' : expectation.source)
+        : managedPrefs.source,
       error: result.status === 0 ? null : 'unable to inspect macOS configuration profiles',
     };
   }
