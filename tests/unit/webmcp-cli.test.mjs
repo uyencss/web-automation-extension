@@ -116,6 +116,7 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
       WEBMCP_BOOTSTRAP_SERVICE_DIR: serviceDir,
       WEBMCP_TAILSCALE_BIN: process.execPath,
       WEBMCP_TAILSCALE_STATUS_FILE: tailnetStatusPath,
+      WEBMCP_TEST_CHROME_POLICY_EFFECTIVE: '1',
     },
   });
 
@@ -152,6 +153,9 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
   assert.equal(report.downloadPolicy.ok, true);
   assert.equal(report.downloadPolicy.policy.promptForDownloadLocation, false);
   assert.equal(report.downloadPolicy.policy.managedDownloadDirectory, true);
+  assert.equal(report.downloadPolicy.artifacts.ok, true);
+  assert.equal(report.downloadPolicy.current.ok, true);
+  assert.equal(report.downloadPolicy.current.source, 'test-override');
   assert.deepEqual(report.downloadPolicy.platforms.map((entry) => entry.platform).sort(), ['linux', 'macos', 'windows']);
   assert.equal(report.skills.schema, 'webmcp-skills-doctor/1');
   assert.equal(report.skills.ok, true);
@@ -180,6 +184,61 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
   assert.doesNotMatch(result.stdout, /vault-account-secret/);
   assert.doesNotMatch(result.stdout, /local-identity-secret/);
   assert.doesNotMatch(result.stdout, /secret-hostname|secret\\.tailnet|100\\.64\\.0\\.1/);
+});
+
+test('webmcp doctor blocks bootstrap when Chrome download policy is not effective', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-download-policy-'));
+  mkdirSync(path.join(home, '.codex'), { recursive: true });
+  mkdirSync(path.join(home, '.webmcp'), { recursive: true });
+  writeFileSync(path.join(home, '.codex', 'config.toml'), [
+    '[mcp_servers.webmcp]',
+    `command = ${JSON.stringify(process.execPath)}`,
+    `args = ${JSON.stringify([path.join(ROOT, 'server', 'mcp_server.mjs')])}`,
+    '',
+  ].join('\n'));
+  writeFileSync(path.join(home, '.webmcp', 'dispatcher.config.json'), JSON.stringify({
+    schema: 'webmcp-dispatcher-config/2',
+    defaultGateway: 'local',
+    gateways: {
+      local: {
+        baseUrl: 'http://127.0.0.1:7865',
+        profiles: { research: 'Chrome:Secret Research' },
+      },
+    },
+  }, null, 2));
+
+  const env = {
+    ...process.env,
+    HOME: home,
+    WEBMCP_HOME: path.join(home, '.webmcp'),
+    WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
+    WEBMCP_NO_AUTOSTART: '1',
+    WEBMCP_TEST_CHROME_POLICY_EFFECTIVE: '0',
+  };
+  const result = spawnSync(process.execPath, [BIN, 'bootstrap', 'plan', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 10000,
+    env,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.readiness.downloadPolicyReady, false);
+  assert.equal(payload.operatorActions.some((item) => item.code === 'INSTALL_CHROME_POLICY'), true);
+  assert.doesNotMatch(result.stdout, /Chrome:Secret/);
+
+  const doctor = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 10000,
+    env,
+  });
+  assert.equal(doctor.status, 1, doctor.stderr);
+  const report = JSON.parse(doctor.stdout);
+  assert.equal(report.downloadPolicy.artifacts.ok, true);
+  assert.equal(report.downloadPolicy.current.ok, false);
+  assert.equal(report.bootstrap.downloadPolicyReady, false);
 });
 
 test('webmcp bootstrap plan and apply produce redacted idempotent receipts', () => {
