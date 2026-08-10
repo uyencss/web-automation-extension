@@ -34,6 +34,9 @@ const AUTOMATION_PACKAGES = [
 const ADB_PACKAGES = [
   '@gyga-browser/webmcp-adb-kit',
 ];
+const RUNNER_PACKAGES = [
+  '@gyga-browser/webmcp-automation-runner',
+];
 const SAFE_BOOTSTRAP_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const BOOTSTRAP_BINDING_DECISIONS = new Set(['approved', 'pending', 'rejected']);
 const BOOTSTRAP_REAUTH_POLICIES = new Set(['manual', 'disabled', 'bounded-one-attempt']);
@@ -60,6 +63,7 @@ Usage:
   webmcp workflow <command> [options]
   webmcp site <command> [options]
   webmcp automation <command> [options]
+  webmcp project <command> [options]
   webmcp mobile mcp
   webmcp adb mcp                         Alias for webmcp mobile mcp
   webmcp skills list [--json]
@@ -93,6 +97,7 @@ Environment:
   WEBMCP_AI_BIN               Override standalone WebMCP AI CLI path or package name
   WEBMCP_WORKFLOW_DISPATCHER_BIN  Override workflow dispatcher bin path or package name
   WEBMCP_AUTOMATION_BIN           Override Automation Store CLI path or package name
+  WEBMCP_RUNNER_BIN               Override Automation Runner CLI path or package name
   WEBMCP_ADB_MCP_BIN              Override ADB MCP server path or package name
   WEBMCP_KIT_MANIFEST             Override webmcp-kit.json inventory path
   WEBMCP_HOME                     Shared kit data dir (default: ~/.webmcp)
@@ -140,6 +145,36 @@ Notes:
   plan/canary/binding-plan/vault-key-plan/profile-candidates are read-only.
   enroll-* and service apply/install/load write only with --yes and redact local profile,
   Vault, account, Tailnet, and service path details from command output.`);
+}
+
+function printProjectHelp() {
+  console.log(`webmcp project — WebMCP project workspace management
+
+Usage:
+  webmcp project attach <dir> [--replace] [--as-copy <id>] [--repair-layout] [--default] [--dry-run] [--json]
+  webmcp project attach --scan <root> [--replace] [--repair-layout] [--default] [--dry-run] [--json]
+  webmcp project list [--json]
+  webmcp project where [<id>] [--json]
+  webmcp project doctor [<dir>] [--json]
+  webmcp project new [--template <id>] [--at <dir>] [--id <id>] [--name <name>] [--default] [--dry-run] [--json]
+  webmcp project guide list [--json]
+  webmcp project guide stage <collections/<id>/GUIDE.md> --as inputs/<path> --yes [--json]
+
+Notes:
+  attach registers an existing project directory in the local workspace registry,
+  or relocates its registered root after the folder was moved. Idempotent; without
+  flags it never changes an existing registration.
+  where prints the resolved project root; without an ID it resolves the registered
+  default project.
+  doctor runs the runner's workspace doctor, a registry audit of the project root,
+  and an attach dry-run sanity check.
+  new creates a project from a template in the Automation Store (template id =
+  store automation id); without --template it bootstraps the store's default
+  selection (all automations). Without --at the default parent is $WEBMCP_PROJECTS_ROOT
+  or ~/WebMCP Projects.
+  guide list shows derived guides (collections/<id>/GUIDE.md). guide stage copies a
+  reviewed guide below the intent/evidence boundary into inputs/; it requires the
+  explicit --yes confirmation and never modifies or deletes the source.`);
 }
 
 function getGatewayBaseUrl() {
@@ -2953,6 +2988,290 @@ async function runAutomation(args) {
   });
 }
 
+// The workspace/registry runtime lives in the independent
+// @gyga-browser/webmcp-automation-runner package. The `webmcp project` umbrella
+// command is a thin bridge onto its `workspace *` surface so users never need
+// to call the runner binary directly for day-to-day project operations.
+function getRunnerBin() {
+  const override = process.env.WEBMCP_RUNNER_BIN;
+  if (override) {
+    const overridePath = resolve(process.cwd(), override);
+    if (existsSync(overridePath)) return overridePath;
+    try {
+      return requireFromCli.resolve(`${override}/bin/webmcp-automation-runner.mjs`);
+    } catch {
+      return overridePath;
+    }
+  }
+
+  const siblingBin = resolve(ROOT, '..', 'webmcp-automation-runner', 'bin', 'webmcp-automation-runner.mjs');
+  if (existsSync(siblingBin)) return siblingBin;
+
+  for (const packageName of RUNNER_PACKAGES) {
+    try {
+      return requireFromCli.resolve(`${packageName}/bin/webmcp-automation-runner.mjs`);
+    } catch {
+      // Try the next known package name.
+    }
+  }
+
+  return null;
+}
+
+function runRunnerBin() {
+  const runnerBin = getRunnerBin();
+  if (!runnerBin || !existsSync(runnerBin)) {
+    console.error([
+      'WebMCP Automation Runner CLI not found.',
+      'Install @gyga-browser/webmcp-automation-runner, run from the webmcp-automation-kit checkout, or set WEBMCP_RUNNER_BIN.',
+    ].join('\n'));
+    return null;
+  }
+  return runnerBin;
+}
+
+async function runRunner(args) {
+  const runnerBin = runRunnerBin();
+  if (!runnerBin) return 1;
+
+  const runnerArgs = args.length > 0 ? args : ['--help'];
+  const child = spawn(process.execPath, [runnerBin, ...runnerArgs], {
+    cwd: process.cwd(),
+    env: { ...process.env },
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start Automation Runner CLI: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`Automation Runner CLI exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 1);
+    });
+  });
+}
+
+function runRunnerSync(args) {
+  const runnerBin = runRunnerBin();
+  if (!runnerBin) return { status: 1, stdout: '', stderr: '' };
+  return spawnSync(process.execPath, [runnerBin, ...args], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: { ...process.env },
+  });
+}
+
+function projectOption(args, name) {
+  const prefix = `--${name}`;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === prefix) {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('--')) return null;
+      return value;
+    }
+    if (arg.startsWith(`${prefix}=`)) return arg.slice(prefix.length + 1);
+  }
+  return null;
+}
+
+function withoutProjectOptions(args, names) {
+  const prefixes = names.map((name) => `--${name}`);
+  const rest = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const match = prefixes.find((prefix) => arg === prefix);
+    if (match) {
+      if (args[index + 1] !== undefined && !args[index + 1].startsWith('--')) index += 1;
+      continue;
+    }
+    if (prefixes.some((prefix) => arg.startsWith(`${prefix}=`))) continue;
+    rest.push(arg);
+  }
+  return rest;
+}
+
+function resolvedProjectRoot() {
+  const listed = runRunnerSync(['workspace', 'list', '--json']);
+  if (listed.status !== 0) {
+    process.stdout.write(listed.stdout);
+    process.stderr.write(listed.stderr);
+    return null;
+  }
+  const registry = JSON.parse(listed.stdout).data;
+  return registry.workspaces.find((item) => item.id === registry.defaultWorkspaceId) || null;
+}
+
+async function runProjectAttach(args) {
+  const rest = [];
+  let dir = null;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === '--scan') {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('--')) {
+        rest.push('--scan');
+      } else {
+        rest.push('--scan', value);
+        index += 1;
+      }
+    } else if (!arg.startsWith('--')) {
+      dir = arg;
+    } else {
+      rest.push(arg);
+    }
+  }
+  if (!dir && !rest.includes('--scan')) {
+    console.error('Usage: webmcp project attach <dir> [--replace] [--as-copy <id>] [--repair-layout] [--default] [--dry-run] [--json]');
+    console.error('       webmcp project attach --scan <root> [--replace] [--repair-layout] [--default] [--dry-run] [--json]');
+    return 2;
+  }
+  if (dir) return runRunner(['workspace', 'attach', '--workspace', dir, ...rest]);
+  return runRunner(['workspace', 'attach', ...rest]);
+}
+
+async function runProjectWhere(args) {
+  const id = args.find((arg) => !arg.startsWith('--'));
+  if (id) return runRunner(['workspace', 'describe', id, ...args]);
+  const entry = resolvedProjectRoot();
+  if (!entry) {
+    console.error('No default project is registered. Register one with: webmcp project attach <dir> --default');
+    return 1;
+  }
+  return runRunner(['workspace', 'describe', entry.id, ...args]);
+}
+
+async function runProjectDoctor(args) {
+  let root = args.find((arg) => !arg.startsWith('--'));
+  if (!root) {
+    const entry = resolvedProjectRoot();
+    if (!entry) {
+      console.error('No default project is registered. Register one with: webmcp project attach <dir> --default');
+      return 1;
+    }
+    root = entry.root;
+  }
+  const json = args.includes('--json');
+  const chain = [
+    ['workspace', 'doctor', '--workspace', root, ...(json ? ['--json'] : [])],
+    ['workspace', 'registry', 'audit', '--workspace-root', root, ...(json ? ['--json'] : [])],
+    ['workspace', 'attach', '--workspace', root, '--dry-run', ...(json ? ['--json'] : [])],
+  ];
+  for (const runnerArgs of chain) {
+    const exitCode = await runRunner(runnerArgs);
+    if (exitCode !== 0) return exitCode;
+  }
+  return 0;
+}
+
+async function runProjectNew(args) {
+  const at = projectOption(args, 'at');
+  const template = projectOption(args, 'template');
+  if (args.includes('--template') && !template) {
+    console.error('--template requires a value');
+    return 2;
+  }
+  const flags = [];
+  for (const flag of ['--default', '--dry-run', '--json']) {
+    if (args.includes(flag)) flags.push(flag);
+  }
+  const id = projectOption(args, 'id');
+  const name = projectOption(args, 'name');
+  if (template) {
+    const argv = ['workspace', 'project-new', '--template', template];
+    if (at) argv.push('--at', at);
+    if (id) argv.push('--id', id);
+    if (name) argv.push('--name', name);
+    argv.push(...flags);
+    for (const extra of withoutProjectOptions(args, ['at', 'template', 'id', 'name'])) {
+      if (!extra.startsWith('--') || ['--default', '--dry-run', '--json'].includes(extra)) continue;
+      console.error(`Unknown project new option: ${extra}`);
+      return 2;
+    }
+    return runRunner(argv);
+  }
+  if (!at) {
+    console.error('Usage: webmcp project new [--template <id>] [--at <dir>] [--id <id>] [--name <name>] [--default] [--dry-run] [--json]');
+    return 2;
+  }
+  const argv = ['workspace', 'bootstrap', '--workspace-root', at];
+  argv.push('--all');
+  if (id) argv.push('--project-id', id);
+  if (name) argv.push('--project-name', name);
+  argv.push(...flags);
+  for (const extra of withoutProjectOptions(args, ['at', 'template', 'id', 'name'])) {
+    if (!extra.startsWith('--') || ['--default', '--dry-run', '--json'].includes(extra)) continue;
+    console.error(`Unknown project new option: ${extra}`);
+    return 2;
+  }
+  return runRunner(argv);
+}
+
+function projectGuideTarget(rest) {
+  const explicit = projectOption(rest, 'workspace');
+  if (explicit) {
+    return { root: explicit, flags: rest.filter((arg) => arg.startsWith('--') && !arg.startsWith('--workspace')) };
+  }
+  const entry = resolvedProjectRoot();
+  if (!entry) {
+    return { error: 'No default project is registered. Register one with: webmcp project attach <dir> --default' };
+  }
+  return { root: entry.root, flags: rest.filter((arg) => arg.startsWith('--')) };
+}
+
+async function runProjectGuide(args) {
+  const [subcommand, ...rest] = args;
+  if (!subcommand || subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {
+    console.error('Usage: webmcp project guide list [--json]');
+    console.error('       webmcp project guide stage <collections/<id>/GUIDE.md> --as inputs/<path> --yes [--json]');
+    return subcommand && subcommand !== 'help' ? 2 : 0;
+  }
+  const target = projectGuideTarget(rest);
+  if (target.error) {
+    console.error(target.error);
+    return 1;
+  }
+  if (subcommand === 'list') {
+    return runRunner(['workspace', 'guide', 'list', '--workspace', target.root, ...target.flags]);
+  }
+  if (subcommand === 'stage') {
+    const source = rest.find((arg) => !arg.startsWith('--'));
+    const as = projectOption(rest, 'as');
+    if (!source || !as) {
+      console.error('Usage: webmcp project guide stage <collections/<id>/GUIDE.md> --as inputs/<path> --yes [--json]');
+      return 2;
+    }
+    const flags = target.flags.filter((arg) => !arg.startsWith('--as'));
+    return runRunner(['workspace', 'guide', 'stage', source, '--workspace', target.root, '--as', as, ...flags]);
+  }
+  console.error(`Unknown project guide command: ${subcommand}`);
+  printProjectHelp();
+  return 2;
+}
+
+async function runProject(args) {
+  const [subcommand, ...rest] = args;
+  if (!subcommand || subcommand === '--help' || subcommand === '-h' || subcommand === 'help') {
+    printProjectHelp();
+    return 0;
+  }
+  if (subcommand === 'attach') return runProjectAttach(rest);
+  if (subcommand === 'list') return runRunner(['workspace', 'list', ...rest]);
+  if (subcommand === 'where') return runProjectWhere(rest);
+  if (subcommand === 'doctor') return runProjectDoctor(rest);
+  if (subcommand === 'new') return runProjectNew(rest);
+  if (subcommand === 'guide') return runProjectGuide(rest);
+  console.error(`Unknown project command: ${subcommand}`);
+  printProjectHelp();
+  return 2;
+}
+
 function getAdbMcpBin() {
   const override = process.env.WEBMCP_ADB_MCP_BIN;
   if (override) {
@@ -3555,6 +3874,10 @@ async function main() {
 
   if (command === 'automation') {
     process.exit(await runAutomation(args));
+  }
+
+  if (command === 'project') {
+    process.exit(await runProject(args));
   }
 
   if (command === 'mobile' || command === 'adb') {

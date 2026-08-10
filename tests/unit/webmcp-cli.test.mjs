@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -1495,4 +1495,339 @@ test('webmcp skills doctor unions owners and uninstall removes only the selected
   const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
   assert.ok(!receipt.owners['webmcp-automation-kit']);
   assert.deepEqual(receipt.owners['webmcp-ops-kit'].providers.codex.entries, ['zalo-bot-messaging']);
+});
+
+const RUNNER_BIN = path.join(ROOT, '..', 'webmcp-automation-runner', 'bin', 'webmcp-automation-runner.mjs');
+
+function runnerRun(args, env = {}) {
+  return spawnSync(process.execPath, [RUNNER_BIN, ...args], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+}
+
+test('webmcp project help surfaces the project workspace commands in the top-level help', () => {
+  const help = spawnSync(process.execPath, [BIN, '--help'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /webmcp project <command> \[options\]/);
+
+  const project = spawnSync(process.execPath, [BIN, 'project', '--help'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+  });
+  assert.equal(project.status, 0, project.stderr);
+  assert.match(project.stdout, /webmcp project attach <dir>/);
+  assert.match(project.stdout, /webmcp project list \[--json\]/);
+  assert.match(project.stdout, /webmcp project where \[<id>\]/);
+  assert.match(project.stdout, /webmcp project doctor \[<dir>\]/);
+  assert.match(project.stdout, /webmcp project new \[--template <id>\]/);
+  assert.match(project.stdout, /webmcp project guide list \[--json\]/);
+  assert.match(project.stdout, /webmcp project guide stage <collections\/<id>\/GUIDE.md>/);
+});
+
+test('webmcp project list reports an empty isolated registry', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-list-'));
+  const result = spawnSync(process.execPath, [BIN, 'project', 'list', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, WEBMCP_HOME: path.join(home, '.webmcp') },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.command, 'workspace.list');
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.data.workspaces, []);
+  assert.equal(payload.data.defaultWorkspaceId, null);
+});
+
+test('webmcp project delegates list, where, and attach to the runner workspace surface', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const workspace = path.join(home, 'projects', 'book-affiliate');
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+
+  const created = runnerRun([
+    'workspace', 'init', '--workspace', workspace, '--id', 'book-affiliate',
+    '--name', 'Book Affiliate', '--default', '--json',
+  ], env);
+  assert.equal(created.status, 0, created.stderr);
+
+  const listed = spawnSync(process.execPath, [BIN, 'project', 'list', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(listed.status, 0, listed.stderr);
+  const listedPayload = JSON.parse(listed.stdout);
+  assert.equal(listedPayload.command, 'workspace.list');
+  assert.equal(listedPayload.data.defaultWorkspaceId, 'book-affiliate');
+  assert.equal(listedPayload.data.workspaces.length, 1);
+  assert.equal(listedPayload.data.workspaces[0].root, workspace);
+
+  const where = spawnSync(process.execPath, [BIN, 'project', 'where', 'book-affiliate', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(where.status, 0, where.stderr);
+  const wherePayload = JSON.parse(where.stdout);
+  assert.equal(wherePayload.command, 'workspace.describe');
+  assert.equal(wherePayload.data.id, 'book-affiliate');
+  assert.equal(wherePayload.data.root, workspace);
+
+  const whereDefault = spawnSync(process.execPath, [BIN, 'project', 'where', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(whereDefault.status, 0, whereDefault.stderr);
+  assert.equal(JSON.parse(whereDefault.stdout).data.id, 'book-affiliate');
+
+  const attached = spawnSync(process.execPath, [BIN, 'project', 'attach', workspace, '--dry-run', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(attached.status, 0, attached.stderr);
+  const attachedPayload = JSON.parse(attached.stdout);
+  assert.equal(attachedPayload.command, 'workspace.attach');
+  assert.equal(attachedPayload.data.action, 'unchanged');
+  assert.equal(attachedPayload.data.workspace.id, 'book-affiliate');
+});
+
+test('webmcp project attach --dry-run plans an insert for an unregistered valid project', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-attach-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const workspace = path.join(home, 'projects', 'standalone');
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+
+  const created = runnerRun([
+    'workspace', 'init', '--workspace', workspace, '--id', 'standalone',
+    '--name', 'Standalone', '--json',
+  ], env);
+  assert.equal(created.status, 0, created.stderr);
+  rmSync(path.join(webmcpHome, 'registry'), { recursive: true, force: true });
+
+  const result = spawnSync(process.execPath, [BIN, 'project', 'attach', workspace, '--dry-run', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.command, 'workspace.attach');
+  assert.equal(payload.data.action, 'insert');
+  assert.equal(payload.data.dryRun, true);
+});
+
+test('webmcp project attach --scan passes the scan root to the runner', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-scan-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const projectsRoot = path.join(home, 'projects');
+  const workspace = path.join(projectsRoot, 'scan-me');
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+
+  const created = runnerRun([
+    'workspace', 'init', '--workspace', workspace, '--id', 'scan-me',
+    '--name', 'Scan Me', '--json',
+  ], env);
+  assert.equal(created.status, 0, created.stderr);
+
+  const result = spawnSync(process.execPath, [BIN, 'project', 'attach', '--scan', projectsRoot, '--dry-run', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.command, 'workspace.attach');
+  assert.ok(payload.data.scan.discovered.length >= 1);
+});
+
+test('webmcp project doctor chains doctor, registry audit, and attach dry-run', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-doctor-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const workspace = path.join(home, 'projects', 'doctor-me');
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+
+  const created = runnerRun([
+    'workspace', 'init', '--workspace', workspace, '--id', 'doctor-me',
+    '--name', 'Doctor Me', '--default', '--json',
+  ], env);
+  assert.equal(created.status, 0, created.stderr);
+
+  const result = spawnSync(process.execPath, [BIN, 'project', 'doctor', workspace, '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payloads = result.stdout.trim().split(/(?=^\{)/m).filter(Boolean).map((doc) => JSON.parse(doc));
+  assert.deepEqual(payloads.map((entry) => entry.command), ['workspace.doctor', 'workspace.registry.audit', 'workspace.attach']);
+  assert.equal(payloads[0].data.ok, true);
+  assert.equal(payloads[1].data.registry.count, 1);
+});
+
+test('webmcp project where and doctor resolve the registered default without an ID', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-default-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const workspace = path.join(home, 'projects', 'the-default');
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+
+  const created = runnerRun([
+    'workspace', 'init', '--workspace', workspace, '--id', 'the-default',
+    '--name', 'The Default', '--default', '--json',
+  ], env);
+  assert.equal(created.status, 0, created.stderr);
+
+  const doctor = spawnSync(process.execPath, [BIN, 'project', 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(doctor.status, 0, doctor.stderr);
+  const payloads = doctor.stdout.trim().split(/(?=^\{)/m).filter(Boolean).map((doc) => JSON.parse(doc));
+  assert.deepEqual(payloads.map((entry) => entry.command), ['workspace.doctor', 'workspace.registry.audit', 'workspace.attach']);
+});
+
+test('webmcp project where reports a clear error when no default project is registered', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-nodefault-'));
+  const result = spawnSync(process.execPath, [BIN, 'project', 'where', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, WEBMCP_HOME: path.join(home, '.webmcp') },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /No default project is registered/);
+  assert.match(result.stderr, /webmcp project attach <dir> --default/);
+});
+
+test('webmcp project reports a clear install hint when the runner CLI is unavailable', () => {
+  const result = spawnSync(process.execPath, [BIN, 'project', 'list'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_RUNNER_BIN: './missing-webmcp-automation-runner.mjs',
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /WebMCP Automation Runner CLI not found/);
+  assert.match(result.stderr, /WEBMCP_RUNNER_BIN/);
+});
+
+test('webmcp project new --template creates a template-backed v2 project', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-new-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const env = {
+    HOME: home,
+    WEBMCP_HOME: webmcpHome,
+    WEBMCP_AUTOMATION_STORE_ROOT: path.join(ROOT, '..', 'webmcp-automation-runner', 'tests', 'fixtures', 'bootstrap-store'),
+  };
+  const at = path.join(home, 'projects', 'test-music');
+
+  const result = spawnSync(process.execPath, [BIN, 'project', 'new', '--template', 'test-music', '--at', at, '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.command, 'workspace.project-new');
+  assert.equal(payload.data.template, 'test-music');
+  assert.equal(payload.data.workspace.root, at);
+  assert.equal(existsSync(path.join(at, 'PROJECT.md')), true);
+  const manifest = JSON.parse(readFileSync(path.join(at, 'webmcp.project.json'), 'utf8'));
+  assert.equal(manifest.schema, 'webmcp-project/2');
+  assert.equal(manifest.template.id, 'test-music');
+  assert.deepEqual(manifest.agent, { skill: 'webmcp', modes: ['workspace', 'runner'], brief: 'PROJECT.md' });
+});
+
+test('webmcp project new --template with an unknown template fails with a typed usage error', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-new-unknown-'));
+  const env = {
+    HOME: home,
+    WEBMCP_HOME: path.join(home, '.webmcp'),
+    WEBMCP_AUTOMATION_STORE_ROOT: path.join(ROOT, '..', 'webmcp-automation-runner', 'tests', 'fixtures', 'bootstrap-store'),
+  };
+  const result = spawnSync(process.execPath, [BIN, 'project', 'new', '--template', 'nope', '--at', path.join(home, 'p')], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Unknown project template 'nope'/);
+  assert.match(result.stderr, /test-music, test-affiliate/);
+});
+
+test('webmcp project new without --template keeps the bootstrap default and still requires --at', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-new-bootstrap-'));
+  const result = spawnSync(process.execPath, [BIN, 'project', 'new', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: { HOME: home, WEBMCP_HOME: path.join(home, '.webmcp') },
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Usage: webmcp project new/);
+});
+
+test('webmcp project guide lists and stages derived guides behind the --yes gate', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-guide-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+  const workspace = path.join(home, 'projects', 'guided');
+
+  const created = runnerRun([
+    'workspace', 'init', '--workspace', workspace, '--id', 'guided',
+    '--name', 'Guided', '--default', '--json',
+  ], env);
+  assert.equal(created.status, 0, created.stderr);
+  mkdirSync(path.join(workspace, 'collections', 'q3-koc'), { recursive: true });
+  writeFileSync(path.join(workspace, 'collections', 'q3-koc', 'GUIDE.md'), '# Reviewed guide\n');
+
+  const listed = spawnSync(process.execPath, [BIN, 'project', 'guide', 'list', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(listed.status, 0, listed.stderr);
+  const listedPayload = JSON.parse(listed.stdout);
+  assert.equal(listedPayload.command, 'workspace.guide.list');
+  assert.deepEqual(listedPayload.data.guides, [{ id: 'q3-koc', path: 'collections/q3-koc/GUIDE.md', bytes: 17 }]);
+
+  const unconfirmed = spawnSync(process.execPath, [
+    BIN, 'project', 'guide', 'stage', 'collections/q3-koc/GUIDE.md',
+    '--as', 'inputs/campaigns/q3-koc/brief.md', '--json',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(unconfirmed.status, 2);
+  const unconfirmedPayload = JSON.parse(unconfirmed.stdout);
+  assert.equal(unconfirmedPayload.error.code, 'USAGE_ERROR');
+  assert.match(unconfirmedPayload.error.message, /--yes/);
+
+  const staged = spawnSync(process.execPath, [
+    BIN, 'project', 'guide', 'stage', 'collections/q3-koc/GUIDE.md',
+    '--as', 'inputs/campaigns/q3-koc/brief.md', '--yes', '--json',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(staged.status, 0, staged.stderr);
+  const stagedPayload = JSON.parse(staged.stdout);
+  assert.equal(stagedPayload.command, 'workspace.guide.stage');
+  assert.equal(stagedPayload.data.receipt.schema, 'webmcp-guide-staging/1');
+  assert.equal(stagedPayload.data.receipt.projectId, 'guided');
+  assert.equal(existsSync(path.join(workspace, 'inputs', 'campaigns', 'q3-koc', 'brief.md')), true);
+  assert.equal(existsSync(path.join(workspace, 'collections', 'q3-koc', 'GUIDE.md')), true, 'guide source is never removed');
 });
