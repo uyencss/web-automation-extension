@@ -1,13 +1,16 @@
 # captcha-solve CLI — Reference
 
-Full reference for the `captcha-solve` entry point in
-`/Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver`
-(installed into its own `.venv` as an editable package, version 0.2.0).
+Full reference for the `captcha-solve` entry point of the `webmcp-captcha-solver`
+Python package. On release installs the package lives at `$WEBMCP_CAPTCHA_HOME`
+(default `~/.webmcp/captcha-solver`); on the dev machine it is the checkout
+`/Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver`. All paths below are
+relative to that solver home (`$SOLVER_HOME`).
 
 ## Invocation
 
 ```bash
-cd /Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver
+SOLVER_HOME="${WEBMCP_CAPTCHA_HOME:-$HOME/.webmcp/captcha-solver}"
+cd "$SOLVER_HOME"
 .venv/bin/captcha-solve --help
 ```
 

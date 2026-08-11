@@ -30,16 +30,20 @@ automation.
 1. WebMCP gateway up: `webmcp gateway start` (or `webmcp launch --name ... --gateway`).
 2. A Chrome profile connected to the gateway. Pass it explicitly:
    `WEBMCP_PROFILE_ID=<profileId>`.
-3. The solver venv exists at
-   `/Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver/.venv`.
-   Every command MUST use `.venv/bin/captcha-solve` (or
+3. The solver venv exists at `$WEBMCP_CAPTCHA_HOME` (default
+   `~/.webmcp/captcha-solver` on release installs; on this dev machine:
+   `/Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver`). Every command
+   MUST use `<solver-home>/.venv/bin/captcha-solve` (or
    `.venv/bin/python -m captcha_solver.cli`). Do not use a system python or a
    different venv.
 
 ## Quick start
 
 ```bash
-cd /Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver
+SOLVER_HOME="${WEBMCP_CAPTCHA_HOME:-$HOME/.webmcp/captcha-solver}"
+# if the dev-machine checkout is used instead:
+SOLVER_HOME="${SOLVER_HOME:-/Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver}"
+cd "$SOLVER_HOME"
 # detect captcha kind + sitekey on a page (no solving, works everywhere)
 WEBMCP_PROFILE_ID=<profileId> .venv/bin/captcha-solve --detect --url https://example.com/page
 
@@ -115,7 +119,8 @@ slider / shopee_slider / text_captcha / math_captcha. Use them to verify a
 solver end-to-end without third-party rate limits:
 
 ```bash
-cd /Users/ttcenter/Desktop/VIBE_CODE/webmcp-captcha-solver
+SOLVER_HOME="${WEBMCP_CAPTCHA_HOME:-$HOME/.webmcp/captcha-solver}"
+cd "$SOLVER_HOME"
 .venv/bin/python tests/fixtures/server.py &
 WEBMCP_PROFILE_ID=<profileId> .venv/bin/pytest tests/integration -m local -q
 ```
