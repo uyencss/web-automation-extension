@@ -66,6 +66,7 @@ Usage:
   webmcp project <command> [options]
   webmcp mobile mcp
   webmcp adb mcp                         Alias for webmcp mobile mcp
+  webmcp captcha <command> [options]     Solve/detect CAPTCHAs (python solver)
   webmcp skills list [--json]
   webmcp skills path <name>
   webmcp skills doctor [--json]
@@ -3365,6 +3366,56 @@ function getAdbMcpBin() {
   return null;
 }
 
+// The captcha solver is a Python package with its own venv, so this resolves an
+// executable to spawn directly rather than a JS entry point to run under node.
+function getCaptchaSolveBin() {
+  const override = process.env.WEBMCP_CAPTCHA_BIN;
+  if (override) return resolve(process.cwd(), override);
+
+  const candidates = [];
+  if (process.env.WEBMCP_CAPTCHA_HOME) {
+    candidates.push(resolve(process.env.WEBMCP_CAPTCHA_HOME, '.venv', 'bin', 'captcha-solve'));
+  }
+  // Release install (installation/lib/python-packages.sh), then kit checkout.
+  candidates.push(resolve(homedir(), '.webmcp', 'captcha-solver', '.venv', 'bin', 'captcha-solve'));
+  candidates.push(resolve(ROOT, '..', 'webmcp-captcha-solver', '.venv', 'bin', 'captcha-solve'));
+
+  return candidates.find((candidate) => existsSync(candidate)) || null;
+}
+
+async function runCaptcha(args) {
+  const captchaBin = getCaptchaSolveBin();
+  if (!captchaBin) {
+    console.error([
+      'WebMCP captcha solver not found.',
+      'Run install.sh step 4, or set WEBMCP_CAPTCHA_HOME to a checkout of',
+      'packages/webmcp-captcha-solver that has a built .venv.',
+    ].join('\n'));
+    return 1;
+  }
+
+  const child = spawn(captchaBin, args.length > 0 ? args : ['--help'], {
+    cwd: process.cwd(),
+    env: { ...process.env },
+    stdio: 'inherit',
+  });
+
+  return new Promise((resolveExitCode) => {
+    child.on('error', (err) => {
+      console.error(`Failed to start captcha solver: ${err.message}`);
+      resolveExitCode(1);
+    });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        console.error(`Captcha solver exited after signal ${signal}`);
+        resolveExitCode(1);
+        return;
+      }
+      resolveExitCode(code ?? 0);
+    });
+  });
+}
+
 function printMobileHelp() {
   console.log(`WebMCP Mobile Automation
 
@@ -3949,6 +4000,10 @@ async function main() {
 
   if (command === 'mobile' || command === 'adb') {
     process.exit(await runMobile(args));
+  }
+
+  if (command === 'captcha') {
+    process.exit(await runCaptcha(args));
   }
 
   if (command === 'skills') {
