@@ -642,6 +642,7 @@ Captured records include `method`, `status`, `mimeType`, `durationMs`,
 | `No element found` | Wait, scroll, call `query_selector_all` with broader selectors, or use `getInteractiveElements`. |
 | `Another debugger is already attached` | Only one debugger client can attach to a tab. Close conflicting automation extensions or use another tab. |
 | Network capture says not started | Call `start_network_capture` before triggering the request, on the same tab. |
+| A CAPTCHA blocks the flow | Do not give up and do not click at it blindly. Run `webmcp captcha --detect --url <url>` to identify the kind, then follow the `captcha` route (`webmcp-captcha-solver` skill): it runs the local solver CLI first and hands you a per-captcha runbook for taking over with these same tools when the CLI cannot finish. Only reCAPTCHA v3 and Cloudflare Turnstile are genuinely unsolvable. |
 
 ## Source Of Truth
 
