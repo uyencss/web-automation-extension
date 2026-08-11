@@ -3225,17 +3225,19 @@ async function runProjectCharter(args) {
   }
   let relativeFile = null;
   let workspace = null;
+  let workspaceSpecified = false;
   let yes = false;
   let json = false;
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === '--workspace') {
       const value = rest[index + 1];
-      if (workspace || value === undefined || value.startsWith('--')) {
+      if (workspaceSpecified || value === undefined || value.startsWith('--') || value.trim() === '') {
         console.error(usage);
         return 2;
       }
       workspace = value;
+      workspaceSpecified = true;
       index += 1;
       continue;
     }
@@ -3265,7 +3267,7 @@ async function runProjectCharter(args) {
     console.error(usage);
     return 2;
   }
-  const root = workspace || resolvedProjectRoot()?.root;
+  const root = workspaceSpecified ? workspace : resolvedProjectRoot()?.root;
   if (!root) {
     console.error('No default project is registered. Register one with: webmcp project attach <dir> --default');
     return 1;

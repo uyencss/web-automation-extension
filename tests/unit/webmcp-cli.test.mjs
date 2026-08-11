@@ -1597,6 +1597,70 @@ test('webmcp project charter adopt rejects a missing workspace value before invo
   assert.equal(existsSync(captureFile), false);
 });
 
+test('webmcp project charter adopt rejects explicit empty workspace forms before invoking Runner', () => {
+  const fixtures = [
+    { name: 'equals form', workspaceArgs: ['--workspace='] },
+    { name: 'empty argv element', workspaceArgs: ['--workspace', ''] },
+  ];
+  const observations = fixtures.map((fixture) => {
+    const home = mkdtempSync(path.join(tmpdir(), `webmcp-project-charter-${fixture.name.replaceAll(' ', '-')}-`));
+    const captureFile = path.join(home, 'runner-calls.jsonl');
+    const runnerBin = createCaptureRunner(home, {
+      defaultWorkspace: { id: 'default', root: '/default/project' },
+    });
+    const result = spawnSync(process.execPath, [
+      BIN, 'project', 'charter', 'adopt', 'prompts/master.md',
+      ...fixture.workspaceArgs, '--yes',
+    ], {
+      cwd: WORKSPACE_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        WEBMCP_HOME: path.join(home, '.webmcp'),
+        WEBMCP_RUNNER_BIN: runnerBin,
+        WEBMCP_TEST_RUNNER_CAPTURE_FILE: captureFile,
+      },
+    });
+    return {
+      name: fixture.name,
+      status: result.status,
+      usageError: /Usage: webmcp project charter adopt/.test(result.stderr),
+      runnerInvoked: existsSync(captureFile),
+    };
+  });
+
+  assert.deepEqual(observations, [
+    { name: 'equals form', status: 2, usageError: true, runnerInvoked: false },
+    { name: 'empty argv element', status: 2, usageError: true, runnerInvoked: false },
+  ]);
+});
+
+test('webmcp project charter adopt rejects a whitespace-only workspace before invoking Runner', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-charter-blank-workspace-'));
+  const captureFile = path.join(home, 'runner-calls.jsonl');
+  const runnerBin = createCaptureRunner(home);
+  const result = spawnSync(process.execPath, [
+    BIN, 'project', 'charter', 'adopt', 'prompts/master.md', '--workspace', '   ', '--yes',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_HOME: path.join(home, '.webmcp'),
+      WEBMCP_RUNNER_BIN: runnerBin,
+      WEBMCP_TEST_RUNNER_CAPTURE_FILE: captureFile,
+    },
+  });
+
+  assert.deepEqual({
+    status: result.status,
+    usageError: /Usage: webmcp project charter adopt/.test(result.stderr),
+    runnerInvoked: existsSync(captureFile),
+  }, { status: 2, usageError: true, runnerInvoked: false });
+});
+
 test('webmcp project charter adopt preserves explicit workspace and file argv boundaries', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-charter-explicit-'));
   const captureFile = path.join(home, 'runner-calls.jsonl');
