@@ -1507,6 +1507,19 @@ function runnerRun(args, env = {}) {
   });
 }
 
+function createCaptureRunner(home, { defaultWorkspace = null } = {}) {
+  const runnerBin = path.join(home, 'capture-runner.mjs');
+  writeFileSync(runnerBin, [
+    "import { appendFileSync } from 'node:fs';",
+    "const args = process.argv.slice(2);",
+    "appendFileSync(process.env.WEBMCP_TEST_RUNNER_CAPTURE_FILE, `${JSON.stringify(args)}\\n`);",
+    "if (args[0] === 'workspace' && args[1] === 'list' && args.includes('--json')) {",
+    `  process.stdout.write(${JSON.stringify(JSON.stringify({ data: { defaultWorkspaceId: defaultWorkspace?.id ?? null, workspaces: defaultWorkspace ? [defaultWorkspace] : [] } }))});`,
+    '}',
+  ].join('\n'));
+  return runnerBin;
+}
+
 test('webmcp project help surfaces the project workspace commands in the top-level help', () => {
   const help = spawnSync(process.execPath, [BIN, '--help'], {
     cwd: WORKSPACE_ROOT,
@@ -1525,8 +1538,148 @@ test('webmcp project help surfaces the project workspace commands in the top-lev
   assert.match(project.stdout, /webmcp project where \[<id>\]/);
   assert.match(project.stdout, /webmcp project doctor \[<dir>\]/);
   assert.match(project.stdout, /webmcp project new \[--template <id>\]/);
+  assert.match(project.stdout, /webmcp project charter adopt <relative-md> \[--workspace <dir>\] \[--yes\] \[--json\]/);
   assert.match(project.stdout, /webmcp project guide list \[--json\]/);
   assert.match(project.stdout, /webmcp project guide stage <collections\/<id>\/GUIDE.md>/);
+  assert.match(project.stdout, /charter adopt is dry-run by default; pass --yes to write/);
+});
+
+test('webmcp project charter adopt routes the default workspace as one argv vector', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-charter-default-'));
+  const workspace = path.join(home, 'projects', 'default workspace');
+  const captureFile = path.join(home, 'runner-calls.jsonl');
+  const runnerBin = createCaptureRunner(home, {
+    defaultWorkspace: { id: 'default', root: workspace },
+  });
+
+  const result = spawnSync(process.execPath, [
+    BIN, 'project', 'charter', 'adopt', 'prompts/master plan.md', '--json',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_HOME: path.join(home, '.webmcp'),
+      WEBMCP_RUNNER_BIN: runnerBin,
+      WEBMCP_TEST_RUNNER_CAPTURE_FILE: captureFile,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), [
+    ['workspace', 'list', '--json'],
+    ['workspace', 'charter', 'adopt', 'prompts/master plan.md', '--workspace', workspace, '--json'],
+  ]);
+});
+
+test('webmcp project charter adopt rejects a missing workspace value before invoking Runner', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-charter-missing-workspace-'));
+  const captureFile = path.join(home, 'runner-calls.jsonl');
+  const runnerBin = createCaptureRunner(home);
+
+  const result = spawnSync(process.execPath, [
+    BIN, 'project', 'charter', 'adopt', 'prompts/master.md', '--workspace',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_HOME: path.join(home, '.webmcp'),
+      WEBMCP_RUNNER_BIN: runnerBin,
+      WEBMCP_TEST_RUNNER_CAPTURE_FILE: captureFile,
+    },
+  });
+
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /Usage: webmcp project charter adopt/);
+  assert.equal(existsSync(captureFile), false);
+});
+
+test('webmcp project charter adopt preserves explicit workspace and file argv boundaries', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-charter-explicit-'));
+  const captureFile = path.join(home, 'runner-calls.jsonl');
+  const runnerBin = createCaptureRunner(home);
+  const workspace = path.join(home, "Projects & O'Brien; $(not-a-command)");
+  const relativeFile = "prompts/master plan; $(not-a-command) O'Brien.md";
+
+  const result = spawnSync(process.execPath, [
+    BIN, 'project', 'charter', 'adopt', relativeFile,
+    '--workspace', workspace, '--yes', '--json',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_HOME: path.join(home, '.webmcp'),
+      WEBMCP_RUNNER_BIN: runnerBin,
+      WEBMCP_TEST_RUNNER_CAPTURE_FILE: captureFile,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), [[
+    'workspace', 'charter', 'adopt', relativeFile, '--workspace', workspace, '--yes', '--json',
+  ]]);
+});
+
+test('webmcp project charter adopt rejects invalid syntax before invoking Runner', () => {
+  const cases = [
+    { name: 'missing file', args: [] },
+    { name: 'extra positional argument', args: ['prompts/master.md', 'prompts/extra.md'] },
+    { name: 'unknown option', args: ['prompts/master.md', '--replace'] },
+  ];
+
+  for (const fixture of cases) {
+    const home = mkdtempSync(path.join(tmpdir(), `webmcp-project-charter-${fixture.name.replaceAll(' ', '-')}-`));
+    const captureFile = path.join(home, 'runner-calls.jsonl');
+    const runnerBin = createCaptureRunner(home);
+    const result = spawnSync(process.execPath, [
+      BIN, 'project', 'charter', 'adopt', ...fixture.args,
+    ], {
+      cwd: WORKSPACE_ROOT,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: home,
+        WEBMCP_HOME: path.join(home, '.webmcp'),
+        WEBMCP_RUNNER_BIN: runnerBin,
+        WEBMCP_TEST_RUNNER_CAPTURE_FILE: captureFile,
+      },
+    });
+
+    assert.equal(result.status, 2, `${fixture.name}: ${result.stderr}`);
+    assert.match(result.stderr, /Usage: webmcp project charter adopt/);
+    assert.equal(existsSync(captureFile), false, `${fixture.name} invoked Runner`);
+  }
+});
+
+test('webmcp project charter adopt returns the existing default-project error without adoption delegation', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-charter-nodefault-'));
+  const captureFile = path.join(home, 'runner-calls.jsonl');
+  const runnerBin = createCaptureRunner(home);
+  const result = spawnSync(process.execPath, [
+    BIN, 'project', 'charter', 'adopt', 'prompts/master.md',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_HOME: path.join(home, '.webmcp'),
+      WEBMCP_RUNNER_BIN: runnerBin,
+      WEBMCP_TEST_RUNNER_CAPTURE_FILE: captureFile,
+    },
+  });
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /No default project is registered/);
+  assert.match(result.stderr, /webmcp project attach <dir> --default/);
+  assert.deepEqual(readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line)), [
+    ['workspace', 'list', '--json'],
+  ]);
 });
 
 test('webmcp project list reports an empty isolated registry', () => {

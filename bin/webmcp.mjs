@@ -157,6 +157,7 @@ Usage:
   webmcp project where [<id>] [--json]
   webmcp project doctor [<dir>] [--json]
   webmcp project new [--template <id>] [--at <dir>] [--id <id>] [--name <name>] [--default] [--dry-run] [--json]
+  webmcp project charter adopt <relative-md> [--workspace <dir>] [--yes] [--json]
   webmcp project guide list [--json]
   webmcp project guide stage <collections/<id>/GUIDE.md> --as inputs/<path> --yes [--json]
 
@@ -172,6 +173,8 @@ Notes:
   store automation id); without --template it bootstraps the store's default
   selection (all automations). Without --at the default parent is $WEBMCP_PROJECTS_ROOT
   or ~/WebMCP Projects.
+  charter adopt is dry-run by default; pass --yes to write. It delegates the charter
+  operation to the Automation Runner and never reads or modifies project files itself.
   guide list shows derived guides (collections/<id>/GUIDE.md). guide stage copies a
   reviewed guide below the intent/evidence boundary into inputs/; it requires the
   explicit --yes confirmation and never modifies or deletes the source.`);
@@ -3213,6 +3216,67 @@ async function runProjectNew(args) {
   return runRunner(argv);
 }
 
+async function runProjectCharter(args) {
+  const [subcommand, ...rest] = args;
+  const usage = 'Usage: webmcp project charter adopt <relative-md> [--workspace <dir>] [--yes] [--json]';
+  if (subcommand !== 'adopt') {
+    console.error(usage);
+    return 2;
+  }
+  let relativeFile = null;
+  let workspace = null;
+  let yes = false;
+  let json = false;
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index];
+    if (arg === '--workspace') {
+      const value = rest[index + 1];
+      if (workspace || value === undefined || value.startsWith('--')) {
+        console.error(usage);
+        return 2;
+      }
+      workspace = value;
+      index += 1;
+      continue;
+    }
+    if (arg === '--yes') {
+      if (yes) {
+        console.error(usage);
+        return 2;
+      }
+      yes = true;
+      continue;
+    }
+    if (arg === '--json') {
+      if (json) {
+        console.error(usage);
+        return 2;
+      }
+      json = true;
+      continue;
+    }
+    if (arg.startsWith('--') || relativeFile) {
+      console.error(usage);
+      return 2;
+    }
+    relativeFile = arg;
+  }
+  if (!relativeFile) {
+    console.error(usage);
+    return 2;
+  }
+  const root = workspace || resolvedProjectRoot()?.root;
+  if (!root) {
+    console.error('No default project is registered. Register one with: webmcp project attach <dir> --default');
+    return 1;
+  }
+  return runRunner([
+    'workspace', 'charter', 'adopt', relativeFile, '--workspace', root,
+    ...(yes ? ['--yes'] : []),
+    ...(json ? ['--json'] : []),
+  ]);
+}
+
 function projectGuideTarget(rest) {
   const explicit = projectOption(rest, 'workspace');
   if (explicit) {
@@ -3266,6 +3330,7 @@ async function runProject(args) {
   if (subcommand === 'where') return runProjectWhere(rest);
   if (subcommand === 'doctor') return runProjectDoctor(rest);
   if (subcommand === 'new') return runProjectNew(rest);
+  if (subcommand === 'charter') return runProjectCharter(rest);
   if (subcommand === 'guide') return runProjectGuide(rest);
   console.error(`Unknown project command: ${subcommand}`);
   printProjectHelp();
