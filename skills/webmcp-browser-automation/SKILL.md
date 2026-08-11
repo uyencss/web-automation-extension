@@ -605,6 +605,55 @@ Captured records include `method`, `status`, `mimeType`, `durationMs`,
 `base64Encoded`. Failed requests are returned with `failed: true` and
 `errorText` instead of hanging.
 
+### Anti-bot challenge handling (Cloudflare)
+
+When a page is blocked by Cloudflare (JS challenge, managed challenge), do not
+fall back to plain `requests`/`curl` — the TLS fingerprint is wrong and the
+challenge never resolves. Instead harvest and reuse a real browser session
+from this machine with the scripts under `scripts/antibot/` (same gateway as
+`scripts/webmcp-call.js`):
+
+1. **Detect** — `node scripts/antibot/detect-challenge.js --url <url>` →
+   JSON `{ url, type, status, hasClearance }`. Ground truth = presence of a
+   valid `cf_clearance` cookie for the target domain plus the
+   caller-configured success signal (`--success-signal <selector>`); markup
+   only labels the challenge `type` (`js-challenge` / `managed` / `turnstile`
+   / `none`). `status: blocked` means there is nothing to reuse yet.
+2. **Wait for auto-resolve** — a real browser profile resolves JS/managed
+   challenges by itself; never interact with challenge iframes.
+3. **Harvest** — `node scripts/antibot/solve-and-harvest.js --url <url>
+   --run-dir <dir>` polls `getCookies` (~30s default), then writes
+   `runDir/artifacts/session.json` with the `cf_*` cookies **plus the
+   User-Agent** that minted them (mandatory — `cf_clearance` is bound to it)
+   and an egress note. One challenge per profile at a time (lockfile in
+   `runDir`); a dedicated tab is closed when done.
+4. **Apply** — `node scripts/antibot/apply-session.js --session
+   runDir/artifacts/session.json --mode http` (default) replays the session
+   via `curl_cffi` with `impersonate` matching the saved UA and verifies HTTP
+   200 without challenge markers. `--mode browser` re-injects the cookies
+   with full attributes (`secure`/`httpOnly`/`sameSite`/`expires`) through
+   raw `Network.setCookie` via `executeCDP` so another tab reuses the session.
+
+Transport note: `getCookies`, `setCookie`, and `executeCDP` are **hidden** from
+the default minimal MCP surface. The Node scripts call the gateway over HTTP
+POST (`http://127.0.0.1:7865/api`, the established `webmcp-call.js` pattern);
+when driving the same operations from the agent runtime, reach them with the
+MCP tool `browser_raw_command` (`{ method, params }`).
+
+Troubleshooting:
+
+- A `cf_clearance` cookie is bound to the **User-Agent + IP + TLS
+  fingerprint** that minted it. Reuse must keep the saved UA, run from the
+  same egress IP, and use `curl_cffi` impersonation. Plain `requests` with
+  the correct cookie is an **expected-fail** (wrong JA3/TLS) — treat
+  "cookie present but re-challenged" as the TLS binding failing, not a broken
+  cookie.
+- `cf_clearance` expires per-site (the artifact records `expiresAt`) —
+  re-harvest when it does.
+- No cookie after ~30s: either a Turnstile/interactive challenge (detected →
+  **manual handoff**, never click the widget) or blocked network — fail
+  closed, do not fabricate a session.
+
 ## Safety And Reliability
 
 - Ask before submitting irreversible forms, purchases, deletions, or sending

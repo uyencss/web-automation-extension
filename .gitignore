@@ -51,3 +51,7 @@ webmcp-extension/build/
 
 # Local Claude Code config (per-machine, not shared)
 .claude/
+
+# Antibot session artifacts (never commit cookies/tokens/User-Agents)
+runDir/
+*.session.json
