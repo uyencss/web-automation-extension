@@ -43,7 +43,7 @@ Only needed when calling the gateway directly with scripts/curl. If using the MC
 skip this step; `server/mcp_server.mjs` starts the gateway automatically.
 
 ```bash
-cd /Users/ttcenter/Desktop/VIBE_CODE/web-automation-extension
+cd <your-checkout>/web-automation-extension
 npm run setup      # First time
 npm run gateway
 ```

@@ -53,7 +53,7 @@ Successful result:
   "ok": true,
   "pid": 12345,
   "chromePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "userDataDir": "/Users/me/.webmcp/managed-profiles/job",
+  "userDataDir": "$HOME/.webmcp/managed-profiles/job",
   "profileDir": "Default",
   "mode": "managed",
   "attached": false,
