@@ -150,6 +150,9 @@ export function readProfilePoolConfig() {
   if (!parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
     throw poolError('CONFIG_INVALID', 'profile pool config must be a JSON object');
   }
+  if (parsed.data.schema !== SCHEMA_CONFIG) {
+    throw poolError('CONFIG_INVALID', `profile pool config schema must be ${SCHEMA_CONFIG}`);
+  }
   const aliases = parsed.data.aliases && typeof parsed.data.aliases === 'object' && !Array.isArray(parsed.data.aliases)
     ? parsed.data.aliases
     : {};
@@ -197,6 +200,9 @@ function readStateFile() {
   if (!parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
     throw poolError('STATE_INVALID', 'profile pool state must be a JSON object');
   }
+  if (parsed.data.schema !== SCHEMA_STATE) {
+    throw poolError('STATE_INVALID', `profile pool state schema must be ${SCHEMA_STATE}`);
+  }
   const state = parsed.data;
   state.leases = state.leases && typeof state.leases === 'object' && !Array.isArray(state.leases) ? state.leases : {};
   return { path, state };
@@ -238,7 +244,7 @@ function withStateLock(statePath, fn) {
         continue;
       }
       if (Date.now() >= deadline) {
-        throw poolError('STATE_BUSY', `Profile pool state is locked by another broker call (${lockDir}); retry or remove the stale lock`);
+        throw poolError('STATE_BUSY', 'Profile pool state is locked by another broker call; retry after the current broker operation completes');
       }
       sleepSync(LOCK_POLL_MS);
     }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -384,6 +384,81 @@ test('config and state read/parse failures use stable path-free diagnostics', ()
   assert.equal(JSON.stringify(stateParseFailure.payload).includes(home), false);
 
   rmSync(home, { recursive: true, force: true });
+});
+
+test('missing or wrong config schema fails before lease state mutation', () => {
+  for (const schema of [undefined, 'webmcp-profile-pool-config/0']) {
+    const fixture = makeHome();
+    writeFileSync(fixture.config, JSON.stringify({
+      ...(schema === undefined ? {} : { schema }),
+      aliases: { suno: PHYSICAL },
+    }, null, 2));
+
+    const acquired = runJson(['acquire', 'suno', '--json'], fixture.env);
+    assert.equal(acquired.result.status, 1);
+    assert.equal(acquired.payload.error.code, 'CONFIG_INVALID');
+    assert.equal(
+      acquired.payload.error.message,
+      'profile pool config schema must be webmcp-profile-pool-config/1',
+    );
+    assert.equal(existsSync(fixture.state), false);
+    assert.equal(JSON.stringify(acquired.payload).includes(fixture.home), false);
+    assert.equal(JSON.stringify(acquired.payload).includes(PHYSICAL), false);
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+test('missing or wrong state schema fails before state mutation', () => {
+  for (const schema of [undefined, 'webmcp-profile-pool-state/0']) {
+    const fixture = makeHome();
+    const original = `${JSON.stringify({
+      ...(schema === undefined ? {} : { schema }),
+      leases: {},
+    }, null, 2)}\n`;
+    writeFileSync(fixture.state, original);
+
+    const acquired = runJson(['acquire', 'suno', '--json'], fixture.env);
+    assert.equal(acquired.result.status, 1);
+    assert.equal(acquired.payload.error.code, 'STATE_INVALID');
+    assert.equal(
+      acquired.payload.error.message,
+      'profile pool state schema must be webmcp-profile-pool-state/1',
+    );
+    assert.equal(readFileSync(fixture.state, 'utf8'), original);
+    assert.equal(JSON.stringify(acquired.payload).includes(fixture.home), false);
+    assert.equal(JSON.stringify(acquired.payload).includes(PHYSICAL), false);
+    rmSync(fixture.home, { recursive: true, force: true });
+  }
+});
+
+test('state busy and lock creation failures use stable path-free diagnostics', () => {
+  const busy = makeHome();
+  mkdirSync(`${busy.state}.lock`);
+  const busyResult = runJson(['list', '--json'], busy.env);
+  assert.equal(busyResult.result.status, 1);
+  assert.equal(busyResult.payload.error.code, 'STATE_BUSY');
+  assert.equal(
+    busyResult.payload.error.message,
+    'Profile pool state is locked by another broker call; retry after the current broker operation completes',
+  );
+  assert.equal(JSON.stringify(busyResult.payload).includes(busy.home), false);
+  assert.equal(busyResult.result.stderr.includes(busy.home), false);
+  rmSync(busy.home, { recursive: true, force: true });
+
+  const unwritable = makeHome();
+  const parentFile = path.join(unwritable.home, 'not-a-directory');
+  writeFileSync(parentFile, 'blocked\n');
+  const state = path.join(parentFile, 'state.json');
+  const lockFailure = runJson(['list', '--json'], {
+    ...unwritable.env,
+    WEBMCP_PROFILE_POOL_STATE: state,
+  });
+  assert.equal(lockFailure.result.status, 1);
+  assert.equal(lockFailure.payload.error.code, 'STATE_UNWRITABLE');
+  assert.equal(lockFailure.payload.error.message, 'Cannot create profile pool state lock');
+  assert.equal(JSON.stringify(lockFailure.payload).includes(unwritable.home), false);
+  assert.equal(lockFailure.result.stderr.includes(unwritable.home), false);
+  rmSync(unwritable.home, { recursive: true, force: true });
 });
 
 test('usage errors exit 2 with USAGE_ERROR code', () => {
