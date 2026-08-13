@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -334,6 +334,55 @@ test('config is loaded from WEBMCP_PROFILE_POOL_CONFIG and failures are fail-clo
   assert.equal(doctorMissing.result.stderr.includes(missing), false);
 
   rmSync(missing, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
+});
+
+test('config and state read/parse failures use stable path-free diagnostics', () => {
+  const { home, env } = makeHome();
+  const unreadableConfig = path.join(home, 'config-read-failure');
+  mkdirSync(unreadableConfig);
+  const configReadFailure = runJson(['acquire', 'suno', '--json'], {
+    ...env,
+    WEBMCP_PROFILE_POOL_CONFIG: unreadableConfig,
+  });
+  assert.equal(configReadFailure.result.status, 1);
+  assert.equal(configReadFailure.payload.error.code, 'CONFIG_INVALID');
+  assert.equal(configReadFailure.payload.error.message, 'profile pool config could not be read');
+  assert.equal(JSON.stringify(configReadFailure.payload).includes(home), false);
+
+  const invalidConfig = path.join(home, 'config-parse-failure.json');
+  writeFileSync(invalidConfig, '{');
+  const configParseFailure = runJson(['acquire', 'suno', '--json'], {
+    ...env,
+    WEBMCP_PROFILE_POOL_CONFIG: invalidConfig,
+  });
+  assert.equal(configParseFailure.result.status, 1);
+  assert.equal(configParseFailure.payload.error.code, 'CONFIG_INVALID');
+  assert.equal(configParseFailure.payload.error.message, 'profile pool config is not valid JSON');
+  assert.equal(JSON.stringify(configParseFailure.payload).includes(home), false);
+
+  const unreadableState = path.join(home, 'state-read-failure');
+  mkdirSync(unreadableState);
+  const stateReadFailure = runJson(['acquire', 'suno', '--json'], {
+    ...env,
+    WEBMCP_PROFILE_POOL_STATE: unreadableState,
+  });
+  assert.equal(stateReadFailure.result.status, 1);
+  assert.equal(stateReadFailure.payload.error.code, 'STATE_INVALID');
+  assert.equal(stateReadFailure.payload.error.message, 'profile pool state could not be read');
+  assert.equal(JSON.stringify(stateReadFailure.payload).includes(home), false);
+
+  const invalidState = path.join(home, 'state-parse-failure.json');
+  writeFileSync(invalidState, '{');
+  const stateParseFailure = runJson(['acquire', 'suno', '--json'], {
+    ...env,
+    WEBMCP_PROFILE_POOL_STATE: invalidState,
+  });
+  assert.equal(stateParseFailure.result.status, 1);
+  assert.equal(stateParseFailure.payload.error.code, 'STATE_INVALID');
+  assert.equal(stateParseFailure.payload.error.message, 'profile pool state is not valid JSON');
+  assert.equal(JSON.stringify(stateParseFailure.payload).includes(home), false);
+
   rmSync(home, { recursive: true, force: true });
 });
 

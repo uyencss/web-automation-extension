@@ -122,10 +122,16 @@ function sleepSync(ms) {
 }
 
 function readJsonFile(file) {
+  let text;
   try {
-    return { ok: true, data: JSON.parse(readFileSync(file, 'utf8')) };
-  } catch (error) {
-    return { ok: false, error: error.message };
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return { ok: false, kind: 'read' };
+  }
+  try {
+    return { ok: true, data: JSON.parse(text) };
+  } catch {
+    return { ok: false, kind: 'parse' };
   }
 }
 
@@ -135,8 +141,14 @@ export function readProfilePoolConfig() {
     throw poolError('CONFIG_NOT_FOUND', `profile pool config is not configured; set WEBMCP_PROFILE_POOL_CONFIG or write ~/.webmcp/profilePool.json with schema ${SCHEMA_CONFIG}`);
   }
   const parsed = readJsonFile(path);
-  if (!parsed.ok || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
-    throw poolError('CONFIG_INVALID', `profile pool config is not a JSON object: ${parsed.error || 'invalid JSON'}`);
+  if (!parsed.ok) {
+    throw poolError(
+      'CONFIG_INVALID',
+      parsed.kind === 'read' ? 'profile pool config could not be read' : 'profile pool config is not valid JSON',
+    );
+  }
+  if (!parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
+    throw poolError('CONFIG_INVALID', 'profile pool config must be a JSON object');
   }
   const aliases = parsed.data.aliases && typeof parsed.data.aliases === 'object' && !Array.isArray(parsed.data.aliases)
     ? parsed.data.aliases
@@ -176,8 +188,14 @@ function readStateFile() {
     return { path, state: { schema: SCHEMA_STATE, leases: {} } };
   }
   const parsed = readJsonFile(path);
-  if (!parsed.ok || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
-    throw poolError('STATE_INVALID', `profile pool state is not a JSON object: ${parsed.error || 'invalid JSON'}`);
+  if (!parsed.ok) {
+    throw poolError(
+      'STATE_INVALID',
+      parsed.kind === 'read' ? 'profile pool state could not be read' : 'profile pool state is not valid JSON',
+    );
+  }
+  if (!parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
+    throw poolError('STATE_INVALID', 'profile pool state must be a JSON object');
   }
   const state = parsed.data;
   state.leases = state.leases && typeof state.leases === 'object' && !Array.isArray(state.leases) ? state.leases : {};
