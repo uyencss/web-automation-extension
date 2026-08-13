@@ -211,7 +211,7 @@ test('leases persist across processes and expire after restart', () => {
 });
 
 test('physical profile ids never appear in command output', () => {
-  const { env } = makeHome({
+  const { home, env } = makeHome({
     aliases: { suno: PHYSICAL, suno2: PHYSICAL, flow: PHYSICAL_FLOW },
   });
   const commands = [
@@ -226,6 +226,8 @@ test('physical profile ids never appear in command output', () => {
     const result = run(args, env);
     assert.ok(!result.stdout.includes(PHYSICAL), `${args.join(' ')} leaked the physical profile id`);
     assert.ok(!result.stderr.includes(PHYSICAL), `${args.join(' ')} leaked the physical profile id to stderr`);
+    assert.ok(!result.stdout.includes(home), `${args.join(' ')} leaked the machine-local home path`);
+    assert.ok(!result.stderr.includes(home), `${args.join(' ')} leaked the machine-local home path to stderr`);
   }
 });
 
@@ -321,11 +323,15 @@ test('config is loaded from WEBMCP_PROFILE_POOL_CONFIG and failures are fail-clo
   const missingRun = runJson(['acquire', 'suno', '--json'], { WEBMCP_HOME: missing, WEBMCP_PROFILE_POOL_CONFIG: path.join(missing, 'nope.json') });
   assert.equal(missingRun.result.status, 1);
   assert.equal(missingRun.payload.error.code, 'CONFIG_NOT_FOUND');
+  assert.equal(missingRun.result.stdout.includes(missing), false);
+  assert.equal(missingRun.result.stderr.includes(missing), false);
 
   const doctorMissing = runJson(['doctor', '--json'], { WEBMCP_HOME: missing });
   assert.equal(doctorMissing.result.status, 1);
   assert.equal(doctorMissing.payload.data.ok, false);
   assert.equal(doctorMissing.payload.data.config.present, false);
+  assert.equal(doctorMissing.result.stdout.includes(missing), false);
+  assert.equal(doctorMissing.result.stderr.includes(missing), false);
 
   rmSync(missing, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });

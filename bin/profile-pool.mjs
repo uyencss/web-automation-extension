@@ -132,7 +132,7 @@ function readJsonFile(file) {
 export function readProfilePoolConfig() {
   const path = profilePoolConfigPath();
   if (!existsSync(path)) {
-    throw poolError('CONFIG_NOT_FOUND', `profile pool config not found at ${path}; set WEBMCP_PROFILE_POOL_CONFIG or write ${path} with schema ${SCHEMA_CONFIG}`);
+    throw poolError('CONFIG_NOT_FOUND', `profile pool config is not configured; set WEBMCP_PROFILE_POOL_CONFIG or write ~/.webmcp/profilePool.json with schema ${SCHEMA_CONFIG}`);
   }
   const parsed = readJsonFile(path);
   if (!parsed.ok || !parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
@@ -191,7 +191,7 @@ function writeStateFile(path, state) {
     writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
     renameSync(tmp, path);
   } catch (error) {
-    throw poolError('STATE_UNWRITABLE', `Cannot persist profile pool state: ${error.message}`);
+    throw poolError('STATE_UNWRITABLE', 'Cannot persist profile pool state');
   }
 }
 
@@ -207,7 +207,7 @@ function withStateLock(statePath, fn) {
       mkdirSync(lockDir);
       break;
     } catch (error) {
-      if (error.code !== 'EEXIST') throw poolError('STATE_UNWRITABLE', `Cannot create state lock ${lockDir}: ${error.message}`);
+      if (error.code !== 'EEXIST') throw poolError('STATE_UNWRITABLE', 'Cannot create profile pool state lock');
       let stale = false;
       try {
         stale = Date.now() - statSync(lockDir).mtimeMs > LOCK_STALE_MS;
@@ -436,7 +436,7 @@ function cmdDoctor(rest) {
 
   const configPath = profilePoolConfigPath();
   const statePath = profilePoolStatePath();
-  const config = { present: existsSync(configPath), path: configPath };
+  const config = { present: existsSync(configPath) };
   if (config.present) {
     try {
       const { config: loaded } = readProfilePoolConfig();
@@ -461,7 +461,7 @@ function cmdDoctor(rest) {
     }
   }
 
-  const state = { present: existsSync(statePath), path: statePath };
+  const state = { present: existsSync(statePath) };
   let expiredCount = 0;
   if (state.present) {
     try {
