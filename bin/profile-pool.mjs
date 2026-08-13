@@ -149,6 +149,24 @@ export function readProfilePoolConfig() {
       throw poolError('CONFIG_INVALID', `profile pool alias '${alias}' has no usable physical profile id`);
     }
   }
+  const aliasesByPhysicalProfile = new Map();
+  for (const [alias, profileId] of Object.entries(aliases)) {
+    const physicalKey = profileId.trim();
+    aliasesByPhysicalProfile.set(physicalKey, [
+      ...(aliasesByPhysicalProfile.get(physicalKey) || []),
+      alias,
+    ]);
+  }
+  const duplicateAliasGroups = [...aliasesByPhysicalProfile.values()]
+    .filter((group) => group.length > 1)
+    .map((group) => [...group].sort());
+  if (duplicateAliasGroups.length) {
+    throw poolError(
+      'CONFIG_INVALID',
+      `profile pool config contains duplicate physical mapping for logical aliases: ${duplicateAliasGroups.map((group) => group.join(', ')).join('; ')}`,
+      { duplicateAliasGroups },
+    );
+  }
   return { path, config: { schema: SCHEMA_CONFIG, aliases } };
 }
 
@@ -434,6 +452,12 @@ function cmdDoctor(rest) {
     } catch (error) {
       config.ok = false;
       config.error = error.message;
+      if (Array.isArray(error.details?.duplicateAliasGroups)) {
+        config.blockingIssue = 'DUPLICATE_PHYSICAL_MAPPING';
+        config.duplicateAliasCount = error.details.duplicateAliasGroups
+          .reduce((count, group) => count + group.length, 0);
+        config.duplicateAliasGroups = error.details.duplicateAliasGroups;
+      }
     }
   }
 

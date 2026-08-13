@@ -229,27 +229,72 @@ test('physical profile ids never appear in command output', () => {
   }
 });
 
-test('doctor reports readiness, duplicate physical mappings, and the seam flag', () => {
+test('duplicate physical mappings block acquisition and doctor readiness', () => {
   const { env } = makeHome({
     aliases: { suno: PHYSICAL, suno2: PHYSICAL, flow: PHYSICAL_FLOW },
   });
-  runJson(['acquire', 'suno', '--json'], env);
+
+  const first = runJson(['acquire', 'suno', '--json'], env);
+  assert.equal(first.result.status, 1);
+  assert.equal(first.payload.error.code, 'CONFIG_INVALID');
+  assert.match(first.payload.error.message, /duplicate physical mapping/i);
+  assert.ok(!first.result.stdout.includes(PHYSICAL));
+  assert.ok(!first.result.stderr.includes(PHYSICAL));
+
+  const second = runJson(['acquire', 'suno2', '--json'], env);
+  assert.equal(second.result.status, 1);
+  assert.equal(second.payload.error.code, 'CONFIG_INVALID');
+  assert.ok(!second.result.stdout.includes(PHYSICAL));
+  assert.ok(!second.result.stderr.includes(PHYSICAL));
 
   const doctor = runJson(['doctor', '--json'], env);
-  assert.equal(doctor.result.status, 0, doctor.result.stderr);
+  assert.equal(doctor.result.status, 1, doctor.result.stderr);
   assert.equal(doctor.payload.ok, true);
-  assert.equal(doctor.payload.data.config.schema, 'webmcp-profile-pool-config/1');
-  assert.equal(doctor.payload.data.config.aliasCount, 3);
-  assert.equal(doctor.payload.data.config.duplicateAliasCount, 2);
-  assert.equal(doctor.payload.data.state.leaseCount, 1);
+  assert.equal(doctor.payload.data.ok, false);
+  assert.equal(doctor.payload.data.config.ok, false);
+  assert.match(doctor.payload.data.config.error, /duplicate physical mapping/i);
+  assert.ok(!doctor.result.stdout.includes(PHYSICAL));
+  assert.ok(!doctor.result.stderr.includes(PHYSICAL));
 
   const forSeam = runJson(['doctor', '--for', 'profile-pool', '--json'], env);
-  assert.equal(forSeam.result.status, 0, forSeam.result.stderr);
-  assert.equal(forSeam.payload.ok, true);
+  assert.equal(forSeam.result.status, 1, forSeam.result.stderr);
+  assert.equal(forSeam.payload.data.ok, false);
 
   const otherSeam = runJson(['doctor', '--for', 'runner', '--json'], env);
   assert.equal(otherSeam.result.status, 2);
   assert.equal(otherSeam.payload.error.code, 'USAGE_ERROR');
+});
+
+test('aliases mapped to one physical profile cannot hold conflicting exclusive leases', () => {
+  const { env } = makeHome({ aliases: { suno: PHYSICAL, suno2: PHYSICAL } });
+  const aliases = ['suno', 'suno2'].map((alias) => runJson(['acquire', alias, '--json'], env));
+  assert.deepEqual(aliases.map(({ result }) => result.status), [1, 1]);
+  assert.deepEqual(aliases.map(({ payload }) => payload.error.code), ['CONFIG_INVALID', 'CONFIG_INVALID']);
+  assert.equal(aliases.some(({ payload }) => JSON.stringify(payload).includes(PHYSICAL)), false);
+});
+
+test('provider-free agent lifecycle acquires, waits, renews, and releases without private identity', () => {
+  const { env } = makeHome({ aliases: { suno: PHYSICAL } });
+  const acquired = runJson(['acquire', 'suno', '--ttl-ms', '1000', '--json'], env);
+  assert.equal(acquired.result.status, 0, acquired.result.stderr);
+  assert.equal(acquired.payload.data.alias, 'suno');
+
+  const exhausted = runJson(['acquire', 'suno', '--timeout-ms', '120', '--json'], env);
+  assert.equal(exhausted.result.status, 1);
+  assert.equal(exhausted.payload.error.code, 'EXHAUSTED');
+
+  const renewed = runJson(['renew', acquired.payload.data.leaseId, '--ttl-ms', '1200', '--json'], env);
+  assert.equal(renewed.result.status, 0, renewed.result.stderr);
+  assert.equal(renewed.payload.data.leaseId, acquired.payload.data.leaseId);
+
+  const released = runJson(['release', acquired.payload.data.leaseId, '--json'], env);
+  assert.equal(released.result.status, 0, released.result.stderr);
+  assert.equal(released.payload.data.released, true);
+
+  for (const result of [acquired, exhausted, renewed, released]) {
+    assert.equal(JSON.stringify(result.payload).includes(PHYSICAL), false);
+    assert.equal(result.result.stderr.includes(PHYSICAL), false);
+  }
 });
 
 test('config is loaded from WEBMCP_PROFILE_POOL_CONFIG and failures are fail-closed', () => {
