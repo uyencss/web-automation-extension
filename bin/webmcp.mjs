@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runProfilePool } from './profile-pool.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:7865';
@@ -57,6 +58,7 @@ Usage:
   webmcp close [--profile-id <id>] [--all] [--json]
   webmcp quit [--json]
   webmcp profiles list [--json]
+  webmcp profile-pool acquire|renew|release|list|status|reclaim|doctor [--json]
   webmcp call <method> [jsonParams]
   webmcp ai <command> [options]
   webmcp vault <command> [options]
@@ -3961,6 +3963,10 @@ async function main() {
   if (command === 'profiles') {
     await runProfiles(args);
     return;
+  }
+
+  if (command === 'profile-pool') {
+    process.exit(await runProfilePool(args));
   }
 
   if (command === 'launch') {

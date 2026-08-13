@@ -405,6 +405,45 @@ npx -y @gyga-browser/webmcp-browser-automation-kit extension-info --json
 npx -y @gyga-browser/webmcp-browser-automation-kit extension-path
 ```
 
+## Profile Pool (machine-local lease broker)
+
+`webmcp profile-pool` brokers leases on the machine's browser profiles by
+**logical alias**, so parallel runbook branches (runbook `concurrency.phases`
+with `affinity: { profile: <alias>, tab: own|shared }`) never collide on the
+same single account/tab. The agent calls the broker by alias; the broker maps
+alias → physical profile id and leases it.
+
+```bash
+npx -y @gyga-browser/webmcp-browser-automation-kit profile-pool acquire suno --tab own --holder run_audio --json
+npx -y @gyga-browser/webmcp-browser-automation-kit profile-pool renew lease_... --json
+npx -y @gyga-browser/webmcp-browser-automation-kit profile-pool release lease_... --json
+npx -y @gyga-browser/webmcp-browser-automation-kit profile-pool list --json
+npx -y @gyga-browser/webmcp-browser-automation-kit profile-pool status --json
+npx -y @gyga-browser/webmcp-browser-automation-kit profile-pool doctor --json
+```
+
+The machine-level pool config is `~/.webmcp/profilePool.json` (override with
+`WEBMCP_PROFILE_POOL_CONFIG`; lease state persists at
+`~/.webmcp/profile-pool-state.json`, override `WEBMCP_PROFILE_POOL_STATE`):
+
+```json
+{
+  "schema": "webmcp-profile-pool-config/1",
+  "aliases": { "suno": "Chrome:Sunny Account", "flow": "Chrome:Flow Account" }
+}
+```
+
+Semantics: `tab: own` leases are exclusive; `tab: shared` leases are co-usable
+(shared may join shared, own blocks everything). `acquire` fails closed with
+`CONFLICT` when the alias is held; pass `--timeout-ms N` to wait instead of
+crashing (pool exhausted ⇒ wait, then `EXHAUSTED`). `--idempotency-key K`
+makes a retried acquire return the same lease. Leases expire by TTL
+(`--ttl-ms`, default 15 min; `renew` extends by the heartbeat window, default
+2 min) and a crashed holder's lease is recoverable via expiry or
+`reclaim <alias> --yes` (with a warning). `release` is an idempotent no-op for
+unknown or expired leases. The broker never launches Chrome and never emits
+physical profile ids — they live only in the config file.
+
 Inside this monorepo checkout, workflow runner commands are available through
 the same `webmcp` CLI:
 
@@ -511,6 +550,7 @@ webmcp -h
 | `npm run cli -- bootstrap service-load-plan --json` | Preview loading installed user services through the OS user service manager without changing state. |
 | `npm run cli -- bootstrap service-load --yes --json` | Load installed user services through launchd or systemd user scope and write a redacted receipt; it never uses sudo. |
 | `npm run cli -- bootstrap enroll-alias --json` | Dry-run or write a logical dispatcher profile alias with `--yes`, using `--profile-id` or redacted `--candidate-ordinal`; writes a redacted enrollment receipt only when applied. |
+| `npm run cli -- profile-pool acquire <alias> [--tab own\|shared] [--ttl-ms N] [--timeout-ms N] [--idempotency-key K] [--holder H] [--json]` | Machine-local lease broker: acquire/renew/release/list/status/reclaim/doctor on logical profile aliases; physical profile ids stay in `profilePool.json`. |
 | `npm run cli -- bootstrap enroll-binding --json` | Dry-run or write reviewed dispatcher `profileBindings` metadata with `--yes`; writes a redacted enrollment receipt only when applied. |
 | `npm run call -- <method> [jsonParams]` | Call one extension command through `POST /api`.                                     |
 | `npm run tools:generate`                | Rebuild the generated skill reference from runtime source files.                    |
