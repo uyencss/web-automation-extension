@@ -3328,6 +3328,26 @@ async function runProjectGuide(args) {
   return 2;
 }
 
+// The optional <id> of `project schedule plan|apply` is a bare positional, so it
+// cannot be found with a plain "first token that is not a flag": the VALUE of
+// `--workspace <path>` / `--target <t>` is bare too and would be picked instead
+// (`plan --workspace . --target x` used to fail with "Schedule not found: .").
+// Walk the argv and skip each value-taking flag together with its value.
+const SCHEDULE_VALUE_FLAGS = new Set(['--workspace', '--target']);
+
+function scheduleIdArgument(rest) {
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index];
+    if (SCHEDULE_VALUE_FLAGS.has(arg)) {
+      index += 1; // consume the flag's value
+      continue;
+    }
+    if (arg.startsWith('--')) continue; // `--flag=value` and boolean flags
+    return arg;
+  }
+  return undefined;
+}
+
 async function runProjectSchedule(args) {
   const [subcommand, ...rest] = args;
   const usage = [
@@ -3344,13 +3364,25 @@ async function runProjectSchedule(args) {
 
   const workspaceOpt = projectOption(rest, 'workspace');
   let workspaceRoot = workspaceOpt ? resolve(process.cwd(), workspaceOpt) : null;
+  let workspaceFromRegistry = false;
   if (!workspaceRoot) {
     const entry = resolvedProjectRoot();
     if (entry?.root) {
       workspaceRoot = resolve(entry.root);
+      workspaceFromRegistry = resolve(entry.root) !== resolve(process.cwd());
     } else {
       workspaceRoot = process.cwd();
     }
+  }
+
+  // `apply` writes provider state. Without --workspace the root comes from the
+  // registry's default project, which is frequently NOT the directory the
+  // operator is standing in — applying there would arm a schedule in the wrong
+  // project. Read-only verbs may keep the registry default.
+  if (subcommand === 'apply' && workspaceFromRegistry) {
+    console.error(`Refusing to apply: --workspace was not given, so the project resolved from the registry to ${workspaceRoot}, which is not the current directory (${process.cwd()}).`);
+    console.error(`Re-run with the project stated explicitly, e.g. webmcp project schedule apply <id> --workspace ${process.cwd()} --target <t>`);
+    return 2;
   }
 
   const manifestPath = join(workspaceRoot, 'webmcp.project.json');
@@ -3383,6 +3415,20 @@ async function runProjectSchedule(args) {
   // Discover schedules in project
   const projectSchedules = scheduleMod.discoverProjectSchedules(workspaceRoot);
 
+  // Two-tier resolution is the runner's contract, not something to reimplement:
+  // `resolveAutomation` validates each candidate (a project pack that exists but
+  // lacks an entrypoint raises PROJECT_ASSET_INVALID instead of silently
+  // shadowing the community copy) and owns the domain/id parsing rules.
+  const runnerBinForResolve = getRunnerBin();
+  const runnerRoot = runnerBinForResolve ? resolve(dirname(runnerBinForResolve), '..') : null;
+  if (!runnerRoot || !existsSync(join(runnerRoot, 'src', 'store-resolver.mjs'))) {
+    console.error('webmcp-automation-runner not found; cannot resolve automations for project schedules.');
+    return 1;
+  }
+  const resolverMod = await import(pathToFileURL(join(runnerRoot, 'src', 'store-resolver.mjs')).href);
+  const projectContextMod = await import(pathToFileURL(join(runnerRoot, 'src', 'workspace', 'project-context.mjs')).href);
+  const projectContext = projectContextMod.resolveProjectContext(workspaceRoot);
+
   function resolvePackContext(scheduleRecord) {
     const schedule = scheduleRecord.schedule;
     const automationId = schedule?.task?.automationId;
@@ -3390,29 +3436,15 @@ async function runProjectSchedule(args) {
     if (!domain || !automationId) {
       throw new Error(`Schedule ${schedule?.id || scheduleRecord.file} is missing task.domain or task.automationId`);
     }
-    // 1. Project Store check: store/runbooks/<domain>/<id>
-    const projectPackDir = join(workspaceRoot, 'store', 'runbooks', domain, automationId);
-    if (existsSync(projectPackDir)) {
-      return {
-        automationRoot: workspaceRoot,
-        automationDir: projectPackDir,
-        source: 'project',
-        domain,
-        automationId,
-      };
-    }
-    // 2. Community Store check: automations/<domain>/<id>
-    const communityPackDir = join(automationStoreRoot, 'automations', domain, automationId);
-    if (existsSync(communityPackDir)) {
-      return {
-        automationRoot: automationStoreRoot,
-        automationDir: communityPackDir,
-        source: 'community',
-        domain,
-        automationId,
-      };
-    }
-    throw new Error(`Automation ${domain}/${automationId} not found in project store (${projectPackDir}) or community store (${communityPackDir})`);
+    const resolved = resolverMod.resolveAutomation({ domain, id: automationId }, projectContext, automationStoreRoot);
+    const automationRoot = resolved.source === 'project' ? workspaceRoot : automationStoreRoot;
+    return {
+      automationRoot,
+      automationDir: resolve(automationRoot, resolved.sourceRelativePath),
+      source: resolved.source,
+      domain,
+      automationId,
+    };
   }
 
   if (subcommand === 'list') {
@@ -3454,7 +3486,7 @@ async function runProjectSchedule(args) {
       console.error(usage);
       return 2;
     }
-    const scheduleId = rest.find((arg) => !arg.startsWith('--'));
+    const scheduleId = scheduleIdArgument(rest);
     const targets = scheduleId
       ? projectSchedules.filter((item) => item.id === scheduleId)
       : projectSchedules;
@@ -3507,7 +3539,7 @@ async function runProjectSchedule(args) {
       console.error(usage);
       return 2;
     }
-    const scheduleId = rest.find((arg) => !arg.startsWith('--'));
+    const scheduleId = scheduleIdArgument(rest);
     if (!scheduleId) {
       console.error('Missing schedule <id> argument to apply.');
       console.error(usage);
