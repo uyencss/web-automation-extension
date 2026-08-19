@@ -1262,7 +1262,7 @@ test('webmcp ai delegates to the standalone AI CLI', () => {
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.ok, true);
-  assert.deepEqual(payload.providers.map((provider) => provider.id), ['agy', 'claude', 'codex']);
+  assert.deepEqual(payload.providers.map((provider) => provider.id), ['agy', 'claude', 'codex', 'opencode']);
 });
 
 test('webmcp ai help uses the umbrella command name', () => {
@@ -1393,7 +1393,7 @@ test('webmcp mobile reports a clear install hint when ADB Kit is unavailable', (
   assert.match(result.stderr, /WEBMCP_ADB_MCP_BIN/);
 });
 
-test('webmcp skills exposes the Automation-owned 15-skill inventory', () => {
+test('webmcp skills exposes the Automation-owned 18-skill inventory', () => {
   const result = spawnSync(process.execPath, [BIN, 'skills', 'list', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
@@ -1402,7 +1402,7 @@ test('webmcp skills exposes the Automation-owned 15-skill inventory', () => {
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.schema, 'webmcp-skills/1');
-  assert.equal(payload.skills.length, 15);
+  assert.equal(payload.skills.length, 18);
   assert.ok(payload.skills.every((skill) => skill.available));
 });
 
@@ -1950,7 +1950,7 @@ test('webmcp project new --template creates a template-backed v2 project', () =>
   };
   const at = path.join(home, 'projects', 'test-music');
 
-  const result = spawnSync(process.execPath, [BIN, 'project', 'new', '--template', 'test-music', '--at', at, '--json'], {
+  const result = spawnSync(process.execPath, [BIN, 'project', 'new', '--template', 'test-music', '--id', 'test-music-project', '--at', at, '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
     env,

@@ -57,7 +57,7 @@
     "call": "node scripts/webmcp-call.js",
     "tools:generate": "node scripts/generate-tool-reference.js",
     "tools:check": "node scripts/generate-tool-reference.js --check",
-    "test": "node tests/unit/evaluate-wrap.test.mjs && node tests/unit/page-text-extraction.test.mjs && node tests/unit/tool-filter.test.mjs && node tests/unit/profile-id.test.mjs && node tests/unit/gateway-multi-profile.test.mjs && node tests/unit/chrome-launcher.test.mjs && node tests/unit/webmcp-cli.test.mjs && node tests/unit/antibot-classify.test.mjs && node tests/unit/profile-pool.test.mjs"
+    "test": "node --test tests/unit/*.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
