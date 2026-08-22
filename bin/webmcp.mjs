@@ -160,6 +160,10 @@ Usage:
   webmcp project where [<id>] [--json]
   webmcp project doctor [<dir>] [--json]
   webmcp project new [--template <id>] [--at <dir>] [--id <id>] [--name <name>] [--default] [--dry-run] [--json]
+  webmcp project init [--at <dir>] [--id <id>] [--name <name>] [--dir <storeDir>] [--force] [--dry-run] [--json]
+  webmcp project init-store [--at <dir>] [--id <id>] [--name <name>] [--dir <storeDir>] [--force] [--dry-run] [--json]
+  webmcp project build-index [--dir <projectStoreDir>] [--workspace <dir>] [--json]
+  webmcp project export-pack --select <domain>/<id> --output <dir> [--alias <alias>] [--json]
   webmcp project charter adopt <relative-md> [--workspace <dir>] [--yes] [--json]
   webmcp project guide list [--json]
   webmcp project guide stage <collections/<id>/GUIDE.md> --as inputs/<path> --yes [--json]
@@ -3639,6 +3643,10 @@ async function runProject(args) {
   if (subcommand === 'charter') return runProjectCharter(rest);
   if (subcommand === 'guide') return runProjectGuide(rest);
   if (subcommand === 'schedule') return runProjectSchedule(rest);
+  // Project Store commands — thin bridge onto Runner's project.* surface (R6.1)
+  if (subcommand === 'init' || subcommand === 'init-store') return runRunner(['project', 'init-store', ...rest]);
+  if (subcommand === 'build-index') return runRunner(['project', 'build-index', ...rest]);
+  if (subcommand === 'export-pack') return runRunner(['project', 'export-pack', ...rest]);
   console.error(`Unknown project command: ${subcommand}`);
   printProjectHelp();
   return 2;
