@@ -10,6 +10,14 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const BIN = path.join(ROOT, 'bin', 'webmcp.mjs');
 const WORKSPACE_ROOT = path.resolve(ROOT, '..');
 
+// Mirrors bin/webmcp.mjs serviceFileName(): the exact template name production
+// renders for this platform (launchd plist / systemd service / Windows task xml).
+const serviceTemplateFileName = (id) => {
+  if (process.platform === 'darwin') return `io.${id}.plist`;
+  if (process.platform === 'win32') return `${id}.xml`;
+  return `${id}.service`;
+};
+
 test('webmcp workflow delegates to the workflow dispatcher CLI', () => {
   const result = spawnSync(process.execPath, [
     BIN,
@@ -526,7 +534,7 @@ test('webmcp bootstrap service-plan and service-apply render reviewed local serv
   assert.equal(planPayload.services.length, 1);
   assert.equal(planPayload.services[0].id, 'webmcp-gateway');
   assert.equal(planPayload.services[0].status, 'pending');
-  assert.equal(existsSync(path.join(home, '.webmcp', 'bootstrap', 'services', 'io.webmcp-gateway.plist')), false);
+  assert.equal(existsSync(path.join(home, '.webmcp', 'bootstrap', 'services', serviceTemplateFileName('webmcp-gateway'))), false);
   assert.equal(existsSync(path.join(home, '.webmcp', 'bootstrap', 'enrollments', 'services-operator.json')), false);
   assert.doesNotMatch(plan.stdout, /webmcp-bootstrap-services-|ttcenter|Secret|TOKEN|KEY/);
 
@@ -546,7 +554,9 @@ test('webmcp bootstrap service-plan and service-apply render reviewed local serv
   assert.equal(appliedPayload.applied, true);
   assert.equal(appliedPayload.receipt.schema, 'webmcp-bootstrap-enrollment-receipt/1');
   assert.equal(appliedPayload.receipt.kind, 'services');
-  assert.equal(existsSync(path.join(home, '.webmcp', 'bootstrap', 'services', 'io.webmcp-gateway.plist')), true);
+  const renderedTemplate = path.join(home, '.webmcp', 'bootstrap', 'services', serviceTemplateFileName('webmcp-gateway'));
+  assert.equal(existsSync(renderedTemplate), true);
+  assert.match(readFileSync(renderedTemplate, 'utf8'), /webmcp-gateway/);
   assert.equal(existsSync(path.join(home, '.webmcp', 'bootstrap', 'enrollments', 'services-operator.json')), true);
   assert.doesNotMatch(applied.stdout, /webmcp-bootstrap-services-|ttcenter|Secret|TOKEN|KEY/);
 
@@ -578,7 +588,7 @@ test('webmcp bootstrap service-plan and service-apply render reviewed local serv
   assert.equal(installPlanPayload.schema, 'webmcp-bootstrap-service-install-plan/1');
   assert.equal(installPlanPayload.applied, false);
   assert.equal(installPlanPayload.services[0].status, 'pending');
-  assert.equal(existsSync(path.join(home, 'os-services', 'io.webmcp-gateway.plist')), false);
+  assert.equal(existsSync(path.join(home, 'os-services', serviceTemplateFileName('webmcp-gateway'))), false);
   assert.doesNotMatch(installPlan.stdout, /webmcp-bootstrap-services-|ttcenter|Secret|TOKEN|KEY/);
 
   const installed = spawnSync(process.execPath, [
