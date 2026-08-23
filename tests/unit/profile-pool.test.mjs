@@ -40,6 +40,24 @@ function runJson(args, env = {}) {
   return { result, payload: stdout ? JSON.parse(stdout) : null };
 }
 
+function runJsonAsync(args, env = {}) {
+  return new Promise((resolveRun) => {
+    const child = spawn(process.execPath, [BIN, 'profile-pool', ...args], {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('exit', (status) => resolveRun({
+      status,
+      stderr,
+      payload: stdout.trim() ? JSON.parse(stdout) : null,
+    }));
+  });
+}
+
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -92,6 +110,22 @@ test('double acquire with tab own conflicts (fail-closed)', () => {
   assert.equal(second.payload.ok, false);
   assert.equal(second.payload.error.code, 'CONFLICT');
   assert.match(second.payload.error.message, /already leased/);
+});
+
+test('concurrent exclusive acquires serialize across processes and grant exactly one lease', async () => {
+  const { env } = makeHome();
+  const results = await Promise.all([
+    runJsonAsync(['acquire', 'suno', '--json'], env),
+    runJsonAsync(['acquire', 'suno', '--json'], env),
+  ]);
+  assert.deepEqual(results.map((entry) => entry.status).sort(), [0, 1]);
+  const granted = results.find((entry) => entry.status === 0);
+  const rejected = results.find((entry) => entry.status === 1);
+  assert.equal(granted.payload.ok, true);
+  assert.equal(rejected.payload.error.code, 'CONFLICT');
+  const listed = runJson(['list', '--json'], env);
+  assert.equal(listed.payload.data.leases.length, 1);
+  assert.equal(listed.payload.data.leases[0].leaseId, granted.payload.data.leaseId);
 });
 
 test('shared leases are co-usable; own cannot join shared and vice versa', () => {

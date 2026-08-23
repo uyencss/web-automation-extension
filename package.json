@@ -26,6 +26,7 @@
   },
   "files": [
     "bin/",
+    "lib/",
     "chrome-launcher/",
     "server/gateway_server.js",
     "server/mcp_server.mjs",
