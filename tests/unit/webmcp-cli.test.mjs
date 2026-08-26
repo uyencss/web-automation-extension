@@ -1551,6 +1551,9 @@ test('webmcp project help surfaces the project workspace commands in the top-lev
   assert.match(project.stdout, /webmcp project charter adopt <relative-md> \[--workspace <dir>\] \[--yes\] \[--json\]/);
   assert.match(project.stdout, /webmcp project guide list \[--json\]/);
   assert.match(project.stdout, /webmcp project guide stage <collections\/<id>\/GUIDE.md>/);
+  assert.match(project.stdout, /webmcp project policy plan \[--at <dir>\] \[--all\] --json/);
+  assert.match(project.stdout, /webmcp project policy apply \[--at <dir>\] \[--all\] --yes --json/);
+  assert.match(project.stdout, /policy plan is read-only/);
   assert.match(project.stdout, /charter adopt is dry-run by default; pass --yes to write/);
 });
 

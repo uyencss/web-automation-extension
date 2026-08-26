@@ -142,6 +142,46 @@ test('project content rejects duplicate or mixed project-location aliases before
   }
 });
 
+test('project policy plan maps public --at to Runner --workspace and keeps JSON forwarding clean', (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-policy-plan-routing-'));
+  const workspace = path.join(home, 'project workspace');
+  const { result, capturedCalls } = runUmbrella(t,
+    ['project', 'policy', 'plan', '--at', workspace, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(capturedCalls, [[
+    'project', 'policy', 'plan', '--workspace', workspace, '--json',
+  ]]);
+  assert.equal(result.stdout, 'RUNNER_STDOUT_MARKER\n');
+  assert.equal(result.stderr, 'RUNNER_STDERR_MARKER\n');
+});
+
+test('project policy apply maps --at, preserves --yes, and --all routes without a filesystem write', (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-policy-apply-routing-'));
+  const workspace = path.join(home, 'project workspace');
+  const routed = runUmbrella(t,
+    ['project', 'policy', 'apply', '--at', workspace, '--yes', '--json']);
+  assert.equal(routed.result.status, 0, routed.result.stderr);
+  assert.deepEqual(routed.capturedCalls, [[
+    'project', 'policy', 'apply', '--workspace', workspace, '--yes', '--json',
+  ]]);
+
+  const all = runUmbrella(t, ['project', 'policy', 'plan', '--all', '--json']);
+  assert.equal(all.result.status, 0, all.result.stderr);
+  assert.deepEqual(all.capturedCalls, [['project', 'policy', 'plan', '--all', '--json']]);
+});
+
+test('project policy rejects missing --yes and --force before invoking Runner', (t) => {
+  for (const args of [
+    ['project', 'policy', 'apply', '--at', '/portable/project', '--json'],
+    ['project', 'policy', 'apply', '--at', '/portable/project', '--yes', '--force', '--json'],
+  ]) {
+    const { result, capturedCalls } = runUmbrella(t, args);
+    assert.equal(result.status, 2, args.join(' '));
+    assert.equal(capturedCalls.length, 0, `${args.join(' ')} invoked Runner`);
+    assert.match(result.stderr, /Usage: webmcp project policy apply/);
+  }
+});
+
 test('project export-pack routes to the Runner with arguments intact', (t) => {
   const outDir = mkdtempSync(path.join(tmpdir(), 'webmcp-export-pack-'));
   t.after(() => rmSync(outDir, { recursive: true, force: true }));
