@@ -1553,6 +1553,8 @@ test('webmcp project help surfaces the project workspace commands in the top-lev
   assert.match(project.stdout, /webmcp project guide stage <collections\/<id>\/GUIDE.md>/);
   assert.match(project.stdout, /webmcp project policy plan \[--at <dir>\] \[--all\] --json/);
   assert.match(project.stdout, /webmcp project policy apply \[--at <dir>\] \[--all\] --yes --json/);
+  assert.match(project.stdout, /content plan\/apply is the optional Content Kit overlay/);
+  assert.match(project.stdout, /project-agent-policy migration surface/);
   assert.match(project.stdout, /policy plan is read-only/);
   assert.match(project.stdout, /charter adopt is dry-run by default; pass --yes to write/);
 });
@@ -1988,6 +1990,47 @@ test('webmcp project new --template creates a template-backed v2 project', () =>
     },
   });
   assert.match(manifest.agent.policy.digest, /^sha256:[a-f0-9]{64}$/);
+});
+
+test('webmcp project new without --template creates the same policy-backed scaffold through bootstrap', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-new-bootstrap-'));
+  const webmcpHome = path.join(home, '.webmcp');
+  const env = {
+    ...process.env,
+    HOME: home,
+    WEBMCP_HOME: webmcpHome,
+    WEBMCP_AUTOMATION_STORE_ROOT: path.join(ROOT, '..', 'webmcp-automation-runner', 'tests', 'fixtures', 'bootstrap-store'),
+  };
+  const at = path.join(home, 'projects', 'bootstrap-project');
+
+  const result = spawnSync(process.execPath, [
+    BIN, 'project', 'new', '--id', 'bootstrap-project', '--name', 'Bootstrap Project', '--at', at, '--json',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.command, 'workspace.bootstrap');
+  assert.deepEqual(payload.data.created[0].automationIds, ['test-affiliate', 'test-music']);
+  assert.equal(payload.data.created[0].dryRun, false);
+  assert.equal(existsSync(path.join(at, 'AGENTS.md')), true);
+  assert.equal(existsSync(path.join(at, '.agents', 'project-policy.json')), true);
+  assert.equal(existsSync(path.join(at, 'opencode.jsonc')), true);
+  const manifest = JSON.parse(readFileSync(path.join(at, 'webmcp.project.json'), 'utf8'));
+  assert.deepEqual(manifest.agent.policy, {
+    schema: 'webmcp-project-agent-policy/1',
+    manifest: '.agents/project-policy.json',
+    digest: manifest.agent.policy.digest,
+  });
+  const policy = JSON.parse(readFileSync(path.join(at, '.agents', 'project-policy.json'), 'utf8'));
+  assert.deepEqual(policy.instructions, [
+    '.agents/policies/project-centric.md',
+    '.agents/policies/store-discovery.md',
+    '.agents/policies/run-output.md',
+  ]);
 });
 
 test('webmcp project new --template with an unknown template fails with a typed usage error', () => {

@@ -10,27 +10,31 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const BIN = path.join(ROOT, 'bin', 'webmcp.mjs');
 const WORKSPACE_ROOT = path.resolve(ROOT, '..');
 
-function createCaptureRunner(home, { exitCode = 0 } = {}) {
+function createCaptureRunner(home, {
+  exitCode = 0,
+  stdout = 'RUNNER_STDOUT_MARKER\n',
+  stderr = 'RUNNER_STDERR_MARKER\n',
+} = {}) {
   const runnerBin = path.join(home, 'capture-runner.mjs');
   writeFileSync(runnerBin, [
     "import { appendFileSync } from 'node:fs';",
     'const args = process.argv.slice(2);',
     'appendFileSync(process.env.WEBMCP_TEST_RUNNER_CAPTURE_FILE, `${JSON.stringify(args)}\\n`);',
-    "process.stdout.write('RUNNER_STDOUT_MARKER\\n');",
-    "process.stderr.write('RUNNER_STDERR_MARKER\\n');",
+    `process.stdout.write(${JSON.stringify(stdout)});`,
+    `process.stderr.write(${JSON.stringify(stderr)});`,
     `process.exit(${exitCode});`,
     '',
   ].join('\n'));
   return runnerBin;
 }
 
-function runUmbrella(t, args, { exitCode = 0 } = {}) {
+function runUmbrella(t, args, { exitCode = 0, stdout, stderr } = {}) {
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-routing-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   mkdirSync(path.join(home, '.webmcp'), { recursive: true });
   const captureFile = path.join(home, 'runner-calls.jsonl');
   writeFileSync(captureFile, '');
-  const runnerBin = createCaptureRunner(home, { exitCode });
+  const runnerBin = createCaptureRunner(home, { exitCode, stdout, stderr });
   const result = spawnSync(process.execPath, [BIN, ...args], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
@@ -118,6 +122,65 @@ test('project content apply forwards --yes and maps public --at without touching
     ['project', 'content', 'apply', '--workspace', workspace, '--yes', '--json'],
   ]);
   assert.equal(result.stdout, 'RUNNER_STDOUT_MARKER\n');
+});
+
+test('project new accepts documented flags and preserves the Runner JSON stream on both routes', (t) => {
+  const json = `${JSON.stringify({
+    ok: true,
+    schema: 'webmcp-automation-runner/1',
+    command: 'workspace.project-new',
+    data: { dryRun: true },
+  })}\n`;
+  const templateAt = '/tmp/template project';
+  const template = runUmbrella(t, [
+    'project', 'new',
+    '--template', 'test-music',
+    '--at', templateAt,
+    '--id', 'template-project',
+    '--name', 'Template Project',
+    '--default', '--dry-run', '--json',
+  ], { stdout: json, stderr: '' });
+  assert.equal(template.result.status, 0, template.result.stderr);
+  assert.equal(template.result.stdout, json);
+  assert.deepEqual(template.capturedCalls, [[
+    'workspace', 'project-new', '--template', 'test-music', '--at', templateAt,
+    '--id', 'template-project', '--name', 'Template Project', '--default', '--dry-run', '--json',
+  ]]);
+
+  const bootstrapAt = '/tmp/bootstrap project';
+  const bootstrap = runUmbrella(t, [
+    'project', 'new',
+    '--at', bootstrapAt,
+    '--id', 'bootstrap-project',
+    '--name', 'Bootstrap Project',
+    '--default', '--dry-run', '--json',
+  ], { stdout: json, stderr: '' });
+  assert.equal(bootstrap.result.status, 0, bootstrap.result.stderr);
+  assert.equal(bootstrap.result.stdout, json);
+  assert.deepEqual(bootstrap.capturedCalls, [[
+    'workspace', 'bootstrap', '--workspace-root', bootstrapAt, '--all',
+    '--project-id', 'bootstrap-project', '--project-name', 'Bootstrap Project',
+    '--default', '--dry-run', '--json',
+  ]]);
+});
+
+test('project new rejects undocumented, positional, duplicate, and incomplete flags before Runner', (t) => {
+  const invalidArgs = [
+    ['--at', '/tmp/project', '--git'],
+    ['--at', '/tmp/project', '--automation-store', '/tmp/store'],
+    ['--at', '/tmp/project', 'unexpected'],
+    ['--at', '/tmp/project', '--json=true'],
+    ['--at', '/tmp/project', '--at', '/tmp/other'],
+    ['--template', 'test-music', '--at'],
+    ['--template=', '--at', '/tmp/project'],
+  ];
+
+  for (const args of invalidArgs) {
+    const { result, capturedCalls } = runUmbrella(t, ['project', 'new', ...args]);
+    assert.equal(result.status, 2, args.join(' '));
+    assert.match(result.stderr, /Usage: webmcp project new/);
+    assert.deepEqual(capturedCalls, [], `${args.join(' ')} invoked Runner`);
+  }
 });
 
 test('project content rejects duplicate or mixed project-location aliases before invoking Runner', (t) => {
@@ -235,4 +298,7 @@ test('project help documents exactly the canonical store commands (help parity)'
   assert.match(result.stdout, /project export-pack/);
   assert.match(result.stdout, /project content plan --at <dir> --json/);
   assert.match(result.stdout, /project content apply --at <dir> --yes --json/);
+  assert.match(result.stdout, /project policy plan \[--at <dir>\] \[--all\] --json/);
+  assert.match(result.stdout, /project policy apply \[--at <dir>\] \[--all\] --yes --json/);
+  assert.match(result.stdout, /project-agent-policy migration surface/);
 });
