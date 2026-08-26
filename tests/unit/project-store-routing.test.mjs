@@ -97,6 +97,51 @@ test('project build-index routes to the Runner and preserves its stdout and stde
     'R6.1: the umbrella bridge must preserve the child stderr stream');
 });
 
+test('project content plan maps public --at to Runner --workspace and preserves clean forwarding', (t) => {
+  const workspace = '/tmp/content overlay workspace';
+  const { result, capturedCalls } = runUmbrella(t,
+    ['project', 'content', 'plan', '--at', workspace, '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(capturedCalls, [
+    ['project', 'content', 'plan', '--workspace', workspace, '--json'],
+  ]);
+  assert.equal(result.stdout, 'RUNNER_STDOUT_MARKER\n');
+  assert.equal(result.stderr, 'RUNNER_STDERR_MARKER\n');
+});
+
+test('project content apply forwards --yes and maps public --at without touching filesystem', (t) => {
+  const workspace = '/tmp/content apply workspace';
+  const { result, capturedCalls } = runUmbrella(t,
+    ['project', 'content', 'apply', '--at', workspace, '--yes', '--json']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(capturedCalls, [
+    ['project', 'content', 'apply', '--workspace', workspace, '--yes', '--json'],
+  ]);
+  assert.equal(result.stdout, 'RUNNER_STDOUT_MARKER\n');
+});
+
+test('project content rejects duplicate or mixed project-location aliases before invoking Runner', (t) => {
+  const ambiguousLocations = [
+    ['--at', '/tmp/one', '--at', '/tmp/two'],
+    ['--at=/tmp/one', '--at=/tmp/two'],
+    ['--at', '/tmp/one', '--at=/tmp/two'],
+    ['--at=/tmp/one', '--workspace', '/tmp/two'],
+    ['--at', '/tmp/one', '--workspace=/tmp/two'],
+    ['--workspace', '/tmp/one', '--workspace', '/tmp/two'],
+    ['--workspace=/tmp/one', '--workspace=/tmp/two'],
+  ];
+
+  for (const action of ['plan', 'apply']) {
+    for (const locationArgs of ambiguousLocations) {
+      const { result, capturedCalls } = runUmbrella(t,
+        ['project', 'content', action, ...locationArgs, ...(action === 'apply' ? ['--yes'] : []), '--json']);
+      assert.equal(result.status, 2, `${action} ${locationArgs.join(' ')}`);
+      assert.match(result.stderr, /^USAGE_ERROR: project content accepts exactly one project location\n?$/);
+      assert.deepEqual(capturedCalls, [], `${action} ${locationArgs.join(' ')} invoked Runner`);
+    }
+  }
+});
+
 test('project export-pack routes to the Runner with arguments intact', (t) => {
   const outDir = mkdtempSync(path.join(tmpdir(), 'webmcp-export-pack-'));
   t.after(() => rmSync(outDir, { recursive: true, force: true }));
@@ -148,4 +193,6 @@ test('project help documents exactly the canonical store commands (help parity)'
   assert.match(result.stdout, /project init-store/);
   assert.match(result.stdout, /project build-index/);
   assert.match(result.stdout, /project export-pack/);
+  assert.match(result.stdout, /project content plan --at <dir> --json/);
+  assert.match(result.stdout, /project content apply --at <dir> --yes --json/);
 });

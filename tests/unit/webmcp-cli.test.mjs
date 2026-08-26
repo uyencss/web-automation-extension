@@ -1974,7 +1974,17 @@ test('webmcp project new --template creates a template-backed v2 project', () =>
   const manifest = JSON.parse(readFileSync(path.join(at, 'webmcp.project.json'), 'utf8'));
   assert.equal(manifest.schema, 'webmcp-project/2');
   assert.equal(manifest.template.id, 'test-music');
-  assert.deepEqual(manifest.agent, { skill: 'webmcp', modes: ['workspace', 'runner'], brief: 'PROJECT.md' });
+  assert.deepEqual(manifest.agent, {
+    skill: 'webmcp',
+    modes: ['workspace', 'runner'],
+    brief: 'PROJECT.md',
+    policy: {
+      schema: 'webmcp-project-agent-policy/1',
+      manifest: '.agents/project-policy.json',
+      digest: manifest.agent.policy.digest,
+    },
+  });
+  assert.match(manifest.agent.policy.digest, /^sha256:[a-f0-9]{64}$/);
 });
 
 test('webmcp project new --template with an unknown template fails with a typed usage error', () => {
