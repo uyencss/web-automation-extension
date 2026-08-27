@@ -3,16 +3,40 @@
   "contract": "webmcp-profile-admission-binding/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
   "synthetic": true,
-  "note": "Opaque synthetic IDs, canary digests only. No real profile path, cookie, credential, or machine-local secret. CreatedAt and transient fields excluded from digest per D1 candidate.",
+  "note": "D1-compliant: RFC8785 JCS UTF-8, domainLabel LF framing, exact protected projection, excluded digest/createdAt/physical path, non-placeholder digests, prefixed hex synthetic IDs.",
   "vectors": [
     {
       "name": "dedicated-enforce-allow",
-      "description": "Dedicated enforce binding with explicit allowlists — happy-path admission pin. Synthetic opaque IDs, canary values only.",
+      "description": "Dedicated enforce binding with explicit allowlists — happy-path admission pin. Synthetic hex IDs, D1 JCS, non-placeholder digests.",
+      "protectedProjection": {
+        "schema": "webmcp-profile-admission-binding/1",
+        "bindingId": "binding_deadbeef00000001",
+        "bindingRevision": 7,
+        "profileAlias": "research-profile",
+        "assignmentMode": "dedicated",
+        "trustDomain": null,
+        "policyMode": "enforce",
+        "allowedSiteIds": [
+          "example-site"
+        ],
+        "allowedAutomationIds": [
+          "example-research-runbook"
+        ]
+      },
+      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000001\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+      "domainLabel": "webmcp-digest-v1:binding",
+      "domainSeparation": "webmcp-digest-v1:binding",
+      "digest": "sha256:4feb27d38f77d03ae769a4d63d53270f9db77b31740d95effd6a10c35f9d3e52",
+      "contractId": "webmcp-profile-admission-binding/1",
+      "excludedFromDigest": [
+        "bindingDigest",
+        "createdAt"
+      ],
       "value": {
         "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_dedicated_01",
+        "bindingId": "binding_deadbeef00000001",
         "bindingRevision": 7,
-        "bindingDigest": "sha256:7d5ce3ac5302fda975d1992fa22c866b496e21f972d4a7406107e0b5752af083",
+        "bindingDigest": "sha256:4feb27d38f77d03ae769a4d63d53270f9db77b31740d95effd6a10c35f9d3e52",
         "profileAlias": "research-profile",
         "assignmentMode": "dedicated",
         "trustDomain": null,
@@ -23,53 +47,43 @@
         "allowedAutomationIds": [
           "example-research-runbook"
         ],
-        "runId": "run_fixture_01",
+        "runId": "run_deadbeef00000001",
         "claimGeneration": 3,
-        "workspaceId": "fixture-workspace-a",
-        "runbookDigest": "sha256:c9b018970ffeffee472070163a01b708965cb4711d5bc3f66dd1a9f5801d9d00",
-        "revisionDigest": "sha256:7da9f3469499f423ad426a01579ba199d7a1b42ef04bfee024bb10a8f25fcd90",
+        "workspaceId": "workspace_deadbeef00000001",
+        "runbookDigest": "sha256:677817e3e8ff9e43204d4d629b930fcfed4dde993b025200f5daca58426dcad5",
+        "revisionDigest": "sha256:f522698de8b6e7745ff322cb0d8a6ebcaefa75a479c9d8453db31a6a199d1dc4",
         "approvalDigest": null,
         "createdAt": "2026-08-27T00:00:00.000Z"
       },
-      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"approvalDigest\":null,\"assignmentMode\":\"dedicated\",\"bindingDigest\":\"sha256:7d5ce3ac5302fda975d1992fa22c866b496e21f972d4a7406107e0b5752af083\",\"bindingId\":\"pb_fixture_dedicated_01\",\"bindingRevision\":7,\"claimGeneration\":3,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"revisionDigest\":\"sha256:7da9f3469499f423ad426a01579ba199d7a1b42ef04bfee024bb10a8f25fcd90\",\"runId\":\"run_fixture_01\",\"runbookDigest\":\"sha256:c9b018970ffeffee472070163a01b708965cb4711d5bc3f66dd1a9f5801d9d00\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"workspaceId\":\"fixture-workspace-a\"}",
-      "digest": "sha256:b15c678fa21a6d99b833ae7ad5a6157a4e314050650ceed84407000f82388e65",
-      "contractId": "webmcp-profile-admission-binding/1",
-      "domainSeparation": "webmcp-digest-v1:binding",
-      "excludedFromDigest": [
-        "createdAt"
-      ],
-      "syntheticNote": "opaque synthetic IDs, canary values only — no real profile path, cookie, or credential",
-      "projection": {
-        "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_dedicated_01",
-        "bindingRevision": 7,
-        "bindingDigest": "sha256:7d5ce3ac5302fda975d1992fa22c866b496e21f972d4a7406107e0b5752af083",
-        "profileAlias": "research-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "enforce",
-        "allowedSiteIds": [
-          "example-site"
-        ],
-        "allowedAutomationIds": [
-          "example-research-runbook"
-        ],
-        "runId": "run_fixture_01",
-        "claimGeneration": 3,
-        "workspaceId": "fixture-workspace-a",
-        "runbookDigest": "sha256:c9b018970ffeffee472070163a01b708965cb4711d5bc3f66dd1a9f5801d9d00",
-        "revisionDigest": "sha256:7da9f3469499f423ad426a01579ba199d7a1b42ef04bfee024bb10a8f25fcd90",
-        "approvalDigest": null
-      }
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-profile-admission-binding/1",
+          "bindingId": "binding_deadbeef00000001",
+          "bindingRevision": 7,
+          "profileAlias": "media-profile",
+          "assignmentMode": "dedicated",
+          "trustDomain": null,
+          "policyMode": "enforce",
+          "allowedSiteIds": [
+            "example-site"
+          ],
+          "allowedAutomationIds": [
+            "example-research-runbook"
+          ]
+        },
+        "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000001\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+        "digest": "sha256:37db5f5b9a3560601c7b44be539288da7e7802ec06032b0be944b72962895d70",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
     },
     {
       "name": "shared-trust-domain-enforce",
       "description": "Shared-trust-domain enforce — two aliases may map same physical resource when trustDomain matches. Digest must include trustDomain.",
-      "value": {
+      "protectedProjection": {
         "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_shared_02",
+        "bindingId": "binding_deadbeef00000002",
         "bindingRevision": 12,
-        "bindingDigest": "sha256:7211934bb1e3bba6b23bb62c83c591e1f1606bad1f8e28528e32395ff91f06ac",
         "profileAlias": "suno-creator",
         "assignmentMode": "shared-trust-domain",
         "trustDomain": "suno-shared-domain",
@@ -79,28 +93,22 @@
         ],
         "allowedAutomationIds": [
           "suno-runbook"
-        ],
-        "runId": "run_fixture_shared_02",
-        "claimGeneration": 5,
-        "workspaceId": "fixture-workspace-b",
-        "runbookDigest": "sha256:1d89de614c9c917db6f555406cbd081d29557fffaff2656266c90847c0461b25",
-        "revisionDigest": "sha256:cf3d00f18dbd62bafee6f46dd75dbd2113e65f4ecc0d60781ea02537bd6665f4",
-        "approvalDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "createdAt": "2026-08-27T01:00:00.000Z"
+        ]
       },
-      "canonical": "{\"allowedAutomationIds\":[\"suno-runbook\"],\"allowedSiteIds\":[\"suno-site\"],\"approvalDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"assignmentMode\":\"shared-trust-domain\",\"bindingDigest\":\"sha256:7211934bb1e3bba6b23bb62c83c591e1f1606bad1f8e28528e32395ff91f06ac\",\"bindingId\":\"pb_fixture_shared_02\",\"bindingRevision\":12,\"claimGeneration\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"suno-creator\",\"revisionDigest\":\"sha256:cf3d00f18dbd62bafee6f46dd75dbd2113e65f4ecc0d60781ea02537bd6665f4\",\"runId\":\"run_fixture_shared_02\",\"runbookDigest\":\"sha256:1d89de614c9c917db6f555406cbd081d29557fffaff2656266c90847c0461b25\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":\"suno-shared-domain\",\"workspaceId\":\"fixture-workspace-b\"}",
-      "digest": "sha256:0bfd04833923e48aff8c216ba9d5fddbe72ddcf8dfa8e31f3514c6f9ea21d3c5",
-      "contractId": "webmcp-profile-admission-binding/1",
+      "canonical": "{\"allowedAutomationIds\":[\"suno-runbook\"],\"allowedSiteIds\":[\"suno-site\"],\"assignmentMode\":\"shared-trust-domain\",\"bindingId\":\"binding_deadbeef00000002\",\"bindingRevision\":12,\"policyMode\":\"enforce\",\"profileAlias\":\"suno-creator\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":\"suno-shared-domain\"}",
+      "domainLabel": "webmcp-digest-v1:binding",
       "domainSeparation": "webmcp-digest-v1:binding",
+      "digest": "sha256:c9bb2fd1c73da87ec759526ba21194a1b5910f157e9e6a3864ebf89b9d82e8fb",
+      "contractId": "webmcp-profile-admission-binding/1",
       "excludedFromDigest": [
+        "bindingDigest",
         "createdAt"
       ],
-      "syntheticNote": "opaque synthetic IDs, canary values only — no real profile path, cookie, or credential",
-      "projection": {
+      "value": {
         "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_shared_02",
+        "bindingId": "binding_deadbeef00000002",
         "bindingRevision": 12,
-        "bindingDigest": "sha256:7211934bb1e3bba6b23bb62c83c591e1f1606bad1f8e28528e32395ff91f06ac",
+        "bindingDigest": "sha256:c9bb2fd1c73da87ec759526ba21194a1b5910f157e9e6a3864ebf89b9d82e8fb",
         "profileAlias": "suno-creator",
         "assignmentMode": "shared-trust-domain",
         "trustDomain": "suno-shared-domain",
@@ -111,111 +119,155 @@
         "allowedAutomationIds": [
           "suno-runbook"
         ],
-        "runId": "run_fixture_shared_02",
+        "runId": "run_deadbeef00000002",
         "claimGeneration": 5,
-        "workspaceId": "fixture-workspace-b",
-        "runbookDigest": "sha256:1d89de614c9c917db6f555406cbd081d29557fffaff2656266c90847c0461b25",
-        "revisionDigest": "sha256:cf3d00f18dbd62bafee6f46dd75dbd2113e65f4ecc0d60781ea02537bd6665f4",
-        "approvalDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      }
+        "workspaceId": "workspace_deadbeef00000002",
+        "runbookDigest": "sha256:dbb95fc93bd936d84a5a416ce539fad7bb7fe42e9c3a30c527b055649513b284",
+        "revisionDigest": "sha256:9a15d14744153548d7cf53ac76d5753a4f52edac5dd1aa85bb8560daf6f3ca23",
+        "approvalDigest": "sha256:c0e334f8d3858e3ba21a39488ef4c5b29552c83c5428397279d8464be6fe6cc7",
+        "createdAt": "2026-08-27T01:00:00.000Z"
+      },
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-profile-admission-binding/1",
+          "bindingId": "binding_deadbeef00000002",
+          "bindingRevision": 12,
+          "profileAlias": "research-profile",
+          "assignmentMode": "shared-trust-domain",
+          "trustDomain": "suno-shared-domain",
+          "policyMode": "enforce",
+          "allowedSiteIds": [
+            "suno-site"
+          ],
+          "allowedAutomationIds": [
+            "suno-runbook"
+          ]
+        },
+        "canonical": "{\"allowedAutomationIds\":[\"suno-runbook\"],\"allowedSiteIds\":[\"suno-site\"],\"assignmentMode\":\"shared-trust-domain\",\"bindingId\":\"binding_deadbeef00000002\",\"bindingRevision\":12,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":\"suno-shared-domain\"}",
+        "digest": "sha256:beb7ed5e7247d3f010b6448b1decab3756021c4d5a663e7efc0f38d1532e8e99",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
     },
     {
       "name": "enforce-deny-all-empty-allowlist",
       "description": "Enforce deny-all semantic: empty allowedSiteIds/allowedAutomationIds must mean deny-all, not absent. Proves [] != absent.",
+      "protectedProjection": {
+        "schema": "webmcp-profile-admission-binding/1",
+        "bindingId": "binding_deadbeef00000003",
+        "bindingRevision": 3,
+        "profileAlias": "media-profile",
+        "assignmentMode": "dedicated",
+        "trustDomain": null,
+        "policyMode": "enforce",
+        "allowedSiteIds": [],
+        "allowedAutomationIds": []
+      },
+      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000003\",\"bindingRevision\":3,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+      "domainLabel": "webmcp-digest-v1:binding",
+      "domainSeparation": "webmcp-digest-v1:binding",
+      "digest": "sha256:e4c11076e3714d9871767273c207b420a80e2711a160a1f0a612502813f38b94",
+      "contractId": "webmcp-profile-admission-binding/1",
+      "excludedFromDigest": [
+        "bindingDigest",
+        "createdAt"
+      ],
       "value": {
         "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_deny_03",
+        "bindingId": "binding_deadbeef00000003",
         "bindingRevision": 3,
-        "bindingDigest": "sha256:9b1565e53109e38b06c4bff3e1a1984af70a7e20bb51ecd96497ce890cd7364f",
+        "bindingDigest": "sha256:e4c11076e3714d9871767273c207b420a80e2711a160a1f0a612502813f38b94",
         "profileAlias": "media-profile",
         "assignmentMode": "dedicated",
         "trustDomain": null,
         "policyMode": "enforce",
         "allowedSiteIds": [],
         "allowedAutomationIds": [],
-        "runId": "run_fixture_deny_03",
+        "runId": "run_deadbeef00000003",
         "claimGeneration": 1,
-        "workspaceId": "fixture-workspace-c",
-        "runbookDigest": "sha256:a15f984b278dd2a0ff14ddc83e813694628fe4e5fe18adc602b83dcab8e96d60",
-        "revisionDigest": "sha256:0fa095910b22c3bdc11612701035b83d6ea40101d43806bc7d8e770e17824acf",
+        "workspaceId": "workspace_deadbeef00000003",
+        "runbookDigest": "sha256:a045a568e08d684978c27f45a552494665c0c9224a6233ab4b6c3d5becaca8e3",
+        "revisionDigest": "sha256:d98e7ade4609146028aeb0b51c7da84fc57a0d9d595f6b29c5b5354080617c5a",
         "approvalDigest": null,
         "createdAt": "2026-08-27T02:00:00.000Z"
       },
-      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"approvalDigest\":null,\"assignmentMode\":\"dedicated\",\"bindingDigest\":\"sha256:9b1565e53109e38b06c4bff3e1a1984af70a7e20bb51ecd96497ce890cd7364f\",\"bindingId\":\"pb_fixture_deny_03\",\"bindingRevision\":3,\"claimGeneration\":1,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"revisionDigest\":\"sha256:0fa095910b22c3bdc11612701035b83d6ea40101d43806bc7d8e770e17824acf\",\"runId\":\"run_fixture_deny_03\",\"runbookDigest\":\"sha256:a15f984b278dd2a0ff14ddc83e813694628fe4e5fe18adc602b83dcab8e96d60\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"workspaceId\":\"fixture-workspace-c\"}",
-      "digest": "sha256:8f4bc8a1909fa47a1e81e755a9f3ec41b527195bd0bc73a35208dc3f5b7f3739",
-      "contractId": "webmcp-profile-admission-binding/1",
-      "domainSeparation": "webmcp-digest-v1:binding",
-      "excludedFromDigest": [
-        "createdAt"
-      ],
-      "syntheticNote": "opaque synthetic IDs, canary values only — no real profile path, cookie, or credential",
-      "projection": {
-        "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_deny_03",
-        "bindingRevision": 3,
-        "bindingDigest": "sha256:9b1565e53109e38b06c4bff3e1a1984af70a7e20bb51ecd96497ce890cd7364f",
-        "profileAlias": "media-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "enforce",
-        "allowedSiteIds": [],
-        "allowedAutomationIds": [],
-        "runId": "run_fixture_deny_03",
-        "claimGeneration": 1,
-        "workspaceId": "fixture-workspace-c",
-        "runbookDigest": "sha256:a15f984b278dd2a0ff14ddc83e813694628fe4e5fe18adc602b83dcab8e96d60",
-        "revisionDigest": "sha256:0fa095910b22c3bdc11612701035b83d6ea40101d43806bc7d8e770e17824acf",
-        "approvalDigest": null
-      }
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-profile-admission-binding/1",
+          "bindingId": "binding_deadbeef00000003",
+          "bindingRevision": 3,
+          "profileAlias": "research-profile",
+          "assignmentMode": "dedicated",
+          "trustDomain": null,
+          "policyMode": "enforce",
+          "allowedSiteIds": [],
+          "allowedAutomationIds": []
+        },
+        "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000003\",\"bindingRevision\":3,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+        "digest": "sha256:80aaf6e28444353f54dc0cd0270801eb0ed47e2f9f80332b5a521856738ae63b",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
     },
     {
       "name": "observe-legacy-missing-policy",
       "description": "Observe mode synthetic vector — legacy/observe may have empty allowlists reported as finding, not silent allow-all. A1 observe projection.",
+      "protectedProjection": {
+        "schema": "webmcp-profile-admission-binding/1",
+        "bindingId": "binding_deadbeef00000004",
+        "bindingRevision": 1,
+        "profileAlias": "migration-profile",
+        "assignmentMode": "dedicated",
+        "trustDomain": null,
+        "policyMode": "observe",
+        "allowedSiteIds": [],
+        "allowedAutomationIds": []
+      },
+      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000004\",\"bindingRevision\":1,\"policyMode\":\"observe\",\"profileAlias\":\"migration-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+      "domainLabel": "webmcp-digest-v1:binding",
+      "domainSeparation": "webmcp-digest-v1:binding",
+      "digest": "sha256:3052cc1e716a0bf9563b13c2545c9ce358a9d8eeb043e332e1f76f703192f4a1",
+      "contractId": "webmcp-profile-admission-binding/1",
+      "excludedFromDigest": [
+        "bindingDigest",
+        "createdAt"
+      ],
       "value": {
         "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_observe_04",
+        "bindingId": "binding_deadbeef00000004",
         "bindingRevision": 1,
-        "bindingDigest": "sha256:9500cabc797a83541695dd3641117d80f9ea96ff1398c1287aec12e3a7f73bc9",
+        "bindingDigest": "sha256:3052cc1e716a0bf9563b13c2545c9ce358a9d8eeb043e332e1f76f703192f4a1",
         "profileAlias": "migration-profile",
         "assignmentMode": "dedicated",
         "trustDomain": null,
         "policyMode": "observe",
         "allowedSiteIds": [],
         "allowedAutomationIds": [],
-        "runId": "run_fixture_observe_04",
+        "runId": "run_deadbeef00000004",
         "claimGeneration": 0,
-        "workspaceId": "fixture-workspace-d",
-        "runbookDigest": "sha256:33ab8a05a89d8be231d671edba2e75b6fdc84a54892ae1b6b6d0cb6b17759921",
-        "revisionDigest": "sha256:84b9bcd2fe2e1d5fdba9975c9564dc60f17c7f05c5055023d8366b81e12c851b",
+        "workspaceId": "workspace_deadbeef00000004",
+        "runbookDigest": "sha256:581236d5b68e4df3b2bff3777319c6f06b737fd409fe4dfcdda41dad9b6b5a02",
+        "revisionDigest": "sha256:a8ebdf3d1646ff37055e3d0250a9e7e644f5c45a5f85da125d963778f6579d57",
         "approvalDigest": null,
         "createdAt": "2026-08-27T03:00:00.000Z"
       },
-      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"approvalDigest\":null,\"assignmentMode\":\"dedicated\",\"bindingDigest\":\"sha256:9500cabc797a83541695dd3641117d80f9ea96ff1398c1287aec12e3a7f73bc9\",\"bindingId\":\"pb_fixture_observe_04\",\"bindingRevision\":1,\"claimGeneration\":0,\"policyMode\":\"observe\",\"profileAlias\":\"migration-profile\",\"revisionDigest\":\"sha256:84b9bcd2fe2e1d5fdba9975c9564dc60f17c7f05c5055023d8366b81e12c851b\",\"runId\":\"run_fixture_observe_04\",\"runbookDigest\":\"sha256:33ab8a05a89d8be231d671edba2e75b6fdc84a54892ae1b6b6d0cb6b17759921\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"workspaceId\":\"fixture-workspace-d\"}",
-      "digest": "sha256:8c6845b02ffe7b3b7c162bf9115cfe3a4f7cbe5b358919251d1a35780582fe45",
-      "contractId": "webmcp-profile-admission-binding/1",
-      "domainSeparation": "webmcp-digest-v1:binding",
-      "excludedFromDigest": [
-        "createdAt"
-      ],
-      "syntheticNote": "opaque synthetic IDs, canary values only — no real profile path, cookie, or credential",
-      "projection": {
-        "schema": "webmcp-profile-admission-binding/1",
-        "bindingId": "pb_fixture_observe_04",
-        "bindingRevision": 1,
-        "bindingDigest": "sha256:9500cabc797a83541695dd3641117d80f9ea96ff1398c1287aec12e3a7f73bc9",
-        "profileAlias": "migration-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "observe",
-        "allowedSiteIds": [],
-        "allowedAutomationIds": [],
-        "runId": "run_fixture_observe_04",
-        "claimGeneration": 0,
-        "workspaceId": "fixture-workspace-d",
-        "runbookDigest": "sha256:33ab8a05a89d8be231d671edba2e75b6fdc84a54892ae1b6b6d0cb6b17759921",
-        "revisionDigest": "sha256:84b9bcd2fe2e1d5fdba9975c9564dc60f17c7f05c5055023d8366b81e12c851b",
-        "approvalDigest": null
-      }
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-profile-admission-binding/1",
+          "bindingId": "binding_deadbeef00000004",
+          "bindingRevision": 1,
+          "profileAlias": "research-profile",
+          "assignmentMode": "dedicated",
+          "trustDomain": null,
+          "policyMode": "observe",
+          "allowedSiteIds": [],
+          "allowedAutomationIds": []
+        },
+        "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000004\",\"bindingRevision\":1,\"policyMode\":\"observe\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+        "digest": "sha256:97d5ed7df10aa4f653ba8c8f2cd9ee2776d37bb7ca38abb45b3fb53b8a4b395e",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
     }
   ]
 }

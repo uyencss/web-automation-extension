@@ -3,14 +3,14 @@
   "contract": "webmcp-claim-digest-vectors/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
   "synthetic": true,
-  "note": "Cross-package parity vectors — must be identical byte-for-byte between Runner, Workflow CLI, Browser Kit, Vault. Proves domain separation and JCS.",
+  "note": "Cross-package parity vectors — D1-compliant, must be identical byte-for-byte between Runner, Workflow CLI, Browser Kit, Vault. Proves domain separation and JCS. RFC8785 + LF framing.",
   "vectors": [
     {
       "name": "binding-policy-canonical",
       "description": "Binding policy digest vector — shared across Runner, Workflow CLI, Desktop. JCS canonical, sorted keys, no whitespace.",
-      "value": {
+      "protectedProjection": {
         "schema": "webmcp-profile-binding/3",
-        "bindingId": "pb_fixture_binding_policy_01",
+        "bindingId": "binding_deadbeef00000011",
         "bindingRevision": 7,
         "profileAlias": "research-profile",
         "assignmentMode": "dedicated",
@@ -23,32 +23,104 @@
           "example-research-runbook"
         ]
       },
-      "contractId": "webmcp-profile-binding/3",
-      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_fixture_binding_policy_01\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-      "digest": "sha256:09de6a098fcee900fb94b50eb8e48165ca6ece8f8d9df0f6edba2118f7d6a0c9",
+      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000011\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
+      "domainLabel": "webmcp-digest-v1:binding",
       "domainSeparation": "webmcp-digest-v1:binding",
-      "syntheticNote": "opaque synthetic IDs, canary digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
+      "digest": "sha256:292ea556aa2c46ff25b105989ba86ebf78d5ded362d58759dcf8855372eb22e5",
+      "contractId": "webmcp-profile-binding/3",
+      "value": {
+        "schema": "webmcp-profile-binding/3",
+        "bindingId": "binding_deadbeef00000011",
+        "bindingRevision": 7,
+        "profileAlias": "research-profile",
+        "assignmentMode": "dedicated",
+        "trustDomain": null,
+        "policyMode": "enforce",
+        "allowedSiteIds": [
+          "example-site"
+        ],
+        "allowedAutomationIds": [
+          "example-research-runbook"
+        ]
+      },
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-profile-binding/3",
+          "bindingId": "binding_deadbeef00000011",
+          "bindingRevision": 7,
+          "profileAlias": "media-profile",
+          "assignmentMode": "dedicated",
+          "trustDomain": null,
+          "policyMode": "enforce",
+          "allowedSiteIds": [
+            "example-site"
+          ],
+          "allowedAutomationIds": [
+            "example-research-runbook"
+          ]
+        },
+        "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000011\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
+        "digest": "sha256:3297f38c25ece2953ee04a70260b1d46eb4fa2c5e6015f8f9515e26f2f5888da",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs where applicable, D1 JCS, non-placeholder digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
     },
     {
       "name": "runner-claim-context-canonical",
       "description": "Runner claim context digest — H(runId + claimGeneration + workspaceId + runbookDigest). Cross-package identical consumption.",
+      "protectedProjection": {
+        "schema": "webmcp-runner-claim-context/1",
+        "runId": "run_deadbeef00000021",
+        "claimGeneration": 3,
+        "workspaceId": "workspace_deadbeef00000021",
+        "runbookDigest": "sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a",
+        "revisionDigest": "sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5"
+      },
+      "canonical": "{\"claimGeneration\":3,\"revisionDigest\":\"sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5\",\"runId\":\"run_deadbeef00000021\",\"runbookDigest\":\"sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a\",\"schema\":\"webmcp-runner-claim-context/1\",\"workspaceId\":\"workspace_deadbeef00000021\"}",
+      "domainLabel": "webmcp-digest-v1:claim",
+      "domainSeparation": "webmcp-digest-v1:claim",
+      "digest": "sha256:7b7529037d94ea558ed833d12de324d5a041a6f692f44f6edab9d96f4b41e283",
+      "contractId": "webmcp-runner-claim-context/1",
       "value": {
         "schema": "webmcp-runner-claim-context/1",
-        "runId": "run_fixture_claim_01",
+        "runId": "run_deadbeef00000021",
         "claimGeneration": 3,
-        "workspaceId": "fixture-workspace-a",
-        "runbookDigest": "sha256:e05a90c42a53164e8ef407622e23d5422510827b5cf8488ebc5c6ca530f33271",
-        "revisionDigest": "sha256:4a36b4ea819a22a69ac250a11f141886540a8fda0c30a7d0a1b2bd09386f0e8b"
+        "workspaceId": "workspace_deadbeef00000021",
+        "runbookDigest": "sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a",
+        "revisionDigest": "sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5"
       },
-      "contractId": "webmcp-runner-claim-context/1",
-      "canonical": "{\"claimGeneration\":3,\"revisionDigest\":\"sha256:4a36b4ea819a22a69ac250a11f141886540a8fda0c30a7d0a1b2bd09386f0e8b\",\"runId\":\"run_fixture_claim_01\",\"runbookDigest\":\"sha256:e05a90c42a53164e8ef407622e23d5422510827b5cf8488ebc5c6ca530f33271\",\"schema\":\"webmcp-runner-claim-context/1\",\"workspaceId\":\"fixture-workspace-a\"}",
-      "digest": "sha256:353b41c43f5a996b9587f20c0f6c7113a5c97da6634e9dff2a6aabc4ff2ff716",
-      "domainSeparation": "webmcp-digest-v1:claim",
-      "syntheticNote": "opaque synthetic IDs, canary digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-runner-claim-context/1",
+          "runId": "run_deadbeef00000021",
+          "claimGeneration": 4,
+          "workspaceId": "workspace_deadbeef00000021",
+          "runbookDigest": "sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a",
+          "revisionDigest": "sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5"
+        },
+        "canonical": "{\"claimGeneration\":4,\"revisionDigest\":\"sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5\",\"runId\":\"run_deadbeef00000021\",\"runbookDigest\":\"sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a\",\"schema\":\"webmcp-runner-claim-context/1\",\"workspaceId\":\"workspace_deadbeef00000021\"}",
+        "digest": "sha256:e1ae5715bd301bd4b438ef9276ca6e2d77fcab348fde7ba083d020cc52abdc1a",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs where applicable, D1 JCS, non-placeholder digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
     },
     {
       "name": "jcs-utf16-object-key-order",
       "description": "Parity JCS vector reused from instruction-set fixtures — proves UTF-16 object-key order and surrogate handling.",
+      "protectedProjection": {
+        "דּ": 7,
+        "😀": 6,
+        "€": 5,
+        "ö": 4,
+        "": 3,
+        "a": 2,
+        "\r": 1
+      },
+      "canonical": "{\"\\r\":1,\"a\":2,\"\":3,\"ö\":4,\"€\":5,\"😀\":6,\"דּ\":7}",
+      "domainLabel": "webmcp-digest-v1:binding",
+      "domainSeparation": "webmcp-digest-v1:binding",
+      "digest": "sha256:a130e6c1b814e9a6b36a28d5208e4d7e78df7861eb934ca6a8a6c8e8a1c20a03",
+      "contractId": "webmcp-jcs-vector/1",
       "value": {
         "דּ": 7,
         "😀": 6,
@@ -58,18 +130,43 @@
         "a": 2,
         "\r": 1
       },
-      "contractId": "webmcp-jcs-vector/1",
-      "canonical": "{\"\\r\":1,\"a\":2,\"\":3,\"ö\":4,\"€\":5,\"😀\":6,\"דּ\":7}",
-      "digest": "sha256:a130e6c1b814e9a6b36a28d5208e4d7e78df7861eb934ca6a8a6c8e8a1c20a03",
-      "domainSeparation": "webmcp-digest-v1:binding",
-      "syntheticNote": "opaque synthetic IDs, canary digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
+      "mutation": {
+        "protectedProjection": {
+          "דּ": 7,
+          "😀": 6,
+          "€": 5,
+          "ö": 4,
+          "": 3,
+          "a": 3,
+          "\r": 1
+        },
+        "canonical": "{\"\\r\":1,\"a\":3,\"\":3,\"ö\":4,\"€\":5,\"😀\":6,\"דּ\":7}",
+        "digest": "sha256:d2d323ee432a569a96e63928c1394dad19115de090ec5c098b9b97d902740989",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs where applicable, D1 JCS, non-placeholder digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
     },
     {
       "name": "mutation-proves-digest-fails",
       "description": "Mutation test — changing one protected field (profileAlias) must change digest. Proves bindingDigest is protected composition.",
+      "protectedProjection": {
+        "schema": "webmcp-profile-binding/3",
+        "bindingId": "binding_deadbeef00000031",
+        "bindingRevision": 5,
+        "profileAlias": "research-profile",
+        "assignmentMode": "dedicated",
+        "trustDomain": null,
+        "policyMode": "enforce",
+        "allowedSiteIds": [
+          "example-site"
+        ],
+        "allowedAutomationIds": [
+          "example-research-runbook"
+        ]
+      },
       "baseValue": {
         "schema": "webmcp-profile-binding/3",
-        "bindingId": "pb_fixture_mutation_04",
+        "bindingId": "binding_deadbeef00000031",
         "bindingRevision": 5,
         "profileAlias": "research-profile",
         "assignmentMode": "dedicated",
@@ -84,7 +181,7 @@
       },
       "mutatedValue": {
         "schema": "webmcp-profile-binding/3",
-        "bindingId": "pb_fixture_mutation_04",
+        "bindingId": "binding_deadbeef00000031",
         "bindingRevision": 5,
         "profileAlias": "media-profile",
         "assignmentMode": "dedicated",
@@ -98,13 +195,36 @@
         ]
       },
       "contractId": "webmcp-profile-binding/3",
-      "baseCanonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_fixture_mutation_04\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-      "baseDigest": "sha256:f893249952ec77a7964d229c7dae05dc6180c06d041ec763e991a007dfc28a1c",
-      "mutatedCanonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_fixture_mutation_04\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-      "mutatedDigest": "sha256:ac000d75d4563a5e61804e015229443094142bd2aeaa74357a5667043f7f8521",
+      "baseCanonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
+      "baseDigest": "sha256:ef5e827330a8171484007f7417b171c23c98e15c7d6c3f4d1a0031ff770bc616",
+      "mutatedCanonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
+      "mutatedDigest": "sha256:6f92e25db29e86261f179883746d6fdc331e8654ca51da076cb1f19da62791ce",
+      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
+      "digest": "sha256:ef5e827330a8171484007f7417b171c23c98e15c7d6c3f4d1a0031ff770bc616",
+      "domainLabel": "webmcp-digest-v1:binding",
+      "domainSeparation": "webmcp-digest-v1:binding",
       "digestsDiffer": true,
-      "syntheticNote": "opaque synthetic IDs, canary digests — must be byte-identical across Runner, Workflow CLI, Browser Kit",
-      "domainSeparation": "webmcp-digest-v1:binding"
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-profile-binding/3",
+          "bindingId": "binding_deadbeef00000031",
+          "bindingRevision": 5,
+          "profileAlias": "media-profile",
+          "assignmentMode": "dedicated",
+          "trustDomain": null,
+          "policyMode": "enforce",
+          "allowedSiteIds": [
+            "example-site"
+          ],
+          "allowedAutomationIds": [
+            "example-research-runbook"
+          ]
+        },
+        "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
+        "digest": "sha256:6f92e25db29e86261f179883746d6fdc331e8654ca51da076cb1f19da62791ce",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs, D1 JCS — must be byte-identical across Runner, Workflow CLI, Browser Kit"
     }
   ]
 }
