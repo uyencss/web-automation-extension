@@ -41,6 +41,28 @@ test('interaction policy determinism fields are provisional but bounded', () => 
   assert.ok(schema.properties.timing.properties.deterministic.type === 'boolean');
 });
 
+test('interaction policy fixture instances validate (AJV)', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const schema = loadJson(path.join(ROOT, 'schemas/webmcp-interaction-policy.schema.json'));
+  const validate = ajv.compile(schema);
+  // Synthetic policy instance with required fields
+  const instance = {
+    schema: 'webmcp-interaction-policy/1',
+    policyId: 'inp_' + 'a'.repeat(16),
+    mode: 'direct',
+    budgets: { timeoutMs: 5000, maxChunks: 4 },
+    precondition: { kind: 'element-visible' },
+    postcondition: { kind: 'value-equivalent' }
+  };
+  // Make IDs hex
+  instance.policyId = 'inp_' + 'a'.repeat(16).replace(/a/g, '1');
+  assert.equal(validate(instance), true, `interaction policy instance must validate: ${JSON.stringify(validate.errors)}`);
+  assert.ok(schema.$id === 'https://webmcp.dev/schemas/webmcp-interaction-policy.schema.json');
+});
+
 test('RED: paced interaction requires opt-in and total budget enforcement is missing', () => {
   // Future: lib/interaction/pace.mjs or extension pacing handler. A1 must stay RED.
   const candidates = [

@@ -37,6 +37,31 @@ test('governor lease vectors are well-formed synthetic fixtures', () => {
   assert.equal(race.requests.length, 2);
 });
 
+test('governor lease fixture instances validate against schemas (AJV)', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const leaseSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-lease.schema.json'));
+  const requestSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-lease-request.schema.json'));
+  const validateLease = ajv.compile(leaseSchema);
+  const validateRequest = ajv.compile(requestSchema);
+  const vectors = loadJson(path.join(ROOT, 'tests/fixtures/governor-lease-vectors.json'));
+  const happy = vectors.vectors.find((v) => v.id === 'lease-happy-single-context');
+  assert.ok(happy, 'happy vector must exist');
+  assert.equal(validateLease(happy.expectedLease), true, `expectedLease must validate: ${JSON.stringify(validateLease.errors)}`);
+  assert.equal(validateRequest(happy.request), true, `request must validate: ${JSON.stringify(validateRequest.errors)}`);
+  for (const vec of vectors.vectors) {
+    if (vec.requests) {
+      for (const req of vec.requests) {
+        assert.equal(validateRequest(req), true, `request ${req.requestId} must validate: ${JSON.stringify(validateRequest.errors)}`);
+      }
+    }
+  }
+  // Ensure synthetic IDs are lowercase hex
+  assert.match(happy.expectedLease.leaseId, /^lease_[0-9a-f]{16}$/);
+});
+
 test('RED: Governor exclusive acquire — two processes same physical resource yields exactly one winner', () => {
   // A1 is RED-only: runtime must not exist yet. This test proves the missing capability,
   // not malformed setup, by asserting the future Governor lease service exists.

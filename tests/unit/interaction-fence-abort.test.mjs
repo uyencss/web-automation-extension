@@ -27,6 +27,20 @@ test('fence vectors provide abort injection points for interaction', () => {
   assert.ok(interactionVectors.vectors.some((v) => v.id === 'vi-nfc-precomposed'));
 });
 
+test('interaction/fence fixture instances validate (AJV)', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const fenceSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-action-fence.schema.json'));
+  const validateFence = ajv.compile(fenceSchema);
+  const fenceVectors = loadJson(path.join(ROOT, 'tests/fixtures/fence-proof-vectors.json'));
+  const happy = fenceVectors.vectors.find((v) => v.id === 'fence-happy-browser-read');
+  assert.equal(validateFence(happy.proof), true, `fence proof must validate: ${JSON.stringify(validateFence.errors)}`);
+  const unicode = loadJson(path.join(ROOT, 'tests/fixtures/interaction-unicode-vectors.json'));
+  assert.ok(unicode.vectors.some((v) => v.id === 'vi-nfc-precomposed' && v.expectChunks === 'grapheme-safe'));
+});
+
 test('RED: fence check between chunks aborts interaction and reports partial effect — missing', () => {
   const candidates = [
     path.join(ROOT, 'lib/interaction/fence-abort.mjs'),

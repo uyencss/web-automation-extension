@@ -1,82 +1,305 @@
 {
   "schema": "webmcp-session-data-canonical-vectors/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
-  "note": "Synthetic canonical JCS vectors for D1 digest work (fixture-only). Domain labels provisional. SHA-256 hex lower. Sort keys, no whitespace. Reject duplicate keys/non-finite/lone surrogates.",
+  "note": "Synthetic canonical JCS vectors for D1 digest work. RFC 8785 JCS UTF-8 with LF framing, domain labels webmcp-digest-v1:* are the only hash inputs. No placeholder digests.",
   "domainLabels": {
     "binding": "webmcp-digest-v1:binding",
     "claim": "webmcp-digest-v1:claim",
     "lease": "webmcp-digest-v1:lease",
     "grant": "webmcp-digest-v1:grant",
-    "fence": "webmcp-digest-v1:fence"
+    "fence": "webmcp-digest-v1:fence",
+    "permit": "webmcp-digest-v1:permit",
+    "terminal": "webmcp-digest-v1:terminal",
+    "toolReceipt": "webmcp-digest-v1:tool-receipt"
   },
   "vectors": [
     {
       "id": "canonical-binding-policy",
       "description": "Binding policy canonical input and digest",
-      "input": {
+      "domainLabel": "webmcp-digest-v1:binding",
+      "protectedProjection": {
         "bindingId": "pb_research-profile",
         "bindingRevision": 7,
-        "policy": {
-          "assignmentMode": "dedicated",
-          "trustDomain": "research-trust-a",
-          "allowedAutomationIds": ["automation-alpha"],
-          "allowedSiteIds": ["site-example"]
-        }
+        "profileAlias": "research-profile",
+        "assignmentMode": "dedicated",
+        "trustDomain": null,
+        "policyMode": "enforce",
+        "allowedSiteIds": [
+          "site-example"
+        ],
+        "allowedAutomationIds": [
+          "automation-alpha"
+        ]
       },
-      "canonicalJson": "{\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"policy\":{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"trustDomain\":\"research-trust-a\"}}",
-      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "excludeVolatile": ["createdAt", "leaseId"]
+      "canonicalJson": "{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"trustDomain\":null}",
+      "digest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
+      "excludedFields": [
+        "createdAt",
+        "leaseId"
+      ],
+      "mutation": {
+        "description": "Changing any protected field must change digest",
+        "mutatedProjection": {
+          "bindingId": "pb_research-profile",
+          "bindingRevision": 8,
+          "profileAlias": "research-profile",
+          "assignmentMode": "dedicated",
+          "trustDomain": null,
+          "policyMode": "enforce",
+          "allowedSiteIds": [
+            "site-example"
+          ],
+          "allowedAutomationIds": [
+            "automation-alpha"
+          ]
+        },
+        "mutatedCanonical": "{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":8,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"trustDomain\":null}",
+        "mutatedDigest": "sha256:a23d8c82d5939adb66cab5bbbc97e7c6ffe4cda86fe4c8d081d9acd4925851f2",
+        "expectMismatch": true
+      }
     },
     {
       "id": "canonical-claim-context",
       "description": "Runner claim context digest",
-      "input": {
+      "domainLabel": "webmcp-digest-v1:claim",
+      "protectedProjection": {
         "runId": "run_aaa111bbb222",
         "claimGeneration": 1,
-        "workspace": "workspace-synthetic-001",
-        "runbookDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "workspaceId": "workspace-synthetic-001",
+        "runbookDigest": "sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d",
+        "revisionDigest": "sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046",
+        "bindingId": "pb_research-profile",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9"
       },
-      "canonicalJson": "{\"claimGeneration\":1,\"runId\":\"run_aaa111bbb222\",\"runbookDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"workspace\":\"workspace-synthetic-001\"}",
-      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      "canonicalJson": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"claimGeneration\":1,\"revisionDigest\":\"sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046\",\"runId\":\"run_aaa111bbb222\",\"runbookDigest\":\"sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d\",\"workspaceId\":\"workspace-synthetic-001\"}",
+      "digest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+      "excludedFields": [
+        "rawClaimToken",
+        "claimTimestamps"
+      ],
+      "mutation": {
+        "description": "Changing workspace must change claimDigest",
+        "mutatedProjection": {
+          "runId": "run_aaa111bbb222",
+          "claimGeneration": 1,
+          "workspaceId": "workspace-synthetic-002",
+          "runbookDigest": "sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d",
+          "revisionDigest": "sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046",
+          "bindingId": "pb_research-profile",
+          "bindingRevision": 7,
+          "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9"
+        },
+        "mutatedCanonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"claimGeneration\":1,\"revisionDigest\":\"sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046\",\"runId\":\"run_aaa111bbb222\",\"runbookDigest\":\"sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d\",\"workspaceId\":\"workspace-synthetic-002\"}",
+        "mutatedDigest": "sha256:e39cefde00dc6b7096d6418465f5590f58f67e08ec9eb4ff1c10234a8afabb41",
+        "expectMismatch": true
+      }
     },
     {
       "id": "canonical-lease-binding",
       "description": "leaseBinding = H(claimDigest + bindingDigest + profileResourceId + fenceEpoch)",
-      "input": {
-        "claimDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "bindingDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "domainLabel": "webmcp-digest-v1:lease",
+      "protectedProjection": {
+        "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+        "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
         "profileResourceId": "prsc_synthetic_resource_alpha",
         "fenceEpoch": 19
       },
-      "canonicalJson": "{\"bindingDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"claimDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
-      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "note": "profileResourceId is synthetic opaque; raw path never portable"
+      "canonicalJson": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+      "digest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+      "excludedFields": [
+        "leaseId",
+        "fenceToken",
+        "timestamps"
+      ],
+      "note": "profileResourceId is synthetic opaque; raw path never portable",
+      "mutation": {
+        "description": "Changing profileResourceId must change leaseBindingDigest",
+        "mutatedProjection": {
+          "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+          "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
+          "profileResourceId": "prsc_synthetic_resource_bravo",
+          "fenceEpoch": 19
+        },
+        "mutatedCanonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_bravo\"}",
+        "mutatedDigest": "sha256:495391d7f9016b3cf1d8d61bbe3ad4046777b9874253949cc93aa12bb253f9d1",
+        "expectMismatch": true
+      }
     },
     {
       "id": "canonical-grant-scope",
       "description": "grantDigest = H(leaseBinding + purpose + exactScope + TTL + maxUses + approvalDigest)",
-      "input": {
-        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "purpose": "reconcile-pending-orders",
+      "domainLabel": "webmcp-digest-v1:grant",
+      "protectedProjection": {
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+        "bindingId": "pb_research-profile",
+        "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
         "scope": {
           "origin": "https://example.test",
           "surface": "cookies",
-          "selectors": { "cookieNames": ["session_id"], "paths": ["/"] }
+          "selectors": {
+            "cookieNames": [
+              "session_id"
+            ],
+            "paths": [
+              "/"
+            ]
+          }
         },
-        "ttlMs": 60000,
-        "maxUses": 5,
-        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        "mode": "scoped-values",
+        "purpose": "reconcile-pending-orders",
+        "destination": "trusted-step",
+        "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
+        "budgets": {
+          "maxRows": 50,
+          "maxBytes": 65536,
+          "maxDurationMs": 5000
+        }
       },
-      "canonicalJson": "{\"approvalDigest\":\"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"leaseBindingDigest\":\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"maxUses\":5,\"purpose\":\"reconcile-pending-orders\",\"scope\":{\"origin\":\"https://example.test\",\"selectors\":{\"cookieNames\":[\"session_id\"],\"paths\":[\"/\"]},\"surface\":\"cookies\"},\"ttlMs\":60000}",
-      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      "canonicalJson": "{\"approvalDigest\":\"sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573\",\"bindingId\":\"pb_research-profile\",\"budgets\":{\"maxBytes\":65536,\"maxDurationMs\":5000,\"maxRows\":50},\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"destination\":\"trusted-step\",\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"mode\":\"scoped-values\",\"purpose\":\"reconcile-pending-orders\",\"scope\":{\"origin\":\"https://example.test\",\"selectors\":{\"cookieNames\":[\"session_id\"],\"paths\":[\"/\"]},\"surface\":\"cookies\"}}",
+      "digest": "sha256:f3a7a1f2a3a67127ccc7f493bca55671e104b51fdcdde16ed94d810a7b4acea3",
+      "excludedFields": [
+        "grantId",
+        "nonce",
+        "issuedAt",
+        "expiresAt"
+      ],
+      "mutation": {
+        "description": "Changing purpose must change grantDigest",
+        "mutatedProjection": {
+          "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+          "bindingId": "pb_research-profile",
+          "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+          "scope": {
+            "origin": "https://example.test",
+            "surface": "cookies",
+            "selectors": {
+              "cookieNames": [
+                "session_id"
+              ],
+              "paths": [
+                "/"
+              ]
+            }
+          },
+          "mode": "scoped-values",
+          "purpose": "reconcile-pending-orders-evil",
+          "destination": "trusted-step",
+          "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
+          "budgets": {
+            "maxRows": 50,
+            "maxBytes": 65536,
+            "maxDurationMs": 5000
+          }
+        },
+        "mutatedCanonical": "{\"approvalDigest\":\"sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573\",\"bindingId\":\"pb_research-profile\",\"budgets\":{\"maxBytes\":65536,\"maxDurationMs\":5000,\"maxRows\":50},\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"destination\":\"trusted-step\",\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"mode\":\"scoped-values\",\"purpose\":\"reconcile-pending-orders-evil\",\"scope\":{\"origin\":\"https://example.test\",\"selectors\":{\"cookieNames\":[\"session_id\"],\"paths\":[\"/\"]},\"surface\":\"cookies\"}}",
+        "mutatedDigest": "sha256:29d2415dce2774d71da34a6ab6005029889c789723ae80517ae3376a1b2b3ed0",
+        "expectMismatch": true
+      }
+    },
+    {
+      "id": "canonical-fence-scope",
+      "description": "fenceDigest = H(leaseBinding + binding/claim refs + fenceEpoch + action scope)",
+      "domainLabel": "webmcp-digest-v1:fence",
+      "protectedProjection": {
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+        "bindingId": "pb_research-profile",
+        "runId": "run_aaa111bbb222",
+        "fenceEpoch": 19,
+        "scope": {
+          "profileAlias": "research-profile",
+          "actions": [
+            "browser-read"
+          ]
+        }
+      },
+      "canonicalJson": "{\"bindingId\":\"pb_research-profile\",\"fenceEpoch\":19,\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"runId\":\"run_aaa111bbb222\",\"scope\":{\"actions\":[\"browser-read\"],\"profileAlias\":\"research-profile\"}}",
+      "digest": "sha256:38146fd99d06290efa5c17287675d8f240721f3876b13c6cbede2119b96ab510",
+      "excludedFields": [
+        "fenceId",
+        "fenceToken",
+        "timestamps"
+      ],
+      "mutation": {
+        "description": "Changing scope action must change fenceDigest",
+        "mutatedProjection": {
+          "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+          "bindingId": "pb_research-profile",
+          "runId": "run_aaa111bbb222",
+          "fenceEpoch": 19,
+          "scope": {
+            "profileAlias": "research-profile",
+            "actions": [
+              "browser-write"
+            ]
+          }
+        },
+        "mutatedCanonical": "{\"bindingId\":\"pb_research-profile\",\"fenceEpoch\":19,\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"runId\":\"run_aaa111bbb222\",\"scope\":{\"actions\":[\"browser-write\"],\"profileAlias\":\"research-profile\"}}",
+        "mutatedDigest": "sha256:68e5bb78a1764688dbf63ca487dc748ab684070306a6710eba82b665fc2febb4",
+        "expectMismatch": true
+      }
     },
     {
       "id": "canonical-mutation-protects-field",
       "description": "Changing any protected field must change digest",
-      "baseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "domainLabel": "webmcp-digest-v1:grant",
+      "baseProjection": {
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+        "bindingId": "pb_research-profile",
+        "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+        "scope": {
+          "origin": "https://example.test",
+          "surface": "cookies",
+          "selectors": {
+            "cookieNames": [
+              "session_id"
+            ],
+            "paths": [
+              "/"
+            ]
+          }
+        },
+        "mode": "scoped-values",
+        "purpose": "reconcile-pending-orders",
+        "destination": "trusted-step",
+        "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
+        "budgets": {
+          "maxRows": 50,
+          "maxBytes": 65536,
+          "maxDurationMs": 5000
+        }
+      },
+      "baseCanonical": "{\"approvalDigest\":\"sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573\",\"bindingId\":\"pb_research-profile\",\"budgets\":{\"maxBytes\":65536,\"maxDurationMs\":5000,\"maxRows\":50},\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"destination\":\"trusted-step\",\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"mode\":\"scoped-values\",\"purpose\":\"reconcile-pending-orders\",\"scope\":{\"origin\":\"https://example.test\",\"selectors\":{\"cookieNames\":[\"session_id\"],\"paths\":[\"/\"]},\"surface\":\"cookies\"}}",
+      "baseDigest": "sha256:f3a7a1f2a3a67127ccc7f493bca55671e104b51fdcdde16ed94d810a7b4acea3",
       "mutated": {
-        "purpose": "reconcile-pending-orders-evil",
-        "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "projection": {
+          "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+          "bindingId": "pb_research-profile",
+          "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+          "scope": {
+            "origin": "https://example.test",
+            "surface": "cookies",
+            "selectors": {
+              "cookieNames": [
+                "session_id"
+              ],
+              "paths": [
+                "/"
+              ]
+            }
+          },
+          "mode": "scoped-values",
+          "purpose": "reconcile-pending-orders-evil",
+          "destination": "trusted-step",
+          "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
+          "budgets": {
+            "maxRows": 50,
+            "maxBytes": 65536,
+            "maxDurationMs": 5000
+          }
+        },
+        "canonical": "{\"approvalDigest\":\"sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573\",\"bindingId\":\"pb_research-profile\",\"budgets\":{\"maxBytes\":65536,\"maxDurationMs\":5000,\"maxRows\":50},\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"destination\":\"trusted-step\",\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"mode\":\"scoped-values\",\"purpose\":\"reconcile-pending-orders-evil\",\"scope\":{\"origin\":\"https://example.test\",\"selectors\":{\"cookieNames\":[\"session_id\"],\"paths\":[\"/\"]},\"surface\":\"cookies\"}}",
+        "digest": "sha256:29d2415dce2774d71da34a6ab6005029889c789723ae80517ae3376a1b2b3ed0",
         "expectMismatch": true
       }
     },
@@ -84,16 +307,33 @@
       "id": "canary-cookie-values",
       "description": "Generated canary cookie values (never production)",
       "canaries": [
-        { "name": "session_id", "value": "canary_cookie_sess_8f3a9c1e", "origin": "https://example.test" },
-        { "name": "auth_token", "value": "canary_auth_2b4d6f8a0c1e3", "origin": "https://example.test", "httpOnly": true }
+        {
+          "name": "session_id",
+          "value": "canary_cookie_sess_8f3a9c1e",
+          "origin": "https://example.test"
+        },
+        {
+          "name": "auth_token",
+          "value": "canary_auth_2b4d6f8a0c1e3",
+          "origin": "https://example.test",
+          "httpOnly": true
+        }
       ]
     },
     {
       "id": "canary-storage-values",
       "description": "Generated canary Web Storage values",
       "canaries": [
-        { "origin": "https://example.test", "key": "app:pendingOrders", "value": "canary_storage_abc123" },
-        { "origin": "https://example.test", "key": "app:userPrefs", "value": "{\"theme\":\"dark\"}" }
+        {
+          "origin": "https://example.test",
+          "key": "app:pendingOrders",
+          "value": "canary_storage_abc123"
+        },
+        {
+          "origin": "https://example.test",
+          "key": "app:userPrefs",
+          "value": "{\"theme\":\"dark\"}"
+        }
       ]
     }
   ]

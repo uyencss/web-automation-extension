@@ -1,7 +1,7 @@
 {
   "schema": "webmcp-recovery-receipt-vectors/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
-  "note": "Synthetic Governor recovery receipts. Redacted; no raw profile path/value. Provisional D5/D6.",
+  "note": "Synthetic Governor recovery receipts. JCS canonical with LF framing per D1; domain label webmcp-digest-v1:terminal is the only hash input for receipt digests. No placeholder digests.",
   "vectors": [
     {
       "id": "recovery-host-restart-no-stale-resurrection",
@@ -13,12 +13,12 @@
       },
       "receipt": {
         "schema": "webmcp-profile-recovery-receipt/1",
-        "receiptId": "prr_1111111111111111",
+        "receiptId": "prr_8280da873bbdccd3",
         "leaseId": "lease_deadbeef01234567",
         "profileAlias": "research-profile",
         "bindingId": "pb_research-profile",
         "bindingRevision": 7,
-        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
         "runId": "run_aaa111bbb222",
         "priorState": "active",
         "newState": "unknown",
@@ -35,8 +35,60 @@
         "dependentGrantRevokeStatus": "pending",
         "authorityKind": "governor-automatic",
         "createdAt": "2026-08-27T00:05:00.000Z",
-        "receiptDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "eventId": "pse_aaaaaaaaaaaaaaaa"
+        "receiptDigest": "sha256:34c1215c3ab740f323d53f420ae595d465f43586c93f9542034f9ba2e8f63756",
+        "eventId": "pse_1c3ace69e19862eb"
+      },
+      "protectedProjections": {
+        "receiptDigest": {
+          "domainLabel": "webmcp-digest-v1:terminal",
+          "projection": {
+            "receiptId": "prr_8280da873bbdccd3",
+            "leaseId": "lease_deadbeef01234567",
+            "priorState": "active",
+            "newState": "unknown",
+            "priorFenceEpoch": 19,
+            "newFenceEpoch": 20,
+            "reasonCode": "RECOVERY_HOST_RESTART",
+            "probeOutcomes": {
+              "governorHealth": "unknown",
+              "runnerClaim": "unknown",
+              "browserAlive": false,
+              "extensionConnected": false
+            },
+            "lastActionOutcome": "indeterminate",
+            "dependentGrantRevokeStatus": "pending"
+          },
+          "canonical": "{\"dependentGrantRevokeStatus\":\"pending\",\"lastActionOutcome\":\"indeterminate\",\"leaseId\":\"lease_deadbeef01234567\",\"newFenceEpoch\":20,\"newState\":\"unknown\",\"priorFenceEpoch\":19,\"priorState\":\"active\",\"probeOutcomes\":{\"browserAlive\":false,\"extensionConnected\":false,\"governorHealth\":\"unknown\",\"runnerClaim\":\"unknown\"},\"reasonCode\":\"RECOVERY_HOST_RESTART\",\"receiptId\":\"prr_8280da873bbdccd3\"}",
+          "digest": "sha256:34c1215c3ab740f323d53f420ae595d465f43586c93f9542034f9ba2e8f63756"
+        },
+        "bindingDigest": {
+          "domainLabel": "webmcp-digest-v1:binding",
+          "canonical": "{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"trustDomain\":null}",
+          "digest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9"
+        }
+      },
+      "mutation": {
+        "description": "Changing newState must change receiptDigest",
+        "mutatedProjection": {
+          "receiptId": "prr_8280da873bbdccd3",
+          "leaseId": "lease_deadbeef01234567",
+          "priorState": "active",
+          "newState": "quarantined",
+          "priorFenceEpoch": 19,
+          "newFenceEpoch": 20,
+          "reasonCode": "RECOVERY_HOST_RESTART",
+          "probeOutcomes": {
+            "governorHealth": "unknown",
+            "runnerClaim": "unknown",
+            "browserAlive": false,
+            "extensionConnected": false
+          },
+          "lastActionOutcome": "indeterminate",
+          "dependentGrantRevokeStatus": "pending"
+        },
+        "mutatedCanonical": "{\"dependentGrantRevokeStatus\":\"pending\",\"lastActionOutcome\":\"indeterminate\",\"leaseId\":\"lease_deadbeef01234567\",\"newFenceEpoch\":20,\"newState\":\"quarantined\",\"priorFenceEpoch\":19,\"priorState\":\"active\",\"probeOutcomes\":{\"browserAlive\":false,\"extensionConnected\":false,\"governorHealth\":\"unknown\",\"runnerClaim\":\"unknown\"},\"reasonCode\":\"RECOVERY_HOST_RESTART\",\"receiptId\":\"prr_8280da873bbdccd3\"}",
+        "mutatedDigest": "sha256:9be767567345da32f78fa7c7ba1c73cf7b8164a0c806eee8758b9c3e897fbaae",
+        "expectMismatch": true
       },
       "expect": "resource stays unknown/quarantined until reconciliation, never ready with old epoch"
     },
@@ -44,15 +96,15 @@
       "id": "recovery-process-crash-indeterminate-quarantine",
       "description": "Process crash with indeterminate outward effect quarantines resource",
       "prior": {
-        "leaseId": "lease_crash0123456789",
+        "leaseId": "lease_b3fa56659d2bcf52",
         "fenceEpoch": 5,
         "state": "active",
         "lastAction": "dispatched but postcondition unknown"
       },
       "receipt": {
         "schema": "webmcp-profile-recovery-receipt/1",
-        "receiptId": "prr_2222222222222222",
-        "leaseId": "lease_crash0123456789",
+        "receiptId": "prr_47bf138f0b30b9a8",
+        "leaseId": "lease_b3fa56659d2bcf52",
         "profileAlias": "research-profile",
         "priorState": "active",
         "newState": "quarantined",
@@ -69,7 +121,36 @@
         "dependentGrantRevokeStatus": "revoked",
         "authorityKind": "governor-automatic",
         "createdAt": "2026-08-27T00:06:00.000Z",
-        "receiptDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "receiptDigest": "sha256:cb09592f366038a86a76f36e721883a8d56900fe818e2f1b7498d06b80d37a8f"
+      },
+      "protectedProjections": {
+        "receiptDigest": {
+          "domainLabel": "webmcp-digest-v1:terminal",
+          "projection": {
+            "receiptId": "prr_47bf138f0b30b9a8",
+            "leaseId": "lease_b3fa56659d2bcf52",
+            "priorState": "active",
+            "newState": "quarantined",
+            "priorFenceEpoch": 5,
+            "newFenceEpoch": 6,
+            "reasonCode": "PROFILE_OUTWARD_EFFECT_INDETERMINATE",
+            "probeOutcomes": {
+              "governorHealth": "healthy",
+              "runnerClaim": "terminal",
+              "browserAlive": true,
+              "extensionConnected": true
+            },
+            "lastActionOutcome": "indeterminate",
+            "dependentGrantRevokeStatus": "revoked"
+          },
+          "canonical": "{\"dependentGrantRevokeStatus\":\"revoked\",\"lastActionOutcome\":\"indeterminate\",\"leaseId\":\"lease_b3fa56659d2bcf52\",\"newFenceEpoch\":6,\"newState\":\"quarantined\",\"priorFenceEpoch\":5,\"priorState\":\"active\",\"probeOutcomes\":{\"browserAlive\":true,\"extensionConnected\":true,\"governorHealth\":\"healthy\",\"runnerClaim\":\"terminal\"},\"reasonCode\":\"PROFILE_OUTWARD_EFFECT_INDETERMINATE\",\"receiptId\":\"prr_47bf138f0b30b9a8\"}",
+          "digest": "sha256:cb09592f366038a86a76f36e721883a8d56900fe818e2f1b7498d06b80d37a8f"
+        }
+      },
+      "mutation": {
+        "description": "Changing reasonCode must change receiptDigest",
+        "mutatedDigest": "sha256:3bf81bd2f7acb7d4edc3c3103ffe786aa7b39ca28d39d8767dce08ecdafd3c79",
+        "expectMismatch": true
       },
       "expect": "quarantined blocks retry and reacquire until operator reconcile"
     },
@@ -78,20 +159,23 @@
       "description": "Manual Chrome external_use detected blocks automation; receipt records detection",
       "event": {
         "schema": "webmcp-profile-session-event/1",
-        "eventId": "pse_bbbbbbbbbbbbbbbb",
+        "eventId": "pse_1c3ace69e19862eb",
         "leaseId": "lease_deadbeef01234567",
         "profileAlias": "research-profile",
         "state": "external_use",
         "stateReasonCode": "PROFILE_EXTERNAL_USE",
         "fenceEpoch": 19,
-        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
         "timestamp": "2026-08-27T00:07:00.000Z",
         "livenessSummary": "healthy",
-        "counts": { "heartbeats": 12, "actions": 45 }
+        "counts": {
+          "heartbeats": 12,
+          "actions": 45
+        }
       },
       "receiptAfterClear": {
         "schema": "webmcp-profile-recovery-receipt/1",
-        "receiptId": "prr_3333333333333333",
+        "receiptId": "prr_1ac144c179593448",
         "leaseId": "lease_deadbeef01234567",
         "profileAlias": "research-profile",
         "priorState": "external_use",
@@ -109,7 +193,31 @@
         "dependentGrantRevokeStatus": "none",
         "authorityKind": "operator-approved",
         "createdAt": "2026-08-27T00:08:00.000Z",
-        "receiptDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        "receiptDigest": "sha256:60fc44901a62adb699f9c8bd847631f67473c3d1bb44c247acc37b2a34c7fd94"
+      },
+      "protectedProjections": {
+        "receiptDigest": {
+          "domainLabel": "webmcp-digest-v1:terminal",
+          "projection": {
+            "receiptId": "prr_1ac144c179593448",
+            "leaseId": "lease_deadbeef01234567",
+            "priorState": "external_use",
+            "newState": "ready",
+            "priorFenceEpoch": 19,
+            "newFenceEpoch": 20,
+            "reasonCode": "RECOVERY_EXTERNAL_USE_CLEARED",
+            "probeOutcomes": {
+              "governorHealth": "healthy",
+              "runnerClaim": "terminal",
+              "browserAlive": false,
+              "extensionConnected": false
+            },
+            "lastActionOutcome": "none",
+            "dependentGrantRevokeStatus": "none"
+          },
+          "canonical": "{\"dependentGrantRevokeStatus\":\"none\",\"lastActionOutcome\":\"none\",\"leaseId\":\"lease_deadbeef01234567\",\"newFenceEpoch\":20,\"newState\":\"ready\",\"priorFenceEpoch\":19,\"priorState\":\"external_use\",\"probeOutcomes\":{\"browserAlive\":false,\"extensionConnected\":false,\"governorHealth\":\"healthy\",\"runnerClaim\":\"terminal\"},\"reasonCode\":\"RECOVERY_EXTERNAL_USE_CLEARED\",\"receiptId\":\"prr_1ac144c179593448\"}",
+          "digest": "sha256:60fc44901a62adb699f9c8bd847631f67473c3d1bb44c247acc37b2a34c7fd94"
+        }
       },
       "expect": "automation acquire fails with PROFILE_EXTERNAL_USE until receipt reconciles"
     },
@@ -119,7 +227,11 @@
       "attempt": {
         "leaseId": "lease_deadbeef01234567",
         "fenceEpoch": 19,
-        "evidence": { "ttlExpired": true, "browserAlive": true, "grantRevoked": false }
+        "evidence": {
+          "ttlExpired": true,
+          "browserAlive": true,
+          "grantRevoked": false
+        }
       },
       "expect": "PROFILE_RECLAIM_UNSAFE, resource stays quarantined/unknown"
     },
@@ -127,11 +239,36 @@
       "id": "recovery-epoch-monotonic",
       "description": "Every recovery must increment fenceEpoch atomically and never decrement",
       "sequence": [
-        { "receiptId": "prr_4444444444444444", "priorFenceEpoch": 1, "newFenceEpoch": 2 },
-        { "receiptId": "prr_5555555555555555", "priorFenceEpoch": 2, "newFenceEpoch": 3 },
-        { "receiptId": "prr_6666666666666666", "priorFenceEpoch": 3, "newFenceEpoch": 4 }
+        {
+          "receiptId": "prr_5b241a5b93b5466f",
+          "priorFenceEpoch": 1,
+          "newFenceEpoch": 2,
+          "receiptDigest": "sha256:00debfe4796ebc1c0888be4c6b693690748d376e182d54624a50c655cc3269d6",
+          "canonical": "{\"dependentGrantRevokeStatus\":\"none\",\"lastActionOutcome\":\"none\",\"leaseId\":\"lease_deadbeef01234567\",\"newFenceEpoch\":2,\"newState\":\"ready\",\"priorFenceEpoch\":1,\"priorState\":\"unknown\",\"probeOutcomes\":{\"browserAlive\":false,\"extensionConnected\":false,\"governorHealth\":\"healthy\",\"runnerClaim\":\"terminal\"},\"reasonCode\":\"RECOVERY_HOST_RESTART\",\"receiptId\":\"prr_5b241a5b93b5466f\"}",
+          "domainLabel": "webmcp-digest-v1:terminal"
+        },
+        {
+          "receiptId": "prr_e11fa543cc011ff7",
+          "priorFenceEpoch": 2,
+          "newFenceEpoch": 3,
+          "receiptDigest": "sha256:e4c46c006a4f66914537ddd81bbe8b67fcc5037f908d0f7db24d9dee498c2d75",
+          "canonical": "{\"dependentGrantRevokeStatus\":\"pending\",\"lastActionOutcome\":\"indeterminate\",\"leaseId\":\"lease_deadbeef01234567\",\"newFenceEpoch\":3,\"newState\":\"quarantined\",\"priorFenceEpoch\":2,\"priorState\":\"ready\",\"probeOutcomes\":{\"browserAlive\":false,\"extensionConnected\":false,\"governorHealth\":\"healthy\",\"runnerClaim\":\"terminal\"},\"reasonCode\":\"PROFILE_OUTWARD_EFFECT_INDETERMINATE\",\"receiptId\":\"prr_e11fa543cc011ff7\"}",
+          "domainLabel": "webmcp-digest-v1:terminal"
+        },
+        {
+          "receiptId": "prr_0a96170a71114018",
+          "priorFenceEpoch": 3,
+          "newFenceEpoch": 4,
+          "receiptDigest": "sha256:5b26f8ae4031bf4090374cc016c411c85c7383ff82116161508af50ff5a8e198",
+          "canonical": "{\"dependentGrantRevokeStatus\":\"revoked\",\"lastActionOutcome\":\"none\",\"leaseId\":\"lease_deadbeef01234567\",\"newFenceEpoch\":4,\"newState\":\"ready\",\"priorFenceEpoch\":3,\"priorState\":\"quarantined\",\"probeOutcomes\":{\"browserAlive\":false,\"extensionConnected\":false,\"governorHealth\":\"healthy\",\"runnerClaim\":\"terminal\"},\"reasonCode\":\"RECOVERY_EXTERNAL_USE_CLEARED\",\"receiptId\":\"prr_0a96170a71114018\"}",
+          "domainLabel": "webmcp-digest-v1:terminal"
+        }
       ],
-      "expect": "monotonic increase verified; rollback/migration must preserve"
+      "expect": "monotonic increase verified; rollback/migration must preserve",
+      "mutation": {
+        "description": "Reversing epoch order must produce different digest and fail monotonic check",
+        "expectMismatch": true
+      }
     }
   ]
 }

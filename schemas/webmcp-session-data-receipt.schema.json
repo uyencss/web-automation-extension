@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://webmcp.example/schemas/webmcp-session-data-receipt.schema.json",
+  "$id": "https://webmcp.dev/schemas/webmcp-session-data-receipt.schema.json",
   "title": "WebMCP Session Data Receipt — webmcp-session-data-receipt/1",
-  "description": "Redacted receipt for session-data grant use (A1 fixture-only). Contains counts/digests/taint, never values. Read≠export enforced.",
+  "description": "Redacted receipt for session-data grant use (A1 fixture-only). Contains counts/digests/taint, never values. D1 terminalDigest/toolReceiptDigest with LF framing; read≠export enforced.",
   "type": "object",
   "required": [
     "schema",
@@ -42,11 +42,20 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["metadata-only", "scoped-values", "export"]
+      "enum": [
+        "metadata-only",
+        "scoped-values",
+        "export"
+      ]
     },
     "surface": {
       "type": "string",
-      "enum": ["cookies", "localStorage", "sessionStorage", "indexeddb"]
+      "enum": [
+        "cookies",
+        "localStorage",
+        "sessionStorage",
+        "indexeddb"
+      ]
     },
     "scopeDigest": {
       "type": "string",
@@ -59,21 +68,53 @@
     },
     "destination": {
       "type": "string",
-      "enum": ["trusted-step", "agent-tool-result", "transcript", "artifact", "external-sink"]
+      "enum": [
+        "trusted-step",
+        "agent-tool-result",
+        "transcript",
+        "artifact",
+        "external-sink"
+      ]
     },
     "taint": {
       "type": "string",
-      "enum": ["public", "internal", "personal", "sensitive-unknown", "session-secret", "session-secret-high"]
+      "enum": [
+        "public",
+        "internal",
+        "personal",
+        "sensitive-unknown",
+        "session-secret",
+        "session-secret-high"
+      ]
     },
     "counts": {
       "type": "object",
-      "required": ["uses", "rows", "sourceBytes"],
+      "required": [
+        "uses",
+        "rows",
+        "sourceBytes"
+      ],
       "properties": {
-        "uses": { "type": "integer", "minimum": 0 },
-        "rows": { "type": "integer", "minimum": 0 },
-        "sourceBytes": { "type": "integer", "minimum": 0 },
-        "encodedBytes": { "type": "integer", "minimum": 0 },
-        "pages": { "type": "integer", "minimum": 0 }
+        "uses": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "encodedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pages": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     },
@@ -86,7 +127,12 @@
     },
     "consistency": {
       "type": "string",
-      "enum": ["snapshot-consistent", "page-consistent", "inconsistent", "unknown"]
+      "enum": [
+        "snapshot-consistent",
+        "page-consistent",
+        "inconsistent",
+        "unknown"
+      ]
     },
     "cursor": {
       "type": "string",

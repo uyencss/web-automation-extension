@@ -28,6 +28,26 @@ test('fence proof vectors are synthetic and cover stale/missing/tab cases', () =
   assert.ok(ids.includes('fence-heartbeat-wrong-claim'));
 });
 
+test('fence fixture instances validate against schema (AJV)', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const fenceSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-action-fence.schema.json'));
+  const validate = ajv.compile(fenceSchema);
+  const vectors = loadJson(path.join(ROOT, 'tests/fixtures/fence-proof-vectors.json'));
+  for (const vec of vectors.vectors) {
+    if (vec.proof) {
+      assert.equal(validate(vec.proof), true, `proof ${vec.id} must validate: ${JSON.stringify(validate.errors)}`);
+      assert.match(vec.proof.fenceId, /^fence_[0-9a-f]{16}$/);
+      assert.match(vec.proof.leaseId, /^lease_[0-9a-f]{16}$/);
+    }
+  }
+  const happy = vectors.vectors.find((v) => v.id === 'fence-happy-browser-read');
+  assert.ok(happy && happy.proof);
+  assert.equal(validate(happy.proof), true);
+});
+
 test('RED: every production browser action requires current fence (missing fence denied)', () => {
   const candidates = [
     path.join(ROOT, 'server/profile-governor/fence.mjs'),

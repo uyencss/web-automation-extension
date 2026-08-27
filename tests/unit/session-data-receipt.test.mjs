@@ -27,6 +27,33 @@ test('session-data receipt vectors are synthetic', () => {
   assert.ok(ids.includes('metadata-no-values'));
 });
 
+test('session-data receipt schema validates fixture expectations (AJV)', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const receiptSchema = loadJson(path.join(ROOT, 'schemas/webmcp-session-data-receipt.schema.json'));
+  const validate = ajv.compile(receiptSchema);
+  // Create a minimal valid receipt instance to ensure schema compiles and validates synthetic pattern
+  const syntheticReceipt = {
+    schema: 'webmcp-session-data-receipt/1',
+    receiptId: 'sdr_' + 'a'.repeat(16),
+    grantId: 'sdg_' + 'b'.repeat(16),
+    runId: 'run_aaa111bbb222',
+    leaseId: 'lease_deadbeef01234567',
+    fenceEpoch: 19,
+    mode: 'scoped-values',
+    surface: 'cookies',
+    scopeDigest: 'sha256:' + 'c'.repeat(64).replace(/c/g, '1'),
+    createdAt: '2026-08-27T00:00:00.000Z'
+  };
+  // Fix hex to be valid
+  syntheticReceipt.receiptId = 'sdr_' + 'a'.repeat(16);
+  syntheticReceipt.grantId = 'sdg_' + 'b'.repeat(16);
+  syntheticReceipt.scopeDigest = 'sha256:' + '1'.repeat(64);
+  assert.equal(validate(syntheticReceipt), true, `synthetic receipt must validate: ${JSON.stringify(validate.errors)}`);
+});
+
 test('RED: receipt generation and redacted evidence is missing', () => {
   const impl = path.join(ROOT, 'server/session-data/receipt.mjs');
   const alt = path.join(ROOT, 'server/session-data/grant.mjs');

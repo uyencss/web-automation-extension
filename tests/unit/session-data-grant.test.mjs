@@ -32,6 +32,19 @@ test('session-data scope vectors prove read≠export and metadata-only isolation
   assert.ok(metadata && metadata.expect === 'SESSION_DATA_MODE_VIOLATION');
 });
 
+test('session-data grant fixture instances validate (AJV) — grant/receipt schemas are D1 LF', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const grantSchema = loadJson(path.join(ROOT, 'schemas/webmcp-session-data-grant.schema.json'));
+  const receiptSchema = loadJson(path.join(ROOT, 'schemas/webmcp-session-data-receipt.schema.json'));
+  // Sanity: schemas must have D1 domain labels in description and correct $id
+  assert.ok(grantSchema.$id === 'https://webmcp.dev/schemas/webmcp-session-data-grant.schema.json');
+  assert.ok(receiptSchema.$id === 'https://webmcp.dev/schemas/webmcp-session-data-receipt.schema.json');
+  assert.ok(grantSchema.description.includes('webmcp-digest-v1:grant'));
+});
+
 test('RED: session-data grant minting is missing (admission-bound, fence-bound)', () => {
   const impl = path.join(ROOT, 'server/session-data/grant.mjs');
   assert.ok(

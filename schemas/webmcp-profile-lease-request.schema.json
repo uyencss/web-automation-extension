@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://webmcp.example/schemas/webmcp-profile-lease-request.schema.json",
+  "$id": "https://webmcp.dev/schemas/webmcp-profile-lease-request.schema.json",
   "title": "WebMCP Profile Lease Request — webmcp-profile-lease-request/1",
-  "description": "Claim/binding-scoped acquire request (A1 fixture-only). Verifies Runner claim before physical acquire. D1 provisional digests; D2 host channel not portable.",
+  "description": "Claim/binding-scoped acquire request (A1 fixture-only). Verifies Runner claim before physical acquire. D1 canonical digests with exact domain labels and LF framing; D2 host channel not portable.",
   "type": "object",
   "required": [
     "schema",
@@ -28,7 +28,10 @@
       "description": "Opaque request id."
     },
     "ownerType": {
-      "enum": ["automation", "external"]
+      "enum": [
+        "automation",
+        "external"
+      ]
     },
     "nodeId": {
       "type": "string",
@@ -61,13 +64,21 @@
       "maxLength": 64
     },
     "leaseMode": {
-      "enum": ["single-context", "shared-trust-domain"]
+      "enum": [
+        "single-context",
+        "shared-trust-domain"
+      ]
     },
     "requestedActions": {
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["browser-read", "browser-write", "browser-session-data", "credential-fill"]
+        "enum": [
+          "browser-read",
+          "browser-write",
+          "browser-session-data",
+          "credential-fill"
+        ]
       },
       "minItems": 1,
       "maxItems": 8,

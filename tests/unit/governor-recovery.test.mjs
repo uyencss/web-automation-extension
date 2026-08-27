@@ -34,6 +34,32 @@ test('recovery receipt vectors are synthetic and cover host restart / indetermin
   assert.ok(mono.sequence.every((s) => s.newFenceEpoch > s.priorFenceEpoch));
 });
 
+test('recovery fixture instances validate against schemas (AJV)', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const receiptSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-recovery-receipt.schema.json'));
+  const eventSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-session-event.schema.json'));
+  const validateReceipt = ajv.compile(receiptSchema);
+  const validateEvent = ajv.compile(eventSchema);
+  const vectors = loadJson(path.join(ROOT, 'tests/fixtures/recovery-receipt-vectors.json'));
+  for (const vec of vectors.vectors) {
+    if (vec.receipt) {
+      assert.equal(validateReceipt(vec.receipt), true, `receipt ${vec.id} must validate: ${JSON.stringify(validateReceipt.errors)}`);
+      assert.match(vec.receipt.receiptId, /^prr_[0-9a-f]{16}$/);
+      assert.match(vec.receipt.leaseId, /^lease_[0-9a-f]{16}$/);
+    }
+    if (vec.receiptAfterClear) {
+      assert.equal(validateReceipt(vec.receiptAfterClear), true, `receiptAfterClear ${vec.id} must validate: ${JSON.stringify(validateReceipt.errors)}`);
+    }
+    if (vec.event) {
+      assert.equal(validateEvent(vec.event), true, `event ${vec.id} must validate: ${JSON.stringify(validateEvent.errors)}`);
+      assert.match(vec.event.eventId, /^pse_[0-9a-f]{16}$/);
+    }
+  }
+});
+
 test('RED: host restart recovery must not resurrect stale lease as ready', () => {
   const impl = path.join(ROOT, 'server/profile-governor/recovery.mjs');
   const eventImpl = path.join(ROOT, 'server/profile-governor/events.mjs');

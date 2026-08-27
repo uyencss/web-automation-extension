@@ -28,6 +28,19 @@ test('HttpOnly vectors are synthetic canaries, not real cookies', () => {
   assert.ok(canary && canary.canaries.some((c) => c.httpOnly === true && c.value.startsWith('canary_')));
 });
 
+test('HttpOnly grant instance validates (AJV) and scope vectors are not full grant instances', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const grantSchema = loadJson(path.join(ROOT, 'schemas/webmcp-session-data-grant.schema.json'));
+  const validate = ajv.compile(grantSchema);
+  // scope vectors with HttpOnly snippets are request/expectation, not full grant
+  const scopeVectors = loadJson(path.join(ROOT, 'tests/fixtures/session-data-scope-vectors.json'));
+  const snippet = scopeVectors.vectors.find((v) => v.id === 'cookie-httponly-without-flag-denied').grant;
+  assert.equal(validate(snippet), false, 'HttpOnly scope snippet should not validate as full grant instance');
+});
+
 test('RED: HttpOnly cookie value read via CDP/Chrome API requires explicit grant is missing', () => {
   const impl = path.join(ROOT, 'server/session-data/http-only-handler.mjs');
   const fallback = path.join(ROOT, 'server/session-data/scope-validator.mjs');

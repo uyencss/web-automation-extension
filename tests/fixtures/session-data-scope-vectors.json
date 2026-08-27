@@ -1,7 +1,7 @@
 {
   "schema": "webmcp-session-data-scope-vectors/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
-  "note": "Scope/budget/destination RED vectors. Synthetic origins/keys. No real cookie/storage values beyond canary.",
+  "note": "Scope/budget/destination RED vectors. Synthetic origins/keys. No real cookie/storage values beyond canary. These are request/expectation vectors, not full grant schema instances; do not validate as grant instances.",
   "vectors": [
     {
       "id": "cookie-host-only-exact",
@@ -10,9 +10,21 @@
         "origin": "https://example.test",
         "surface": "cookies",
         "mode": "scoped-values",
-        "selectors": { "cookieNames": ["session_id"], "paths": ["/"] }
+        "selectors": {
+          "cookieNames": [
+            "session_id"
+          ],
+          "paths": [
+            "/"
+          ]
+        }
       },
-      "query": { "name": "session_id", "domain": "example.test", "path": "/", "origin": "https://example.test" },
+      "query": {
+        "name": "session_id",
+        "domain": "example.test",
+        "path": "/",
+        "origin": "https://example.test"
+      },
       "expect": "allow"
     },
     {
@@ -22,9 +34,17 @@
         "origin": "https://example.test",
         "surface": "cookies",
         "mode": "scoped-values",
-        "selectors": { "cookieNames": ["session_id"] }
+        "selectors": {
+          "cookieNames": [
+            "session_id"
+          ]
+        }
       },
-      "query": { "name": "session_id", "domain": "evil.test", "origin": "https://evil.test" },
+      "query": {
+        "name": "session_id",
+        "domain": "evil.test",
+        "origin": "https://evil.test"
+      },
       "expect": "SESSION_DATA_SCOPE_VIOLATION"
     },
     {
@@ -34,9 +54,20 @@
         "origin": "https://example.test",
         "surface": "cookies",
         "mode": "scoped-values",
-        "selectors": { "cookieNames": ["session_id"], "paths": ["/app"] }
+        "selectors": {
+          "cookieNames": [
+            "session_id"
+          ],
+          "paths": [
+            "/app"
+          ]
+        }
       },
-      "query": { "name": "session_id", "path": "/", "origin": "https://example.test" },
+      "query": {
+        "name": "session_id",
+        "path": "/",
+        "origin": "https://example.test"
+      },
       "expect": "SESSION_DATA_SCOPE_VIOLATION"
     },
     {
@@ -47,9 +78,16 @@
         "surface": "cookies",
         "mode": "scoped-values",
         "includeHttpOnly": false,
-        "selectors": { "cookieNames": ["auth_token"] }
+        "selectors": {
+          "cookieNames": [
+            "auth_token"
+          ]
+        }
       },
-      "query": { "name": "auth_token", "httpOnly": true },
+      "query": {
+        "name": "auth_token",
+        "httpOnly": true
+      },
       "expect": "SESSION_DATA_HTTPONLY_NOT_GRANTED"
     },
     {
@@ -60,23 +98,54 @@
         "surface": "cookies",
         "mode": "scoped-values",
         "includeHttpOnly": true,
-        "selectors": { "cookieNames": ["auth_token"] }
+        "selectors": {
+          "cookieNames": [
+            "auth_token"
+          ]
+        }
       },
-      "query": { "name": "auth_token", "httpOnly": true },
+      "query": {
+        "name": "auth_token",
+        "httpOnly": true
+      },
       "expect": "allow when runtime capability present"
     },
     {
       "id": "storage-wrong-origin-denied",
       "description": "localStorage wrong origin denied",
-      "grant": { "origin": "https://example.test", "surface": "localStorage", "mode": "scoped-values", "selectors": { "storageKeys": ["app:pendingOrders"] } },
-      "query": { "origin": "https://evil.test", "key": "app:pendingOrders" },
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "localStorage",
+        "mode": "scoped-values",
+        "selectors": {
+          "storageKeys": [
+            "app:pendingOrders"
+          ]
+        }
+      },
+      "query": {
+        "origin": "https://evil.test",
+        "key": "app:pendingOrders"
+      },
       "expect": "SESSION_DATA_ORIGIN_MISMATCH"
     },
     {
       "id": "storage-wrong-key-denied",
       "description": "Correct origin wrong key denied",
-      "grant": { "origin": "https://example.test", "surface": "localStorage", "mode": "scoped-values", "selectors": { "storageKeys": ["app:pendingOrders"] } },
-      "query": { "origin": "https://example.test", "key": "app:secretEvil" },
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "localStorage",
+        "mode": "scoped-values",
+        "selectors": {
+          "storageKeys": [
+            "app:pendingOrders"
+          ]
+        }
+      },
+      "query": {
+        "origin": "https://example.test",
+        "key": "app:secretEvil"
+      },
       "expect": "SESSION_DATA_SCOPE_VIOLATION"
     },
     {
@@ -86,9 +155,17 @@
         "origin": "https://example.test",
         "surface": "indexeddb",
         "mode": "scoped-values",
-        "selectors": { "indexedDb": { "database": "app-db", "store": "orders" } }
+        "selectors": {
+          "indexedDb": {
+            "database": "app-db",
+            "store": "orders"
+          }
+        }
       },
-      "query": { "database": "app-db", "store": "users" },
+      "query": {
+        "database": "app-db",
+        "store": "users"
+      },
       "expect": "SESSION_DATA_SCOPE_VIOLATION"
     },
     {
@@ -98,46 +175,93 @@
         "origin": "https://example.test",
         "surface": "indexeddb",
         "mode": "scoped-values",
-        "selectors": { "indexedDb": { "database": "app-db", "store": "orders", "keyRange": { "lower": "pending", "upper": "pending" }, "fieldProjection": ["id", "status", "total"] } },
-        "budgets": { "maxRows": 50, "maxBytes": 65536, "maxDurationMs": 5000 }
+        "selectors": {
+          "indexedDb": {
+            "database": "app-db",
+            "store": "orders",
+            "keyRange": {
+              "lower": "pending",
+              "upper": "pending"
+            },
+            "fieldProjection": [
+              "id",
+              "status",
+              "total"
+            ]
+          }
+        },
+        "budgets": {
+          "maxRows": 50,
+          "maxBytes": 65536,
+          "maxDurationMs": 5000
+        }
       },
-      "query": { "key": "pending", "expectFields": ["id", "status", "total"], "expectNoExtra": true },
+      "query": {
+        "key": "pending",
+        "expectFields": [
+          "id",
+          "status",
+          "total"
+        ],
+        "expectNoExtra": true
+      },
       "expect": "allow only projected fields, no siblings"
     },
     {
       "id": "budget-max-rows-enforced",
       "description": "Row/byte budgets enforced; truncated page returns complete:false",
-      "grant": { "budgets": { "maxRows": 2, "maxBytes": 1024, "maxDurationMs": 5000 } },
+      "grant": {
+        "budgets": {
+          "maxRows": 2,
+          "maxBytes": 1024,
+          "maxDurationMs": 5000
+        }
+      },
       "queryRows": 10,
       "expect": "SESSION_DATA_BUDGET_EXCEEDED with truncated:false->true and cursor or failure"
     },
     {
       "id": "lease-fence-loss-abort-mid-query",
       "description": "Mid-query fence loss aborts remaining pages",
-      "grant": { "leaseId": "lease_deadbeef01234567", "fenceEpoch": 19 },
+      "grant": {
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19
+      },
       "midQueryFenceEpoch": 20,
       "expect": "PROFILE_LEASE_LOST, no further pages"
     },
     {
       "id": "metadata-no-values",
       "description": "Metadata-only grant must not return values",
-      "grant": { "mode": "metadata-only", "surface": "cookies" },
-      "query": { "mode": "scoped-values" },
+      "grant": {
+        "mode": "metadata-only",
+        "surface": "cookies"
+      },
+      "query": {
+        "mode": "scoped-values"
+      },
       "expect": "SESSION_DATA_MODE_VIOLATION"
     },
     {
       "id": "read-not-export",
       "description": "Scoped-values read must not silently export/persist",
-      "grant": { "mode": "scoped-values", "destination": "trusted-step" },
+      "grant": {
+        "mode": "scoped-values",
+        "destination": "trusted-step"
+      },
       "attemptExport": true,
       "expect": "SESSION_DATA_EXPORT_APPROVAL_REQUIRED"
     },
     {
       "id": "cross-profile-rejected",
       "description": "Cross-profile access rejected",
-      "grant": { "leaseId": "lease_deadbeef01234567", "profileAlias": "research-profile" },
-      "attemptLease": "lease_otherprofile999",
-      "expect": "SESSION_DATA_SCOPE_VIOLATION"
+      "grant": {
+        "leaseId": "lease_deadbeef01234567",
+        "profileAlias": "research-profile"
+      },
+      "attemptLease": "lease_c5098f1775c48715",
+      "expect": "SESSION_DATA_SCOPE_VIOLATION",
+      "note": "Request/expectation vector only — not a full webmcp-session-data-grant/1 instance"
     }
   ]
 }

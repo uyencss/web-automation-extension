@@ -30,14 +30,42 @@ test('session-data scope vectors are synthetic and cover origin/domain/path/budg
   assert.ok(ids.includes('lease-fence-loss-abort-mid-query'));
 });
 
-test('session-data canonical vectors prove JCS digest binding (D1 provisional)', () => {
-  const vectors = loadJson(path.join(ROOT, 'tests/fixtures/session-data-canonical-vectors.json'));
-  assert.equal(vectors.schema, 'webmcp-session-data-canonical-vectors/1');
-  assert.equal(vectors.domainLabels.binding, 'webmcp-digest-v1:binding');
-  const grantVec = vectors.vectors.find((v) => v.id === 'canonical-grant-scope');
+test('session-data scope vectors are request/expectation vectors, not full grant instances (AJV)', async () => {
+  const { default: Ajv } = await import('ajv');
+  const { default: addFormats } = await import('ajv-formats');
+  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+  addFormats(ajv);
+  const grantSchema = loadJson(path.join(ROOT, 'schemas/webmcp-session-data-grant.schema.json'));
+  const validateGrant = ajv.compile(grantSchema);
+  const vectors = loadJson(path.join(ROOT, 'tests/fixtures/session-data-scope-vectors.json'));
+  // These are request/expectation snippets, must NOT validate as full grant instances
+  for (const vec of vectors.vectors) {
+    if (vec.grant) {
+      const isFullGrant = validateGrant(vec.grant);
+      // If it were a full instance it would need all required fields like runId, claimDigest, bindingDigest, leaseId, fenceEpoch, purpose, approvalDigest, budgets, ttlMs, maxUses etc.
+      // Our scope vectors intentionally lack those, so they should NOT validate as full grant
+      assert.equal(isFullGrant, false, `scope vector ${vec.id} grant snippet should not validate as full grant instance (it is request/expectation)`);
+      // But they must have at least origin/surface/mode or leaseId for their test purpose
+      assert.ok(typeof vec.expect === 'string');
+    }
+  }
+  // Canonical vectors are digest vectors, not grant instances
+  const canonical = loadJson(path.join(ROOT, 'tests/fixtures/session-data-canonical-vectors.json'));
+  assert.equal(canonical.schema, 'webmcp-session-data-canonical-vectors/1');
+  assert.equal(canonical.domainLabels.binding, 'webmcp-digest-v1:binding');
+  const grantVec = canonical.vectors.find((v) => v.id === 'canonical-grant-scope');
   assert.ok(grantVec && grantVec.canonicalJson.includes('"origin"'), 'grant canonical vector must exist');
-  const mutated = vectors.vectors.find((v) => v.id === 'canonical-mutation-protects-field');
+  const mutated = canonical.vectors.find((v) => v.id === 'canonical-mutation-protects-field');
   assert.ok(mutated.mutated.expectMismatch, 'mutation must change digest');
+});
+
+test('session-data canonical fixture instances use D1 LF domain labels and validate', async () => {
+  const vectors = loadJson(path.join(ROOT, 'tests/fixtures/session-data-canonical-vectors.json'));
+  assert.equal(vectors.domainLabels.binding, 'webmcp-digest-v1:binding');
+  assert.equal(vectors.domainLabels.claim, 'webmcp-digest-v1:claim');
+  assert.equal(vectors.domainLabels.lease, 'webmcp-digest-v1:lease');
+  assert.equal(vectors.domainLabels.grant, 'webmcp-digest-v1:grant');
+  // Each digest vector's canonical must be JCS and digest must be LF-framed (tested in parity)
 });
 
 test('RED: exact scope enforcement for cookies/storage/IndexedDB is missing', () => {

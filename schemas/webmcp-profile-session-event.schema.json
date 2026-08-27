@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://webmcp.example/schemas/webmcp-profile-session-event.schema.json",
+  "$id": "https://webmcp.dev/schemas/webmcp-profile-session-event.schema.json",
   "title": "WebMCP Profile Session Event — webmcp-profile-session-event/1",
-  "description": "Redacted append-only Governor event (A1 fixture-only). 30d Governor retention / 90d Fleet evidence provisional per D5. No raw profile path/cookie/value/secret.",
+  "description": "Redacted append-only Governor event (A1 fixture-only). 30-day Governor retention / 90-day Fleet evidence per D5. No raw profile path/cookie/value/secret.",
   "type": "object",
   "required": [
     "schema",
@@ -32,7 +32,18 @@
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "state": {
-      "enum": ["unknown", "ready", "leased", "active", "cooldown", "external_use", "auth_required", "challenge", "rate_limited", "quarantined"]
+      "enum": [
+        "unknown",
+        "ready",
+        "leased",
+        "active",
+        "cooldown",
+        "external_use",
+        "auth_required",
+        "challenge",
+        "rate_limited",
+        "quarantined"
+      ]
     },
     "stateReasonCode": {
       "type": "string",
@@ -81,19 +92,38 @@
     "counts": {
       "type": "object",
       "properties": {
-        "heartbeats": { "type": "integer", "minimum": 0 },
-        "actions": { "type": "integer", "minimum": 0 },
-        "pages": { "type": "integer", "minimum": 0 }
+        "heartbeats": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pages": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": false
     },
     "livenessSummary": {
       "type": "string",
-      "enum": ["healthy", "degraded", "unknown", "failed"]
+      "enum": [
+        "healthy",
+        "degraded",
+        "unknown",
+        "failed"
+      ]
     },
     "grantRevokeStatus": {
       "type": "string",
-      "enum": ["none", "revoked", "pending", "failed"]
+      "enum": [
+        "none",
+        "revoked",
+        "pending",
+        "failed"
+      ]
     }
   },
   "additionalProperties": false

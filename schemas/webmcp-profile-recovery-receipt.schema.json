@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://webmcp.example/schemas/webmcp-profile-recovery-receipt.schema.json",
+  "$id": "https://webmcp.dev/schemas/webmcp-profile-recovery-receipt.schema.json",
   "title": "WebMCP Profile Recovery Receipt — webmcp-profile-recovery-receipt/1",
-  "description": "Evidence-backed recovery/reclaim receipt (A1 fixture-only). Redacted per D5 retention. No raw path/value. Owner Governor per D6 provisional RPC.",
+  "description": "Evidence-backed recovery/reclaim receipt (A1 fixture-only). Redacted per D5 retention; D6 quarantine/reconcile authority is Governor. No raw path/value.",
   "type": "object",
   "required": [
     "schema",
@@ -51,11 +51,26 @@
     },
     "priorState": {
       "type": "string",
-      "enum": ["unknown", "leased", "active", "cooldown", "external_use", "auth_required", "challenge", "rate_limited", "quarantined"]
+      "enum": [
+        "unknown",
+        "leased",
+        "active",
+        "cooldown",
+        "external_use",
+        "auth_required",
+        "challenge",
+        "rate_limited",
+        "quarantined"
+      ]
     },
     "newState": {
       "type": "string",
-      "enum": ["ready", "quarantined", "unknown", "cooldown"]
+      "enum": [
+        "ready",
+        "quarantined",
+        "unknown",
+        "cooldown"
+      ]
     },
     "priorFenceEpoch": {
       "type": "integer",
@@ -82,27 +97,69 @@
     "probeOutcomes": {
       "type": "object",
       "properties": {
-        "governorHealth": { "type": "string", "enum": ["healthy", "unknown", "failed"] },
-        "runnerClaim": { "type": "string", "enum": ["active", "terminal", "revoked", "unknown"] },
-        "browserAlive": { "type": "boolean" },
-        "extensionConnected": { "type": "boolean" },
-        "dependentGrantsRevoked": { "type": "boolean" },
-        "registryCurrent": { "type": "boolean" }
+        "governorHealth": {
+          "type": "string",
+          "enum": [
+            "healthy",
+            "unknown",
+            "failed"
+          ]
+        },
+        "runnerClaim": {
+          "type": "string",
+          "enum": [
+            "active",
+            "terminal",
+            "revoked",
+            "unknown"
+          ]
+        },
+        "browserAlive": {
+          "type": "boolean"
+        },
+        "extensionConnected": {
+          "type": "boolean"
+        },
+        "dependentGrantsRevoked": {
+          "type": "boolean"
+        },
+        "registryCurrent": {
+          "type": "boolean"
+        }
       },
-      "required": ["governorHealth", "runnerClaim", "browserAlive", "extensionConnected"],
+      "required": [
+        "governorHealth",
+        "runnerClaim",
+        "browserAlive",
+        "extensionConnected"
+      ],
       "additionalProperties": false
     },
     "lastActionOutcome": {
       "type": "string",
-      "enum": ["none", "confirmed", "failed-known", "indeterminate", "blocked-before-action"]
+      "enum": [
+        "none",
+        "confirmed",
+        "failed-known",
+        "indeterminate",
+        "blocked-before-action"
+      ]
     },
     "dependentGrantRevokeStatus": {
       "type": "string",
-      "enum": ["none", "revoked", "pending", "failed"]
+      "enum": [
+        "none",
+        "revoked",
+        "pending",
+        "failed"
+      ]
     },
     "authorityKind": {
       "type": "string",
-      "enum": ["governor-automatic", "operator-approved"],
+      "enum": [
+        "governor-automatic",
+        "operator-approved"
+      ],
       "description": "Governor is owner per D6 provisional; authority kind distinguishes automatic vs operator digest."
     },
     "createdAt": {
@@ -112,7 +169,7 @@
     "receiptDigest": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$",
-      "description": "Digest over redacted receipt fields (JCS, D1 provisional)."
+      "description": "Digest over redacted receipt fields (JCS with domain label webmcp-digest-v1:terminal and LF framing)."
     },
     "eventId": {
       "type": "string",

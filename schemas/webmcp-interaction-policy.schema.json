@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://webmcp.example/schemas/webmcp-interaction-policy.schema.json",
+  "$id": "https://webmcp.dev/schemas/webmcp-interaction-policy.schema.json",
   "title": "WebMCP Interaction Policy — webmcp-interaction-policy/1",
-  "description": "Human-compatible interaction policy v1 (fixture-only A1). Direct default, paced opt-in, bounded budgets, deterministic seed. Fence between chunks. Redacted evidence.",
+  "description": "Human-compatible interaction policy v1 (A1 fixture-only). Direct default, paced opt-in, bounded budgets, deterministic seed. D1 domain labels are the only hash inputs; fence checked between chunks. Redacted evidence.",
   "type": "object",
   "required": [
     "schema",
@@ -22,66 +22,180 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["direct", "paced"],
+      "enum": [
+        "direct",
+        "paced"
+      ],
       "description": "Direct is default; paced requires explicit validated requirement."
     },
     "targetKind": {
       "type": "string",
-      "enum": ["aria-ref", "css-selector", "frame-ref", "condition"],
+      "enum": [
+        "aria-ref",
+        "css-selector",
+        "frame-ref",
+        "condition"
+      ],
       "default": "aria-ref"
     },
     "requirements": {
       "type": "object",
       "properties": {
-        "composition": { "type": "string", "enum": ["none", "if-required", "required"] },
-        "contenteditable": { "type": "boolean" },
-        "framework": { "type": "string", "enum": ["none", "react", "vue", "generic"] },
-        "ime": { "type": "boolean" }
+        "composition": {
+          "type": "string",
+          "enum": [
+            "none",
+            "if-required",
+            "required"
+          ]
+        },
+        "contenteditable": {
+          "type": "boolean"
+        },
+        "framework": {
+          "type": "string",
+          "enum": [
+            "none",
+            "react",
+            "vue",
+            "generic"
+          ]
+        },
+        "ime": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
     "budgets": {
       "type": "object",
-      "required": ["timeoutMs", "maxChunks"],
+      "required": [
+        "timeoutMs",
+        "maxChunks"
+      ],
       "properties": {
-        "timeoutMs": { "type": "integer", "minimum": 500, "maximum": 120000 },
-        "maxChunks": { "type": "integer", "minimum": 1, "maximum": 256 },
-        "maxElapsedMs": { "type": "integer", "minimum": 500, "maximum": 300000 },
-        "maxScrolls": { "type": "integer", "minimum": 0, "maximum": 200 },
-        "maxRetries": { "type": "integer", "minimum": 0, "maximum": 5 },
-        "maxReResolutions": { "type": "integer", "minimum": 0, "maximum": 5 },
-        "settleMs": { "type": "integer", "minimum": 0, "maximum": 10000 }
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 120000
+        },
+        "maxChunks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "maxElapsedMs": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 300000
+        },
+        "maxScrolls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "maxRetries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "maxReResolutions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "settleMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
       },
       "additionalProperties": false
     },
     "timing": {
       "type": "object",
       "properties": {
-        "seed": { "type": "string", "pattern": "^seed_[0-9a-f]{16}$" },
-        "deterministic": { "type": "boolean" },
-        "minDelayMs": { "type": "integer", "minimum": 0, "maximum": 500 },
-        "maxDelayMs": { "type": "integer", "minimum": 0, "maximum": 1000 },
-        "algorithm": { "type": "string", "enum": ["xoshiro128", "splitmix64"] },
-        "version": { "type": "string", "pattern": "^v[0-9]+$" }
+        "seed": {
+          "type": "string",
+          "pattern": "^seed_[0-9a-f]{16}$"
+        },
+        "deterministic": {
+          "type": "boolean"
+        },
+        "minDelayMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "maxDelayMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "xoshiro128",
+            "splitmix64"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^v[0-9]+$"
+        }
       },
       "additionalProperties": false
     },
     "precondition": {
       "type": "object",
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
-        "kind": { "type": "string", "enum": ["element-visible", "element-enabled", "value-empty", "none"] },
-        "selector": { "type": "string" }
+        "kind": {
+          "type": "string",
+          "enum": [
+            "element-visible",
+            "element-enabled",
+            "value-empty",
+            "none"
+          ]
+        },
+        "selector": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
     "postcondition": {
       "type": "object",
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
-        "kind": { "type": "string", "enum": ["value-equivalent", "element-visible", "dom-stable", "custom-bounded"] },
-        "normalization": { "type": "string", "enum": ["exact", "nfc", "nfd", "case-insensitive"] },
-        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 }
+        "kind": {
+          "type": "string",
+          "enum": [
+            "value-equivalent",
+            "element-visible",
+            "dom-stable",
+            "custom-bounded"
+          ]
+        },
+        "normalization": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "nfc",
+            "nfd",
+            "case-insensitive"
+          ]
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 30000
+        }
       },
       "additionalProperties": false
     },
@@ -104,7 +218,12 @@
     },
     "evidenceClass": {
       "type": "string",
-      "enum": ["public", "internal", "personal", "sensitive-unknown"],
+      "enum": [
+        "public",
+        "internal",
+        "personal",
+        "sensitive-unknown"
+      ],
       "description": "Redacted evidence; raw sensitive text never in evidence."
     },
     "capabilityVersion": {

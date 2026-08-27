@@ -1,7 +1,7 @@
 {
   "schema": "webmcp-interaction-unicode-vectors/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
-  "note": "Human-compatible interaction Unicode/IME fixtures. Synthetic strings only. Canonical canaries. Graphemic clusters must not be split.",
+  "note": "Human-compatible interaction Unicode/IME fixtures. Synthetic strings only. JCS canonical with LF framing per D1 where applicable; graphemic clusters must not be split. No real user input; no placeholder digests.",
   "vectors": [
     {
       "id": "vi-nfc-precomposed",
@@ -64,7 +64,11 @@
       "id": "ime-composition",
       "description": "IME composition lifecycle compositionstart/update/end",
       "input": "tōkyō",
-      "compositionEvents": ["compositionstart", "compositionupdate", "compositionend"],
+      "compositionEvents": [
+        "compositionstart",
+        "compositionupdate",
+        "compositionend"
+      ],
       "expect": "paced IME-aware chunks, app state matches DOM"
     },
     {
@@ -84,9 +88,24 @@
       "id": "replace-append-insert",
       "description": "Operation modes replace/append/insert-at-selection",
       "cases": [
-        { "op": "replace", "initial": "old text", "input": "new", "expect": "new" },
-        { "op": "append", "initial": "hello", "input": " world", "expect": "hello world" },
-        { "op": "insert-at-selection", "initial": "he|lo", "input": "X", "expect": "heXlo" }
+        {
+          "op": "replace",
+          "initial": "old text",
+          "input": "new",
+          "expect": "new"
+        },
+        {
+          "op": "append",
+          "initial": "hello",
+          "input": " world",
+          "expect": "hello world"
+        },
+        {
+          "op": "insert-at-selection",
+          "initial": "he|lo",
+          "input": "X",
+          "expect": "heXlo"
+        }
       ]
     },
     {

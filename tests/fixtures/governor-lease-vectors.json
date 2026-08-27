@@ -1,24 +1,26 @@
 {
   "schema": "webmcp-governor-lease-vectors/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
-  "note": "Synthetic Governor lease vectors for A1 contract freeze RED. Opaque ids, canonical canaries. No real profile/claim material.",
+  "note": "Synthetic Governor lease vectors for A1 contract freeze. JCS canonical with LF framing per D1; domain labels webmcp-digest-v1:* are the only hash inputs. No placeholder digests.",
   "vectors": [
     {
       "id": "lease-happy-single-context",
       "description": "Happy acquire single-context with active claim and reviewed binding",
       "request": {
         "schema": "webmcp-profile-lease-request/1",
-        "requestId": "plr_a1b2c3d4e5f6g7h8",
+        "requestId": "plr_6094a2135dac1364",
         "ownerType": "automation",
         "nodeId": "node-alpha-1",
         "runId": "run_aaa111bbb222",
-        "runnerClaimDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runnerClaimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
         "bindingId": "pb_research-profile",
         "bindingRevision": 7,
-        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
         "profileAlias": "research-profile",
         "leaseMode": "single-context",
-        "requestedActions": ["browser-read"],
+        "requestedActions": [
+          "browser-read"
+        ],
         "heartbeatIntervalMs": 30000,
         "leaseTtlMs": 120000,
         "idempotencyKey": "claim-aaa111bbb222:pb_research-profile:7"
@@ -29,17 +31,76 @@
         "profileAlias": "research-profile",
         "bindingId": "pb_research-profile",
         "bindingRevision": 7,
-        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
         "runId": "run_aaa111bbb222",
-        "runnerClaimDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "runnerClaimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
         "leaseMode": "single-context",
         "fenceEpoch": 19,
         "state": "leased",
         "expiresAt": "2026-08-27T00:02:00.000Z",
         "issuedAt": "2026-08-27T00:00:00.000Z"
       },
-      "expect": "acquire succeeds"
+      "protectedProjections": {
+        "bindingDigest": {
+          "domainLabel": "webmcp-digest-v1:binding",
+          "projection": {
+            "bindingId": "pb_research-profile",
+            "bindingRevision": 7,
+            "profileAlias": "research-profile",
+            "assignmentMode": "dedicated",
+            "trustDomain": null,
+            "policyMode": "enforce",
+            "allowedSiteIds": [
+              "site-example"
+            ],
+            "allowedAutomationIds": [
+              "automation-alpha"
+            ]
+          },
+          "canonical": "{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"trustDomain\":null}",
+          "digest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9"
+        },
+        "claimDigest": {
+          "domainLabel": "webmcp-digest-v1:claim",
+          "projection": {
+            "runId": "run_aaa111bbb222",
+            "claimGeneration": 1,
+            "workspaceId": "workspace-synthetic-001",
+            "runbookDigest": "sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d",
+            "revisionDigest": "sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046",
+            "bindingId": "pb_research-profile",
+            "bindingRevision": 7,
+            "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9"
+          },
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"claimGeneration\":1,\"revisionDigest\":\"sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046\",\"runId\":\"run_aaa111bbb222\",\"runbookDigest\":\"sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d\",\"workspaceId\":\"workspace-synthetic-001\"}",
+          "digest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e"
+        },
+        "leaseBindingDigest": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "projection": {
+            "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+            "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
+            "profileResourceId": "prsc_synthetic_resource_alpha",
+            "fenceEpoch": 19
+          },
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+          "digest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044"
+        }
+      },
+      "expect": "acquire succeeds",
+      "mutation": {
+        "description": "Changing profileResourceId must change leaseBindingDigest",
+        "mutatedProjection": {
+          "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+          "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
+          "profileResourceId": "prsc_synthetic_resource_bravo",
+          "fenceEpoch": 19
+        },
+        "mutatedCanonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_bravo\"}",
+        "mutatedDigest": "sha256:495391d7f9016b3cf1d8d61bbe3ad4046777b9874253949cc93aa12bb253f9d1",
+        "expectMismatch": true
+      }
     },
     {
       "id": "lease-race-two-processes-same-physical",
@@ -48,39 +109,65 @@
       "requests": [
         {
           "schema": "webmcp-profile-lease-request/1",
-          "requestId": "plr_race-001-procA",
+          "requestId": "plr_11d053ad7e911dcf",
           "ownerType": "automation",
           "nodeId": "node-alpha-1",
-          "runId": "run_procA111",
-          "runnerClaimDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "runId": "run_proca111",
+          "runnerClaimDigest": "sha256:8ca745023b63bd310172ce9856b320cd997c40f0f4ec12177ee3992b1e82525b",
           "bindingId": "pb_research-profile",
           "bindingRevision": 7,
-          "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
           "profileAlias": "research-profile",
           "leaseMode": "single-context",
           "idempotencyKey": "procA-claim"
         },
         {
           "schema": "webmcp-profile-lease-request/1",
-          "requestId": "plr_race-001-procB",
+          "requestId": "plr_eca301991ad00c66",
           "ownerType": "automation",
           "nodeId": "node-alpha-1",
-          "runId": "run_procB222",
-          "runnerClaimDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "runId": "run_procb222",
+          "runnerClaimDigest": "sha256:a62f8898f3d6e3d777434857f3114446945b9e4229c619e35d2024bda4f3d9c0",
           "bindingId": "pb_research-profile",
           "bindingRevision": 7,
-          "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
           "profileAlias": "research-profile",
           "leaseMode": "single-context",
           "idempotencyKey": "procB-claim"
         }
       ],
-      "expect": "exactly one lease granted, other PROFILE_LEASE_CONFLICT"
+      "protectedProjections": {
+        "bindingDigest": {
+          "domainLabel": "webmcp-digest-v1:binding",
+          "canonical": "{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"trustDomain\":null}",
+          "digest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9"
+        },
+        "claimDigestA": {
+          "domainLabel": "webmcp-digest-v1:claim",
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"claimGeneration\":1,\"revisionDigest\":\"sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046\",\"runId\":\"run_proca111\",\"runbookDigest\":\"sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d\",\"workspaceId\":\"workspace-synthetic-001\"}",
+          "digest": "sha256:8ca745023b63bd310172ce9856b320cd997c40f0f4ec12177ee3992b1e82525b"
+        },
+        "claimDigestB": {
+          "domainLabel": "webmcp-digest-v1:claim",
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"claimGeneration\":1,\"revisionDigest\":\"sha256:474f9886c2f8907d9d85a1fe9dfde09cdf6b6f6d4b4cc706dfe3d855a9573046\",\"runId\":\"run_procb222\",\"runbookDigest\":\"sha256:a71eeb558cdc67f8bf2c68a7fa0fe6365c1000d130e937fec318666b6a11f15d\",\"workspaceId\":\"workspace-synthetic-001\"}",
+          "digest": "sha256:a62f8898f3d6e3d777434857f3114446945b9e4229c619e35d2024bda4f3d9c0"
+        }
+      },
+      "expect": "exactly one lease granted, other PROFILE_LEASE_CONFLICT",
+      "mutation": {
+        "description": "Different claimDigest must produce different leaseBindingDigest for same physical resource",
+        "leaseBindingDigestA": "sha256:05a8afccbddac1911bdf1472b9810e82ca753407ae2de328536336b2eccd368e",
+        "leaseBindingDigestB": "sha256:e4635ef926d1d67df542f09822ca44d155fcf44715bdbbfa1a452737e5480287",
+        "expectMismatch": true
+      }
     },
     {
       "id": "lease-alias-duplicate-physical-exclusive",
       "description": "Two aliases (suno/research-profile) mapping to same physical synthetic resource cannot both hold exclusive leases",
-      "aliases": ["suno-profile", "research-profile"],
+      "aliases": [
+        "suno-profile",
+        "research-profile"
+      ],
       "physicalSynthetic": "prsc_shared_physical_001",
       "expect": "both fail with CONFIG_INVALID or PROFILE_LEASE_CONFLICT once mapper deduped"
     },
@@ -89,43 +176,93 @@
       "description": "Release is idempotent but stale release must not delete new epoch lease",
       "existingLease": {
         "leaseId": "lease_deadbeef01234567",
-        "fenceEpoch": 19
+        "fenceEpoch": 19,
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044"
       },
       "newLeaseAfterReclaim": {
-        "leaseId": "lease_abcdef0123456789",
-        "fenceEpoch": 20
+        "leaseId": "lease_cc464cce92c34b9c",
+        "fenceEpoch": 20,
+        "leaseBindingDigest": "sha256:44183a5a50769630cb767e7a2ca98a3b5277f92dc55c84341cf04bcc1b8c9857"
       },
       "staleReleaseAttempt": {
         "leaseId": "lease_deadbeef01234567",
         "fenceEpoch": 19
       },
-      "expect": "stale release returns released:false and does not affect new lease"
+      "protectedProjections": {
+        "leaseBindingDigest19": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+          "digest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044"
+        },
+        "leaseBindingDigest20": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":20,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+          "digest": "sha256:44183a5a50769630cb767e7a2ca98a3b5277f92dc55c84341cf04bcc1b8c9857"
+        }
+      },
+      "expect": "stale release returns released:false and does not affect new lease",
+      "mutation": {
+        "description": "LeaseBindingDigest for epoch 19 vs 20 must differ",
+        "expectMismatch": true,
+        "digest19": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+        "digest20": "sha256:44183a5a50769630cb767e7a2ca98a3b5277f92dc55c84341cf04bcc1b8c9857"
+      }
     },
     {
       "id": "lease-ttl-expired-browser-alive-no-reclaim",
       "description": "TTL expiry while holder browser still alive must NOT reclaim; requires liveness proof",
       "lease": {
-        "leaseId": "lease_ttltest01234567",
+        "leaseId": "lease_25be00cadf118063",
         "fenceEpoch": 5,
+        "leaseBindingDigest": "sha256:5dfe080a611c2c9ce4ccd5eb08db5dd74f328abd447def86e5509453c83e5f3c",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "browserAlive": true,
         "extensionConnected": true
       },
       "reacquireAttempt": {
-        "requestId": "plr_ttl-reacquire-001",
-        "runId": "run_newAttempt333"
+        "requestId": "plr_d392bdbc8db92fb7",
+        "runId": "run_newattempt333",
+        "runnerClaimDigest": "sha256:99d510232db985d295c9a8c04246219da7bcccb5d0ca426da100e26f87abe2da"
       },
-      "expect": "PROFILE_LEASE_CONFLICT / PROFILE_RECLAIM_UNSAFE not ready"
+      "protectedProjections": {
+        "leaseBindingDigest": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":5,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+          "digest": "sha256:5dfe080a611c2c9ce4ccd5eb08db5dd74f328abd447def86e5509453c83e5f3c"
+        }
+      },
+      "expect": "PROFILE_LEASE_CONFLICT / PROFILE_RECLAIM_UNSAFE not ready",
+      "mutation": {
+        "description": "TTL-only proof without liveness must not produce same reclaim decision",
+        "expectMismatch": true
+      }
     },
     {
       "id": "lease-same-run-multi-tab-one-lease",
       "description": "Same run multi-tab must use one lease/fence with bounded tab handles",
       "runId": "run_multitab999",
-      "leaseId": "lease_multitab01234567",
+      "leaseId": "lease_7b41b794ffe3a45f",
       "fenceEpoch": 7,
-      "tabHandles": ["tab_alpha-1", "tab_alpha-2", "tab_alpha-3"],
+      "leaseBindingDigest": "sha256:46208bd7a75644e9eea03af27016cb1744e76ca90a30c4e48449e9d136265f83",
+      "protectedProjections": {
+        "leaseBindingDigest": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:9d56f15713d90e101632fb95ab212b2479c559c79546153ce449d892198518bd\",\"fenceEpoch\":7,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+          "digest": "sha256:46208bd7a75644e9eea03af27016cb1744e76ca90a30c4e48449e9d136265f83"
+        }
+      },
+      "tabHandles": [
+        "tab_alpha-1",
+        "tab_alpha-2",
+        "tab_alpha-3"
+      ],
       "maxTabs": 4,
-      "expect": "all tabs share leaseId/fenceEpoch, tabHandle validated per action"
+      "expect": "all tabs share leaseId/fenceEpoch, tabHandle validated per action",
+      "mutation": {
+        "description": "Different fenceEpoch must produce different leaseBindingDigest",
+        "mutatedDigest": "sha256:a90b8359ff9d3f3ca4f5aa35edb2a1c291ef8966df1cf3033c2123c866291e16",
+        "expectMismatch": true
+      }
     },
     {
       "id": "lease-binding-stale-after-admission",
@@ -133,13 +270,21 @@
       "admission": {
         "bindingId": "pb_research-profile",
         "bindingRevision": 7,
-        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
+        "canonical": "{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"trustDomain\":null}",
+        "domainLabel": "webmcp-digest-v1:binding"
       },
       "current": {
         "bindingRevision": 8,
-        "bindingDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        "bindingDigest": "sha256:a23d8c82d5939adb66cab5bbbc97e7c6ffe4cda86fe4c8d081d9acd4925851f2",
+        "canonical": "{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"pb_research-profile\",\"bindingRevision\":8,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"trustDomain\":null}",
+        "domainLabel": "webmcp-digest-v1:binding"
       },
-      "expect": "PROFILE_BINDING_STALE"
+      "expect": "PROFILE_BINDING_STALE",
+      "mutation": {
+        "description": "Binding revision 7 vs 8 must produce different bindingDigest",
+        "expectMismatch": true
+      }
     }
   ]
 }

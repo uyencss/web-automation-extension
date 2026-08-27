@@ -1,31 +1,81 @@
 {
   "schema": "webmcp-fence-proof-vectors/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
-  "note": "Synthetic per-action fence proof vectors. High-entropy fence token not in payload; only digests. Canary values only.",
+  "note": "Synthetic per-action fence proof vectors. JCS canonical with LF framing per D1; domain labels are the only hash inputs. No placeholder digests.",
   "vectors": [
     {
       "id": "fence-happy-browser-read",
       "description": "Valid fence for browser-read within TTL/maxUses",
       "proof": {
         "schema": "webmcp-profile-action-fence/1",
-        "fenceId": "fence_aaaaaaaaaaaaaaaa",
+        "fenceId": "fence_4a073e8d529248de",
         "leaseId": "lease_deadbeef01234567",
         "fenceEpoch": 19,
-        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
         "runId": "run_aaa111bbb222",
         "bindingId": "pb_research-profile",
         "purpose": "reconcile-pending",
         "scope": {
           "profileAlias": "research-profile",
-          "actions": ["browser-read"]
+          "actions": [
+            "browser-read"
+          ]
         },
-        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "fenceDigest": "sha256:38146fd99d06290efa5c17287675d8f240721f3876b13c6cbede2119b96ab510",
         "ttlMs": 60000,
         "maxUses": 50,
-        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "actionKind": "read"
+      },
+      "protectedProjections": {
+        "fenceDigest": {
+          "domainLabel": "webmcp-digest-v1:fence",
+          "projection": {
+            "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+            "bindingId": "pb_research-profile",
+            "runId": "run_aaa111bbb222",
+            "fenceEpoch": 19,
+            "scope": {
+              "profileAlias": "research-profile",
+              "actions": [
+                "browser-read"
+              ]
+            }
+          },
+          "canonical": "{\"bindingId\":\"pb_research-profile\",\"fenceEpoch\":19,\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"runId\":\"run_aaa111bbb222\",\"scope\":{\"actions\":[\"browser-read\"],\"profileAlias\":\"research-profile\"}}",
+          "digest": "sha256:38146fd99d06290efa5c17287675d8f240721f3876b13c6cbede2119b96ab510"
+        },
+        "leaseBindingDigest": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "projection": {
+            "claimDigest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e",
+            "bindingDigest": "sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9",
+            "profileResourceId": "prsc_synthetic_resource_alpha",
+            "fenceEpoch": 19
+          },
+          "canonical": "{\"bindingDigest\":\"sha256:11333d81046a76c75899dbb982a09ce19d686261c1984efb7fe27f94be0f86b9\",\"claimDigest\":\"sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+          "digest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044"
+        }
+      },
+      "mutation": {
+        "description": "Changing scope action must change fenceDigest",
+        "mutatedProjection": {
+          "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+          "bindingId": "pb_research-profile",
+          "runId": "run_aaa111bbb222",
+          "fenceEpoch": 19,
+          "scope": {
+            "profileAlias": "research-profile",
+            "actions": [
+              "browser-write"
+            ]
+          }
+        },
+        "mutatedCanonical": "{\"bindingId\":\"pb_research-profile\",\"fenceEpoch\":19,\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"runId\":\"run_aaa111bbb222\",\"scope\":{\"actions\":[\"browser-write\"],\"profileAlias\":\"research-profile\"}}",
+        "mutatedDigest": "sha256:68e5bb78a1764688dbf63ca487dc748ab684070306a6710eba82b665fc2febb4",
+        "expectMismatch": true
       },
       "dispatchAt": "2026-08-27T00:00:30.000Z",
       "expect": "authorize succeeds"
@@ -36,22 +86,39 @@
       "currentEpoch": 20,
       "proof": {
         "schema": "webmcp-profile-action-fence/1",
-        "fenceId": "fence_bbbbbbbbbbbbbbbb",
+        "fenceId": "fence_836cd8bdff0d4399",
         "leaseId": "lease_deadbeef01234567",
         "fenceEpoch": 19,
-        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
         "runId": "run_aaa111bbb222",
         "bindingId": "pb_research-profile",
         "purpose": "reconcile-pending",
-        "scope": { "profileAlias": "research-profile", "actions": ["browser-read"] },
-        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "scope": {
+          "profileAlias": "research-profile",
+          "actions": [
+            "browser-read"
+          ]
+        },
+        "fenceDigest": "sha256:38146fd99d06290efa5c17287675d8f240721f3876b13c6cbede2119b96ab510",
         "ttlMs": 60000,
         "maxUses": 50,
-        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z"
       },
-      "expect": "PROFILE_FENCE_STALE"
+      "protectedProjections": {
+        "fenceDigest": {
+          "domainLabel": "webmcp-digest-v1:fence",
+          "canonical": "{\"bindingId\":\"pb_research-profile\",\"fenceEpoch\":19,\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"runId\":\"run_aaa111bbb222\",\"scope\":{\"actions\":[\"browser-read\"],\"profileAlias\":\"research-profile\"}}",
+          "digest": "sha256:38146fd99d06290efa5c17287675d8f240721f3876b13c6cbede2119b96ab510"
+        }
+      },
+      "expect": "PROFILE_FENCE_STALE",
+      "mutation": {
+        "description": "Fence epoch 19 vs current 20 must be detected as stale",
+        "currentLeaseBindingDigest": "sha256:44183a5a50769630cb767e7a2ca98a3b5277f92dc55c84341cf04bcc1b8c9857",
+        "expectMismatch": true
+      }
     },
     {
       "id": "fence-missing-required",
@@ -65,50 +132,93 @@
       "description": "Fence maxUses exhausted must deny further dispatch",
       "proof": {
         "schema": "webmcp-profile-action-fence/1",
-        "fenceId": "fence_cccccccccccccccc",
+        "fenceId": "fence_b5efa3c0c4bd2cfa",
         "leaseId": "lease_deadbeef01234567",
         "fenceEpoch": 19,
-        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
         "runId": "run_aaa111bbb222",
         "bindingId": "pb_research-profile",
         "purpose": "reconcile-pending",
-        "scope": { "profileAlias": "research-profile", "actions": ["browser-read"] },
-        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "scope": {
+          "profileAlias": "research-profile",
+          "actions": [
+            "browser-read"
+          ]
+        },
+        "fenceDigest": "sha256:38146fd99d06290efa5c17287675d8f240721f3876b13c6cbede2119b96ab510",
         "ttlMs": 60000,
         "maxUses": 1,
-        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z"
       },
       "usesConsumed": 1,
-      "expect": "PROFILE_FENCE_STALE or CREDENTIAL_GRANT_EXPIRED equivalent"
+      "protectedProjections": {
+        "fenceDigest": {
+          "domainLabel": "webmcp-digest-v1:fence",
+          "canonical": "{\"bindingId\":\"pb_research-profile\",\"fenceEpoch\":19,\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"runId\":\"run_aaa111bbb222\",\"scope\":{\"actions\":[\"browser-read\"],\"profileAlias\":\"research-profile\"}}",
+          "digest": "sha256:38146fd99d06290efa5c17287675d8f240721f3876b13c6cbede2119b96ab510"
+        }
+      },
+      "expect": "PROFILE_FENCE_STALE or CREDENTIAL_GRANT_EXPIRED equivalent",
+      "mutation": {
+        "description": "Exhausted maxUses must not allow reuse with same fenceDigest",
+        "expectMismatch": true
+      }
     },
     {
       "id": "fence-tab-not-owned",
       "description": "Action with tabHandle not owned by lease must be rejected",
       "proof": {
         "schema": "webmcp-profile-action-fence/1",
-        "fenceId": "fence_dddddddddddddddd",
+        "fenceId": "fence_03ebbfed49e9ab88",
         "leaseId": "lease_deadbeef01234567",
         "fenceEpoch": 19,
-        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
         "runId": "run_aaa111bbb222",
         "bindingId": "pb_research-profile",
         "purpose": "reconcile-pending",
         "scope": {
           "profileAlias": "research-profile",
-          "actions": ["browser-read"],
+          "actions": [
+            "browser-read"
+          ],
           "tabHandle": "tab_alpha-1"
         },
-        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "fenceDigest": "sha256:23eb1001f2c958c6a5f7612c36e8447d15531bde37a721a4d5e83cc67437f812",
         "ttlMs": 60000,
         "maxUses": 50,
-        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "approvalDigest": "sha256:a01d4e3e99c09052d5480ed14bef297bac4f8cca828a0db976ef7cc595ad4573",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z"
       },
+      "protectedProjections": {
+        "fenceDigest": {
+          "domainLabel": "webmcp-digest-v1:fence",
+          "projection": {
+            "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044",
+            "bindingId": "pb_research-profile",
+            "runId": "run_aaa111bbb222",
+            "fenceEpoch": 19,
+            "scope": {
+              "profileAlias": "research-profile",
+              "actions": [
+                "browser-read"
+              ],
+              "tabHandle": "tab_alpha-1"
+            }
+          },
+          "canonical": "{\"bindingId\":\"pb_research-profile\",\"fenceEpoch\":19,\"leaseBindingDigest\":\"sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044\",\"runId\":\"run_aaa111bbb222\",\"scope\":{\"actions\":[\"browser-read\"],\"profileAlias\":\"research-profile\",\"tabHandle\":\"tab_alpha-1\"}}",
+          "digest": "sha256:23eb1001f2c958c6a5f7612c36e8447d15531bde37a721a4d5e83cc67437f812"
+        }
+      },
       "dispatchedTabHandle": "tab_evil-9",
-      "expect": "PROFILE_TAB_NOT_OWNED"
+      "expect": "PROFILE_TAB_NOT_OWNED",
+      "mutation": {
+        "description": "Different tabHandle must produce different fenceDigest",
+        "mutatedDigest": "sha256:16104eaed79c6a2b8471509a937aa9cdb45f1fc26af987fc9aa9c3c0925ad733",
+        "expectMismatch": true
+      }
     },
     {
       "id": "fence-heartbeat-wrong-claim",
@@ -116,8 +226,18 @@
       "leaseId": "lease_deadbeef01234567",
       "fenceEpoch": 19,
       "heartbeat": {
-        "runnerClaimDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "runnerClaimDigest": "sha256:b1fa3c2374221f106fe5f6b065ec744bc55310add4b826c9b21f1df1e2ad2a4d",
         "fenceEpoch": 18
+      },
+      "protectedProjections": {
+        "expectedClaimDigest": {
+          "domainLabel": "webmcp-digest-v1:claim",
+          "digest": "sha256:17ade09d81b47b9b55602b1cac0fe4c147c76c7770b39a814081a63d6cdef03e"
+        },
+        "leaseBindingDigest": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "digest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044"
+        }
       },
       "expect": "PROFILE_CLAIM_INVALID and PROFILE_FENCE_STALE"
     },
@@ -125,8 +245,25 @@
       "id": "fence-batch-each-boundary",
       "description": "Batch command must fence each side-effect boundary",
       "batch": {
-        "actions": [{ "method": "clickByRef" }, { "method": "typeByRef" }, { "method": "evaluateJS" }],
-        "fenceEpoch": 19
+        "actions": [
+          {
+            "method": "clickByRef"
+          },
+          {
+            "method": "typeByRef"
+          },
+          {
+            "method": "evaluateJS"
+          }
+        ],
+        "fenceEpoch": 19,
+        "leaseBindingDigest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044"
+      },
+      "protectedProjections": {
+        "leaseBindingDigest": {
+          "domainLabel": "webmcp-digest-v1:lease",
+          "digest": "sha256:832b3dbfd4894e769c4ac63a0483ef6b5426cb03d7612096d439bff8ed7ae044"
+        }
       },
       "expect": "each action individually authorized or whole batch rejected if not fence-capable"
     }

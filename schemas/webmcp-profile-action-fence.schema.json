@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://webmcp.example/schemas/webmcp-profile-action-fence.schema.json",
+  "$id": "https://webmcp.dev/schemas/webmcp-profile-action-fence.schema.json",
   "title": "WebMCP Profile Action Fence — webmcp-profile-action-fence/1",
-  "description": "Per-action fence proof v1 (fixture-only A1). Validated out-of-band before gateway/browser dispatch. D1 provisional fenceDigest label webmcp-digest-v1:fence. Fence secret/capability never in this proof; only digests.",
+  "description": "Per-action fence proof v1 (A1 fixture-only). Validated out-of-band before gateway/browser dispatch. D1 fenceDigest with domain label webmcp-digest-v1:fence and LF framing. Fence secret/capability never in this proof; only digests.",
   "type": "object",
   "required": [
     "schema",
@@ -54,7 +54,10 @@
     },
     "scope": {
       "type": "object",
-      "required": ["profileAlias", "actions"],
+      "required": [
+        "profileAlias",
+        "actions"
+      ],
       "properties": {
         "profileAlias": {
           "type": "string",
@@ -64,7 +67,12 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["browser-read", "browser-write", "browser-session-data", "credential-fill"]
+            "enum": [
+              "browser-read",
+              "browser-write",
+              "browser-session-data",
+              "credential-fill"
+            ]
           },
           "minItems": 1
         },
@@ -74,7 +82,10 @@
         },
         "originAllowlist": {
           "type": "array",
-          "items": { "type": "string", "format": "uri" },
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
           "maxItems": 16
         }
       },
@@ -83,7 +94,7 @@
     "fenceDigest": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$",
-      "description": "H(leaseBinding+purpose+exact scope+TTL+maxUses+approvalDigest) provisional."
+      "description": "Fence digest with domain label webmcp-digest-v1:fence and LF framing."
     },
     "ttlMs": {
       "type": "integer",
@@ -109,7 +120,15 @@
     },
     "actionKind": {
       "type": "string",
-      "enum": ["click", "type", "scroll", "waitForStable", "batch", "read", "queryIndexedDB"]
+      "enum": [
+        "click",
+        "type",
+        "scroll",
+        "waitForStable",
+        "batch",
+        "read",
+        "queryIndexedDB"
+      ]
     }
   },
   "additionalProperties": false
