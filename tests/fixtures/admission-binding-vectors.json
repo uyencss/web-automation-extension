@@ -7,7 +7,7 @@
   "vectors": [
     {
       "name": "dedicated-enforce-allow",
-      "description": "Dedicated enforce binding with explicit allowlists — happy-path admission pin. Synthetic hex IDs, D1 JCS, non-placeholder digests.",
+      "description": "Dedicated enforce binding with explicit allowlists \u2014 happy-path admission pin. Synthetic hex IDs, D1 JCS, non-placeholder digests.",
       "protectedProjection": {
         "schema": "webmcp-profile-admission-binding/1",
         "bindingId": "binding_deadbeef00000001",
@@ -21,22 +21,32 @@
         ],
         "allowedAutomationIds": [
           "example-research-runbook"
-        ]
+        ],
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
-      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000001\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000001\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
       "domainLabel": "webmcp-digest-v1:binding",
       "domainSeparation": "webmcp-digest-v1:binding",
-      "digest": "sha256:4feb27d38f77d03ae769a4d63d53270f9db77b31740d95effd6a10c35f9d3e52",
+      "digest": "sha256:17add6b9dee71a9ae37bf0105aa37d3ac1d5e32830102a4c219736240013c7b4",
       "contractId": "webmcp-profile-admission-binding/1",
       "excludedFromDigest": [
         "bindingDigest",
-        "createdAt"
+        "createdAt",
+        "runId",
+        "claimGeneration",
+        "workspaceId",
+        "runbookDigest",
+        "revisionDigest",
+        "approvalDigest"
       ],
       "value": {
         "schema": "webmcp-profile-admission-binding/1",
         "bindingId": "binding_deadbeef00000001",
         "bindingRevision": 7,
-        "bindingDigest": "sha256:4feb27d38f77d03ae769a4d63d53270f9db77b31740d95effd6a10c35f9d3e52",
+        "bindingDigest": "sha256:17add6b9dee71a9ae37bf0105aa37d3ac1d5e32830102a4c219736240013c7b4",
         "profileAlias": "research-profile",
         "assignmentMode": "dedicated",
         "trustDomain": null,
@@ -53,7 +63,11 @@
         "runbookDigest": "sha256:677817e3e8ff9e43204d4d629b930fcfed4dde993b025200f5daca58426dcad5",
         "revisionDigest": "sha256:f522698de8b6e7745ff322cb0d8a6ebcaefa75a479c9d8453db31a6a199d1dc4",
         "approvalDigest": null,
-        "createdAt": "2026-08-27T00:00:00.000Z"
+        "createdAt": "2026-08-27T00:00:00.000Z",
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
       "mutation": {
         "protectedProjection": {
@@ -69,17 +83,21 @@
           ],
           "allowedAutomationIds": [
             "example-research-runbook"
-          ]
+          ],
+          "verificationPolicy": {
+            "profileIdentity": "strict",
+            "siteAccount": "strict"
+          }
         },
-        "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000001\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
-        "digest": "sha256:37db5f5b9a3560601c7b44be539288da7e7802ec06032b0be944b72962895d70",
+        "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000001\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
+        "digest": "sha256:6ef5f9620de382dcf8a225b7f960e84ad5645a54bce9747c14ef5f1c8dcbf1d2",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests \u2014 no real profile path, cookie, or credential"
     },
     {
       "name": "shared-trust-domain-enforce",
-      "description": "Shared-trust-domain enforce — two aliases may map same physical resource when trustDomain matches. Digest must include trustDomain.",
+      "description": "Shared-trust-domain enforce \u2014 two aliases may map same physical resource when trustDomain matches. Digest must include trustDomain.",
       "protectedProjection": {
         "schema": "webmcp-profile-admission-binding/1",
         "bindingId": "binding_deadbeef00000002",
@@ -93,22 +111,32 @@
         ],
         "allowedAutomationIds": [
           "suno-runbook"
-        ]
+        ],
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
-      "canonical": "{\"allowedAutomationIds\":[\"suno-runbook\"],\"allowedSiteIds\":[\"suno-site\"],\"assignmentMode\":\"shared-trust-domain\",\"bindingId\":\"binding_deadbeef00000002\",\"bindingRevision\":12,\"policyMode\":\"enforce\",\"profileAlias\":\"suno-creator\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":\"suno-shared-domain\"}",
+      "canonical": "{\"allowedAutomationIds\":[\"suno-runbook\"],\"allowedSiteIds\":[\"suno-site\"],\"assignmentMode\":\"shared-trust-domain\",\"bindingId\":\"binding_deadbeef00000002\",\"bindingRevision\":12,\"policyMode\":\"enforce\",\"profileAlias\":\"suno-creator\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":\"suno-shared-domain\",\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
       "domainLabel": "webmcp-digest-v1:binding",
       "domainSeparation": "webmcp-digest-v1:binding",
-      "digest": "sha256:c9bb2fd1c73da87ec759526ba21194a1b5910f157e9e6a3864ebf89b9d82e8fb",
+      "digest": "sha256:3272c76957bb7c75d0117178faaf8475dea4be5a242691e24f4858dbe67c33f3",
       "contractId": "webmcp-profile-admission-binding/1",
       "excludedFromDigest": [
         "bindingDigest",
-        "createdAt"
+        "createdAt",
+        "runId",
+        "claimGeneration",
+        "workspaceId",
+        "runbookDigest",
+        "revisionDigest",
+        "approvalDigest"
       ],
       "value": {
         "schema": "webmcp-profile-admission-binding/1",
         "bindingId": "binding_deadbeef00000002",
         "bindingRevision": 12,
-        "bindingDigest": "sha256:c9bb2fd1c73da87ec759526ba21194a1b5910f157e9e6a3864ebf89b9d82e8fb",
+        "bindingDigest": "sha256:3272c76957bb7c75d0117178faaf8475dea4be5a242691e24f4858dbe67c33f3",
         "profileAlias": "suno-creator",
         "assignmentMode": "shared-trust-domain",
         "trustDomain": "suno-shared-domain",
@@ -125,7 +153,11 @@
         "runbookDigest": "sha256:dbb95fc93bd936d84a5a416ce539fad7bb7fe42e9c3a30c527b055649513b284",
         "revisionDigest": "sha256:9a15d14744153548d7cf53ac76d5753a4f52edac5dd1aa85bb8560daf6f3ca23",
         "approvalDigest": "sha256:c0e334f8d3858e3ba21a39488ef4c5b29552c83c5428397279d8464be6fe6cc7",
-        "createdAt": "2026-08-27T01:00:00.000Z"
+        "createdAt": "2026-08-27T01:00:00.000Z",
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
       "mutation": {
         "protectedProjection": {
@@ -141,13 +173,17 @@
           ],
           "allowedAutomationIds": [
             "suno-runbook"
-          ]
+          ],
+          "verificationPolicy": {
+            "profileIdentity": "strict",
+            "siteAccount": "strict"
+          }
         },
-        "canonical": "{\"allowedAutomationIds\":[\"suno-runbook\"],\"allowedSiteIds\":[\"suno-site\"],\"assignmentMode\":\"shared-trust-domain\",\"bindingId\":\"binding_deadbeef00000002\",\"bindingRevision\":12,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":\"suno-shared-domain\"}",
-        "digest": "sha256:beb7ed5e7247d3f010b6448b1decab3756021c4d5a663e7efc0f38d1532e8e99",
+        "canonical": "{\"allowedAutomationIds\":[\"suno-runbook\"],\"allowedSiteIds\":[\"suno-site\"],\"assignmentMode\":\"shared-trust-domain\",\"bindingId\":\"binding_deadbeef00000002\",\"bindingRevision\":12,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":\"suno-shared-domain\",\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
+        "digest": "sha256:a3d885cd99da26e72e7a320a6b57496926f5d1c8a9728c7f3df8ac6aa9769b50",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests \u2014 no real profile path, cookie, or credential"
     },
     {
       "name": "enforce-deny-all-empty-allowlist",
@@ -161,22 +197,32 @@
         "trustDomain": null,
         "policyMode": "enforce",
         "allowedSiteIds": [],
-        "allowedAutomationIds": []
+        "allowedAutomationIds": [],
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
-      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000003\",\"bindingRevision\":3,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000003\",\"bindingRevision\":3,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
       "domainLabel": "webmcp-digest-v1:binding",
       "domainSeparation": "webmcp-digest-v1:binding",
-      "digest": "sha256:e4c11076e3714d9871767273c207b420a80e2711a160a1f0a612502813f38b94",
+      "digest": "sha256:8654c887c93327fe406177ce5db1c2865e270ebf644f27ad3d4058b3ee6ec844",
       "contractId": "webmcp-profile-admission-binding/1",
       "excludedFromDigest": [
         "bindingDigest",
-        "createdAt"
+        "createdAt",
+        "runId",
+        "claimGeneration",
+        "workspaceId",
+        "runbookDigest",
+        "revisionDigest",
+        "approvalDigest"
       ],
       "value": {
         "schema": "webmcp-profile-admission-binding/1",
         "bindingId": "binding_deadbeef00000003",
         "bindingRevision": 3,
-        "bindingDigest": "sha256:e4c11076e3714d9871767273c207b420a80e2711a160a1f0a612502813f38b94",
+        "bindingDigest": "sha256:8654c887c93327fe406177ce5db1c2865e270ebf644f27ad3d4058b3ee6ec844",
         "profileAlias": "media-profile",
         "assignmentMode": "dedicated",
         "trustDomain": null,
@@ -189,7 +235,11 @@
         "runbookDigest": "sha256:a045a568e08d684978c27f45a552494665c0c9224a6233ab4b6c3d5becaca8e3",
         "revisionDigest": "sha256:d98e7ade4609146028aeb0b51c7da84fc57a0d9d595f6b29c5b5354080617c5a",
         "approvalDigest": null,
-        "createdAt": "2026-08-27T02:00:00.000Z"
+        "createdAt": "2026-08-27T02:00:00.000Z",
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
       "mutation": {
         "protectedProjection": {
@@ -201,17 +251,21 @@
           "trustDomain": null,
           "policyMode": "enforce",
           "allowedSiteIds": [],
-          "allowedAutomationIds": []
+          "allowedAutomationIds": [],
+          "verificationPolicy": {
+            "profileIdentity": "strict",
+            "siteAccount": "strict"
+          }
         },
-        "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000003\",\"bindingRevision\":3,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
-        "digest": "sha256:80aaf6e28444353f54dc0cd0270801eb0ed47e2f9f80332b5a521856738ae63b",
+        "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000003\",\"bindingRevision\":3,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
+        "digest": "sha256:485754d65748a036dead66d7f203fbecea8748b83f6951d6020b7592901eb8d6",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests \u2014 no real profile path, cookie, or credential"
     },
     {
       "name": "observe-legacy-missing-policy",
-      "description": "Observe mode synthetic vector — legacy/observe may have empty allowlists reported as finding, not silent allow-all. A1 observe projection.",
+      "description": "Observe mode synthetic vector \u2014 legacy/observe may have empty allowlists reported as finding, not silent allow-all. A1 observe projection.",
       "protectedProjection": {
         "schema": "webmcp-profile-admission-binding/1",
         "bindingId": "binding_deadbeef00000004",
@@ -221,22 +275,32 @@
         "trustDomain": null,
         "policyMode": "observe",
         "allowedSiteIds": [],
-        "allowedAutomationIds": []
+        "allowedAutomationIds": [],
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
-      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000004\",\"bindingRevision\":1,\"policyMode\":\"observe\",\"profileAlias\":\"migration-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
+      "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000004\",\"bindingRevision\":1,\"policyMode\":\"observe\",\"profileAlias\":\"migration-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
       "domainLabel": "webmcp-digest-v1:binding",
       "domainSeparation": "webmcp-digest-v1:binding",
-      "digest": "sha256:3052cc1e716a0bf9563b13c2545c9ce358a9d8eeb043e332e1f76f703192f4a1",
+      "digest": "sha256:96275c06223c373f30d0d874425b78a4cebc4c36f71f12e75fde96e96d80bda3",
       "contractId": "webmcp-profile-admission-binding/1",
       "excludedFromDigest": [
         "bindingDigest",
-        "createdAt"
+        "createdAt",
+        "runId",
+        "claimGeneration",
+        "workspaceId",
+        "runbookDigest",
+        "revisionDigest",
+        "approvalDigest"
       ],
       "value": {
         "schema": "webmcp-profile-admission-binding/1",
         "bindingId": "binding_deadbeef00000004",
         "bindingRevision": 1,
-        "bindingDigest": "sha256:3052cc1e716a0bf9563b13c2545c9ce358a9d8eeb043e332e1f76f703192f4a1",
+        "bindingDigest": "sha256:96275c06223c373f30d0d874425b78a4cebc4c36f71f12e75fde96e96d80bda3",
         "profileAlias": "migration-profile",
         "assignmentMode": "dedicated",
         "trustDomain": null,
@@ -249,7 +313,11 @@
         "runbookDigest": "sha256:581236d5b68e4df3b2bff3777319c6f06b737fd409fe4dfcdda41dad9b6b5a02",
         "revisionDigest": "sha256:a8ebdf3d1646ff37055e3d0250a9e7e644f5c45a5f85da125d963778f6579d57",
         "approvalDigest": null,
-        "createdAt": "2026-08-27T03:00:00.000Z"
+        "createdAt": "2026-08-27T03:00:00.000Z",
+        "verificationPolicy": {
+          "profileIdentity": "strict",
+          "siteAccount": "strict"
+        }
       },
       "mutation": {
         "protectedProjection": {
@@ -261,13 +329,17 @@
           "trustDomain": null,
           "policyMode": "observe",
           "allowedSiteIds": [],
-          "allowedAutomationIds": []
+          "allowedAutomationIds": [],
+          "verificationPolicy": {
+            "profileIdentity": "strict",
+            "siteAccount": "strict"
+          }
         },
-        "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000004\",\"bindingRevision\":1,\"policyMode\":\"observe\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null}",
-        "digest": "sha256:97d5ed7df10aa4f653ba8c8f2cd9ee2776d37bb7ca38abb45b3fb53b8a4b395e",
+        "canonical": "{\"allowedAutomationIds\":[],\"allowedSiteIds\":[],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000004\",\"bindingRevision\":1,\"policyMode\":\"observe\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-admission-binding/1\",\"trustDomain\":null,\"verificationPolicy\":{\"profileIdentity\":\"strict\",\"siteAccount\":\"strict\"}}",
+        "digest": "sha256:d222d2cee547f5c878c68d988aad42fbce210c8ab7055aef2b7ac03630f589e0",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no real profile path, cookie, or credential"
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests \u2014 no real profile path, cookie, or credential"
     }
   ]
 }

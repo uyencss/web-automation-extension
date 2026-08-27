@@ -1,230 +1,301 @@
 {
   "schema": "webmcp-fixture-vectors/1",
-  "contract": "webmcp-claim-digest-vectors/1",
+  "contract": "webmcp-runner-claim/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
   "synthetic": true,
-  "note": "Cross-package parity vectors — D1-compliant, must be identical byte-for-byte between Runner, Workflow CLI, Browser Kit, Vault. Proves domain separation and JCS. RFC8785 + LF framing.",
+  "note": "D1-compliant frozen claim projection: RFC8785 JCS UTF-8, domainLabel LF framing, exact protected projection (runId, claimGeneration, workspace/project, source/revision/runbook/request/input digests, binding pin), exclusions are explicit, non-placeholder digests, prefixed hex synthetic IDs.",
   "vectors": [
     {
-      "name": "binding-policy-canonical",
-      "description": "Binding policy digest vector — shared across Runner, Workflow CLI, Desktop. JCS canonical, sorted keys, no whitespace.",
+      "name": "claim-dedicated-enforce",
+      "description": "Dedicated claim with workspace/project identity, full source/revision/runbook/request/input digests and binding pin. Proves claimDigest binds all frozen fields.",
       "protectedProjection": {
-        "schema": "webmcp-profile-binding/3",
-        "bindingId": "binding_deadbeef00000011",
-        "bindingRevision": 7,
-        "profileAlias": "research-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "enforce",
-        "allowedSiteIds": [
-          "example-site"
-        ],
-        "allowedAutomationIds": [
-          "example-research-runbook"
-        ]
-      },
-      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000011\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-      "domainLabel": "webmcp-digest-v1:binding",
-      "domainSeparation": "webmcp-digest-v1:binding",
-      "digest": "sha256:292ea556aa2c46ff25b105989ba86ebf78d5ded362d58759dcf8855372eb22e5",
-      "contractId": "webmcp-profile-binding/3",
-      "value": {
-        "schema": "webmcp-profile-binding/3",
-        "bindingId": "binding_deadbeef00000011",
-        "bindingRevision": 7,
-        "profileAlias": "research-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "enforce",
-        "allowedSiteIds": [
-          "example-site"
-        ],
-        "allowedAutomationIds": [
-          "example-research-runbook"
-        ]
-      },
-      "mutation": {
-        "protectedProjection": {
-          "schema": "webmcp-profile-binding/3",
-          "bindingId": "binding_deadbeef00000011",
-          "bindingRevision": 7,
-          "profileAlias": "media-profile",
-          "assignmentMode": "dedicated",
-          "trustDomain": null,
-          "policyMode": "enforce",
-          "allowedSiteIds": [
-            "example-site"
-          ],
-          "allowedAutomationIds": [
-            "example-research-runbook"
-          ]
-        },
-        "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000011\",\"bindingRevision\":7,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-        "digest": "sha256:3297f38c25ece2953ee04a70260b1d46eb4fa2c5e6015f8f9515e26f2f5888da",
-        "digestsDiffer": true
-      },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs where applicable, D1 JCS, non-placeholder digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
-    },
-    {
-      "name": "runner-claim-context-canonical",
-      "description": "Runner claim context digest — H(runId + claimGeneration + workspaceId + runbookDigest). Cross-package identical consumption.",
-      "protectedProjection": {
-        "schema": "webmcp-runner-claim-context/1",
+        "schema": "webmcp-runner-claim/1",
         "runId": "run_deadbeef00000021",
         "claimGeneration": 3,
         "workspaceId": "workspace_deadbeef00000021",
-        "runbookDigest": "sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a",
-        "revisionDigest": "sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5"
+        "projectId": "project_deadbeef00000021",
+        "sourceDigest": "sha256:825ce99446199a9de1f19fba6c82a625bbea64a7fb174aef60860826c4517c15",
+        "revisionDigest": "sha256:40cc90b84278aeafe6c4b8dd392bb46f4df008503fe031ca52171f8779ad2794",
+        "runbookDigest": "sha256:fa1ebafd2fb68970f874221ded33b7826e9257066af6cad0a7a1f5e8703761b7",
+        "requestDigest": "sha256:a6c2105d39639861e98cdb1c26864a34264900aac9b0493aef746eedcbc5d748",
+        "inputBindingsDigest": "sha256:e2a4fb43d63c2a9b183d7bf6ba3e3e65517c60a5b501672d682bd7559957862c",
+        "bindingId": "binding_deadbeef00000021",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d",
+        "approvalDigest": null
       },
-      "canonical": "{\"claimGeneration\":3,\"revisionDigest\":\"sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5\",\"runId\":\"run_deadbeef00000021\",\"runbookDigest\":\"sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a\",\"schema\":\"webmcp-runner-claim-context/1\",\"workspaceId\":\"workspace_deadbeef00000021\"}",
+      "canonical": "{\"approvalDigest\":null,\"bindingDigest\":\"sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d\",\"bindingId\":\"binding_deadbeef00000021\",\"bindingRevision\":7,\"claimGeneration\":3,\"inputBindingsDigest\":\"sha256:e2a4fb43d63c2a9b183d7bf6ba3e3e65517c60a5b501672d682bd7559957862c\",\"projectId\":\"project_deadbeef00000021\",\"requestDigest\":\"sha256:a6c2105d39639861e98cdb1c26864a34264900aac9b0493aef746eedcbc5d748\",\"revisionDigest\":\"sha256:40cc90b84278aeafe6c4b8dd392bb46f4df008503fe031ca52171f8779ad2794\",\"runId\":\"run_deadbeef00000021\",\"runbookDigest\":\"sha256:fa1ebafd2fb68970f874221ded33b7826e9257066af6cad0a7a1f5e8703761b7\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:825ce99446199a9de1f19fba6c82a625bbea64a7fb174aef60860826c4517c15\",\"workspaceId\":\"workspace_deadbeef00000021\"}",
       "domainLabel": "webmcp-digest-v1:claim",
       "domainSeparation": "webmcp-digest-v1:claim",
-      "digest": "sha256:7b7529037d94ea558ed833d12de324d5a041a6f692f44f6edab9d96f4b41e283",
-      "contractId": "webmcp-runner-claim-context/1",
+      "digest": "sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52",
+      "contractId": "webmcp-runner-claim/1",
+      "excludedFromDigest": [
+        "claimDigest",
+        "claimToken",
+        "createdAt",
+        "claimedAt"
+      ],
       "value": {
-        "schema": "webmcp-runner-claim-context/1",
+        "schema": "webmcp-runner-claim/1",
         "runId": "run_deadbeef00000021",
         "claimGeneration": 3,
         "workspaceId": "workspace_deadbeef00000021",
-        "runbookDigest": "sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a",
-        "revisionDigest": "sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5"
+        "projectId": "project_deadbeef00000021",
+        "sourceDigest": "sha256:825ce99446199a9de1f19fba6c82a625bbea64a7fb174aef60860826c4517c15",
+        "revisionDigest": "sha256:40cc90b84278aeafe6c4b8dd392bb46f4df008503fe031ca52171f8779ad2794",
+        "runbookDigest": "sha256:fa1ebafd2fb68970f874221ded33b7826e9257066af6cad0a7a1f5e8703761b7",
+        "requestDigest": "sha256:a6c2105d39639861e98cdb1c26864a34264900aac9b0493aef746eedcbc5d748",
+        "inputBindingsDigest": "sha256:e2a4fb43d63c2a9b183d7bf6ba3e3e65517c60a5b501672d682bd7559957862c",
+        "bindingId": "binding_deadbeef00000021",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d",
+        "approvalDigest": null,
+        "claimDigest": "sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52",
+        "claimToken": "claim-token-canary-21-not-a-real-secret",
+        "createdAt": "2026-08-27T00:00:00.000Z",
+        "claimedAt": "2026-08-27T00:00:01.000Z"
       },
       "mutation": {
         "protectedProjection": {
-          "schema": "webmcp-runner-claim-context/1",
+          "schema": "webmcp-runner-claim/1",
           "runId": "run_deadbeef00000021",
           "claimGeneration": 4,
           "workspaceId": "workspace_deadbeef00000021",
-          "runbookDigest": "sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a",
-          "revisionDigest": "sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5"
+          "projectId": "project_deadbeef00000021",
+          "sourceDigest": "sha256:825ce99446199a9de1f19fba6c82a625bbea64a7fb174aef60860826c4517c15",
+          "revisionDigest": "sha256:40cc90b84278aeafe6c4b8dd392bb46f4df008503fe031ca52171f8779ad2794",
+          "runbookDigest": "sha256:fa1ebafd2fb68970f874221ded33b7826e9257066af6cad0a7a1f5e8703761b7",
+          "requestDigest": "sha256:a6c2105d39639861e98cdb1c26864a34264900aac9b0493aef746eedcbc5d748",
+          "inputBindingsDigest": "sha256:e2a4fb43d63c2a9b183d7bf6ba3e3e65517c60a5b501672d682bd7559957862c",
+          "bindingId": "binding_deadbeef00000021",
+          "bindingRevision": 7,
+          "bindingDigest": "sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d",
+          "approvalDigest": null
         },
-        "canonical": "{\"claimGeneration\":4,\"revisionDigest\":\"sha256:50434a6f3366c9ccf51c6818e1fb0ef53f82a6f38d32cfca5e586b3c91996ff5\",\"runId\":\"run_deadbeef00000021\",\"runbookDigest\":\"sha256:a4d6b0d1ef3638ac904fb714f3ed3d041c5d5a6238e233bd85035e9ed7d1270a\",\"schema\":\"webmcp-runner-claim-context/1\",\"workspaceId\":\"workspace_deadbeef00000021\"}",
-        "digest": "sha256:e1ae5715bd301bd4b438ef9276ca6e2d77fcab348fde7ba083d020cc52abdc1a",
+        "canonical": "{\"approvalDigest\":null,\"bindingDigest\":\"sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d\",\"bindingId\":\"binding_deadbeef00000021\",\"bindingRevision\":7,\"claimGeneration\":4,\"inputBindingsDigest\":\"sha256:e2a4fb43d63c2a9b183d7bf6ba3e3e65517c60a5b501672d682bd7559957862c\",\"projectId\":\"project_deadbeef00000021\",\"requestDigest\":\"sha256:a6c2105d39639861e98cdb1c26864a34264900aac9b0493aef746eedcbc5d748\",\"revisionDigest\":\"sha256:40cc90b84278aeafe6c4b8dd392bb46f4df008503fe031ca52171f8779ad2794\",\"runId\":\"run_deadbeef00000021\",\"runbookDigest\":\"sha256:fa1ebafd2fb68970f874221ded33b7826e9257066af6cad0a7a1f5e8703761b7\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:825ce99446199a9de1f19fba6c82a625bbea64a7fb174aef60860826c4517c15\",\"workspaceId\":\"workspace_deadbeef00000021\"}",
+        "digest": "sha256:f16bb9adea15fa2aa3f9d45970b865b9cdb4ffb9980545665ef0ff5c5a097af4",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs where applicable, D1 JCS, non-placeholder digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no raw profile path, no secret, D1 JCS, domainLabel LF"
     },
     {
-      "name": "jcs-utf16-object-key-order",
-      "description": "Parity JCS vector reused from instruction-set fixtures — proves UTF-16 object-key order and surrogate handling.",
+      "name": "claim-shared-trust-domain",
+      "description": "Shared-trust-domain claim with approvalDigest present. Changing workspaceId must change digest; proves workspace identity is protected.",
       "protectedProjection": {
-        "דּ": 7,
-        "😀": 6,
-        "€": 5,
-        "ö": 4,
-        "": 3,
-        "a": 2,
-        "\r": 1
+        "schema": "webmcp-runner-claim/1",
+        "runId": "run_deadbeef00000022",
+        "claimGeneration": 5,
+        "workspaceId": "workspace_deadbeef00000022",
+        "projectId": "project_deadbeef00000022",
+        "sourceDigest": "sha256:0422b51c731ea4c9c74cb048385c57c6439d43718d75120eee925270c4658cbc",
+        "revisionDigest": "sha256:cc5e3204087a8e98a8cde1edf8f53edf672117543a5cc2d7755709aa4c583a7b",
+        "runbookDigest": "sha256:dcd5082089e900d16b25e8f9162ec56c1668169e78cfa3b436aafd8bef873dd5",
+        "requestDigest": "sha256:da75da75d2cce34cee62b2d7772f6b9ec2538905263fcc43461680bc7fad2436",
+        "inputBindingsDigest": "sha256:d5b31af22cd62aa250fa793d3f2227a229db921b79f0e9ba681401059a140d43",
+        "bindingId": "binding_deadbeef00000022",
+        "bindingRevision": 12,
+        "bindingDigest": "sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0",
+        "approvalDigest": "sha256:b3976b9876ee3623be33fc279a42b711189d81b00700366af598e067e90fb89d"
       },
-      "canonical": "{\"\\r\":1,\"a\":2,\"\":3,\"ö\":4,\"€\":5,\"😀\":6,\"דּ\":7}",
-      "domainLabel": "webmcp-digest-v1:binding",
-      "domainSeparation": "webmcp-digest-v1:binding",
-      "digest": "sha256:a130e6c1b814e9a6b36a28d5208e4d7e78df7861eb934ca6a8a6c8e8a1c20a03",
-      "contractId": "webmcp-jcs-vector/1",
+      "canonical": "{\"approvalDigest\":\"sha256:b3976b9876ee3623be33fc279a42b711189d81b00700366af598e067e90fb89d\",\"bindingDigest\":\"sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0\",\"bindingId\":\"binding_deadbeef00000022\",\"bindingRevision\":12,\"claimGeneration\":5,\"inputBindingsDigest\":\"sha256:d5b31af22cd62aa250fa793d3f2227a229db921b79f0e9ba681401059a140d43\",\"projectId\":\"project_deadbeef00000022\",\"requestDigest\":\"sha256:da75da75d2cce34cee62b2d7772f6b9ec2538905263fcc43461680bc7fad2436\",\"revisionDigest\":\"sha256:cc5e3204087a8e98a8cde1edf8f53edf672117543a5cc2d7755709aa4c583a7b\",\"runId\":\"run_deadbeef00000022\",\"runbookDigest\":\"sha256:dcd5082089e900d16b25e8f9162ec56c1668169e78cfa3b436aafd8bef873dd5\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:0422b51c731ea4c9c74cb048385c57c6439d43718d75120eee925270c4658cbc\",\"workspaceId\":\"workspace_deadbeef00000022\"}",
+      "domainLabel": "webmcp-digest-v1:claim",
+      "domainSeparation": "webmcp-digest-v1:claim",
+      "digest": "sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f",
+      "contractId": "webmcp-runner-claim/1",
+      "excludedFromDigest": [
+        "claimDigest",
+        "claimToken",
+        "createdAt",
+        "claimedAt"
+      ],
       "value": {
-        "דּ": 7,
-        "😀": 6,
-        "€": 5,
-        "ö": 4,
-        "": 3,
-        "a": 2,
-        "\r": 1
+        "schema": "webmcp-runner-claim/1",
+        "runId": "run_deadbeef00000022",
+        "claimGeneration": 5,
+        "workspaceId": "workspace_deadbeef00000022",
+        "projectId": "project_deadbeef00000022",
+        "sourceDigest": "sha256:0422b51c731ea4c9c74cb048385c57c6439d43718d75120eee925270c4658cbc",
+        "revisionDigest": "sha256:cc5e3204087a8e98a8cde1edf8f53edf672117543a5cc2d7755709aa4c583a7b",
+        "runbookDigest": "sha256:dcd5082089e900d16b25e8f9162ec56c1668169e78cfa3b436aafd8bef873dd5",
+        "requestDigest": "sha256:da75da75d2cce34cee62b2d7772f6b9ec2538905263fcc43461680bc7fad2436",
+        "inputBindingsDigest": "sha256:d5b31af22cd62aa250fa793d3f2227a229db921b79f0e9ba681401059a140d43",
+        "bindingId": "binding_deadbeef00000022",
+        "bindingRevision": 12,
+        "bindingDigest": "sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0",
+        "approvalDigest": "sha256:b3976b9876ee3623be33fc279a42b711189d81b00700366af598e067e90fb89d",
+        "claimDigest": "sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f",
+        "claimToken": "claim-token-canary-22",
+        "createdAt": "2026-08-27T01:00:00.000Z",
+        "claimedAt": "2026-08-27T01:00:05.000Z"
       },
       "mutation": {
         "protectedProjection": {
-          "דּ": 7,
-          "😀": 6,
-          "€": 5,
-          "ö": 4,
-          "": 3,
-          "a": 3,
-          "\r": 1
+          "schema": "webmcp-runner-claim/1",
+          "runId": "run_deadbeef00000022",
+          "claimGeneration": 5,
+          "workspaceId": "workspace_deadbeef00000023",
+          "projectId": "project_deadbeef00000022",
+          "sourceDigest": "sha256:0422b51c731ea4c9c74cb048385c57c6439d43718d75120eee925270c4658cbc",
+          "revisionDigest": "sha256:cc5e3204087a8e98a8cde1edf8f53edf672117543a5cc2d7755709aa4c583a7b",
+          "runbookDigest": "sha256:dcd5082089e900d16b25e8f9162ec56c1668169e78cfa3b436aafd8bef873dd5",
+          "requestDigest": "sha256:da75da75d2cce34cee62b2d7772f6b9ec2538905263fcc43461680bc7fad2436",
+          "inputBindingsDigest": "sha256:d5b31af22cd62aa250fa793d3f2227a229db921b79f0e9ba681401059a140d43",
+          "bindingId": "binding_deadbeef00000022",
+          "bindingRevision": 12,
+          "bindingDigest": "sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0",
+          "approvalDigest": "sha256:b3976b9876ee3623be33fc279a42b711189d81b00700366af598e067e90fb89d"
         },
-        "canonical": "{\"\\r\":1,\"a\":3,\"\":3,\"ö\":4,\"€\":5,\"😀\":6,\"דּ\":7}",
-        "digest": "sha256:d2d323ee432a569a96e63928c1394dad19115de090ec5c098b9b97d902740989",
+        "canonical": "{\"approvalDigest\":\"sha256:b3976b9876ee3623be33fc279a42b711189d81b00700366af598e067e90fb89d\",\"bindingDigest\":\"sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0\",\"bindingId\":\"binding_deadbeef00000022\",\"bindingRevision\":12,\"claimGeneration\":5,\"inputBindingsDigest\":\"sha256:d5b31af22cd62aa250fa793d3f2227a229db921b79f0e9ba681401059a140d43\",\"projectId\":\"project_deadbeef00000022\",\"requestDigest\":\"sha256:da75da75d2cce34cee62b2d7772f6b9ec2538905263fcc43461680bc7fad2436\",\"revisionDigest\":\"sha256:cc5e3204087a8e98a8cde1edf8f53edf672117543a5cc2d7755709aa4c583a7b\",\"runId\":\"run_deadbeef00000022\",\"runbookDigest\":\"sha256:dcd5082089e900d16b25e8f9162ec56c1668169e78cfa3b436aafd8bef873dd5\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:0422b51c731ea4c9c74cb048385c57c6439d43718d75120eee925270c4658cbc\",\"workspaceId\":\"workspace_deadbeef00000023\"}",
+        "digest": "sha256:e1fd99fd53b404d8a5b0bf316771a22bb3651a880d0fd72939ddf4680940bccf",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs where applicable, D1 JCS, non-placeholder digests — must be byte-identical across Runner, Workflow CLI, Browser Kit"
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no raw profile path, no secret, D1 JCS"
     },
     {
-      "name": "mutation-proves-digest-fails",
-      "description": "Mutation test — changing one protected field (profileAlias) must change digest. Proves bindingDigest is protected composition.",
+      "name": "claim-initial-generation",
+      "description": "Initial claim generation 0 with bindingRevision 1. Mutation of bindingRevision must change digest; proves binding pin is protected.",
       "protectedProjection": {
-        "schema": "webmcp-profile-binding/3",
-        "bindingId": "binding_deadbeef00000031",
-        "bindingRevision": 5,
-        "profileAlias": "research-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "enforce",
-        "allowedSiteIds": [
-          "example-site"
-        ],
-        "allowedAutomationIds": [
-          "example-research-runbook"
-        ]
+        "schema": "webmcp-runner-claim/1",
+        "runId": "run_deadbeef00000023",
+        "claimGeneration": 0,
+        "workspaceId": "workspace_deadbeef00000023",
+        "projectId": "project_deadbeef00000023",
+        "sourceDigest": "sha256:6401dc7779ddf2550ec84324f818ab72129dc536439c529c049877915482ff76",
+        "revisionDigest": "sha256:4734bd9872859e7fedfa7c748a9f8727e2e9ac3cd3b2adf1694c5348b847845c",
+        "runbookDigest": "sha256:79c116565d798e3f4fc7339d6382e57af1e5cb10a76c479f3df1c9b368818026",
+        "requestDigest": "sha256:4c711d8786d409bc95b54d5206e23e8a84e15c41cbead8e1417e5414ede871f5",
+        "inputBindingsDigest": "sha256:fbb669295dc80666bf1bb44b384edbb646e98be7dee2912d1471240c87e5fbcf",
+        "bindingId": "binding_deadbeef00000023",
+        "bindingRevision": 1,
+        "bindingDigest": "sha256:56c14066b262e5f558db1e5f7a0e4d58a6af141be54413f50ff55c2283925bc4",
+        "approvalDigest": null
       },
-      "baseValue": {
-        "schema": "webmcp-profile-binding/3",
-        "bindingId": "binding_deadbeef00000031",
-        "bindingRevision": 5,
-        "profileAlias": "research-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "enforce",
-        "allowedSiteIds": [
-          "example-site"
-        ],
-        "allowedAutomationIds": [
-          "example-research-runbook"
-        ]
+      "canonical": "{\"approvalDigest\":null,\"bindingDigest\":\"sha256:56c14066b262e5f558db1e5f7a0e4d58a6af141be54413f50ff55c2283925bc4\",\"bindingId\":\"binding_deadbeef00000023\",\"bindingRevision\":1,\"claimGeneration\":0,\"inputBindingsDigest\":\"sha256:fbb669295dc80666bf1bb44b384edbb646e98be7dee2912d1471240c87e5fbcf\",\"projectId\":\"project_deadbeef00000023\",\"requestDigest\":\"sha256:4c711d8786d409bc95b54d5206e23e8a84e15c41cbead8e1417e5414ede871f5\",\"revisionDigest\":\"sha256:4734bd9872859e7fedfa7c748a9f8727e2e9ac3cd3b2adf1694c5348b847845c\",\"runId\":\"run_deadbeef00000023\",\"runbookDigest\":\"sha256:79c116565d798e3f4fc7339d6382e57af1e5cb10a76c479f3df1c9b368818026\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:6401dc7779ddf2550ec84324f818ab72129dc536439c529c049877915482ff76\",\"workspaceId\":\"workspace_deadbeef00000023\"}",
+      "domainLabel": "webmcp-digest-v1:claim",
+      "domainSeparation": "webmcp-digest-v1:claim",
+      "digest": "sha256:44b161aec49973dc99b114b22c65cfa9fdc02dd43b514a241b036ec05932a944",
+      "contractId": "webmcp-runner-claim/1",
+      "excludedFromDigest": [
+        "claimDigest",
+        "claimToken",
+        "createdAt",
+        "claimedAt"
+      ],
+      "value": {
+        "schema": "webmcp-runner-claim/1",
+        "runId": "run_deadbeef00000023",
+        "claimGeneration": 0,
+        "workspaceId": "workspace_deadbeef00000023",
+        "projectId": "project_deadbeef00000023",
+        "sourceDigest": "sha256:6401dc7779ddf2550ec84324f818ab72129dc536439c529c049877915482ff76",
+        "revisionDigest": "sha256:4734bd9872859e7fedfa7c748a9f8727e2e9ac3cd3b2adf1694c5348b847845c",
+        "runbookDigest": "sha256:79c116565d798e3f4fc7339d6382e57af1e5cb10a76c479f3df1c9b368818026",
+        "requestDigest": "sha256:4c711d8786d409bc95b54d5206e23e8a84e15c41cbead8e1417e5414ede871f5",
+        "inputBindingsDigest": "sha256:fbb669295dc80666bf1bb44b384edbb646e98be7dee2912d1471240c87e5fbcf",
+        "bindingId": "binding_deadbeef00000023",
+        "bindingRevision": 1,
+        "bindingDigest": "sha256:56c14066b262e5f558db1e5f7a0e4d58a6af141be54413f50ff55c2283925bc4",
+        "approvalDigest": null,
+        "claimDigest": "sha256:44b161aec49973dc99b114b22c65cfa9fdc02dd43b514a241b036ec05932a944",
+        "claimToken": "claim-token-canary-23",
+        "createdAt": "2026-08-27T02:00:00.000Z",
+        "claimedAt": "2026-08-27T02:00:02.000Z"
       },
-      "mutatedValue": {
-        "schema": "webmcp-profile-binding/3",
-        "bindingId": "binding_deadbeef00000031",
-        "bindingRevision": 5,
-        "profileAlias": "media-profile",
-        "assignmentMode": "dedicated",
-        "trustDomain": null,
-        "policyMode": "enforce",
-        "allowedSiteIds": [
-          "example-site"
-        ],
-        "allowedAutomationIds": [
-          "example-research-runbook"
-        ]
-      },
-      "contractId": "webmcp-profile-binding/3",
-      "baseCanonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-      "baseDigest": "sha256:ef5e827330a8171484007f7417b171c23c98e15c7d6c3f4d1a0031ff770bc616",
-      "mutatedCanonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-      "mutatedDigest": "sha256:6f92e25db29e86261f179883746d6fdc331e8654ca51da076cb1f19da62791ce",
-      "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"research-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-      "digest": "sha256:ef5e827330a8171484007f7417b171c23c98e15c7d6c3f4d1a0031ff770bc616",
-      "domainLabel": "webmcp-digest-v1:binding",
-      "domainSeparation": "webmcp-digest-v1:binding",
-      "digestsDiffer": true,
       "mutation": {
         "protectedProjection": {
-          "schema": "webmcp-profile-binding/3",
-          "bindingId": "binding_deadbeef00000031",
-          "bindingRevision": 5,
-          "profileAlias": "media-profile",
-          "assignmentMode": "dedicated",
-          "trustDomain": null,
-          "policyMode": "enforce",
-          "allowedSiteIds": [
-            "example-site"
-          ],
-          "allowedAutomationIds": [
-            "example-research-runbook"
-          ]
+          "schema": "webmcp-runner-claim/1",
+          "runId": "run_deadbeef00000023",
+          "claimGeneration": 0,
+          "workspaceId": "workspace_deadbeef00000023",
+          "projectId": "project_deadbeef00000023",
+          "sourceDigest": "sha256:6401dc7779ddf2550ec84324f818ab72129dc536439c529c049877915482ff76",
+          "revisionDigest": "sha256:4734bd9872859e7fedfa7c748a9f8727e2e9ac3cd3b2adf1694c5348b847845c",
+          "runbookDigest": "sha256:79c116565d798e3f4fc7339d6382e57af1e5cb10a76c479f3df1c9b368818026",
+          "requestDigest": "sha256:4c711d8786d409bc95b54d5206e23e8a84e15c41cbead8e1417e5414ede871f5",
+          "inputBindingsDigest": "sha256:fbb669295dc80666bf1bb44b384edbb646e98be7dee2912d1471240c87e5fbcf",
+          "bindingId": "binding_deadbeef00000023",
+          "bindingRevision": 2,
+          "bindingDigest": "sha256:56c14066b262e5f558db1e5f7a0e4d58a6af141be54413f50ff55c2283925bc4",
+          "approvalDigest": null
         },
-        "canonical": "{\"allowedAutomationIds\":[\"example-research-runbook\"],\"allowedSiteIds\":[\"example-site\"],\"assignmentMode\":\"dedicated\",\"bindingId\":\"binding_deadbeef00000031\",\"bindingRevision\":5,\"policyMode\":\"enforce\",\"profileAlias\":\"media-profile\",\"schema\":\"webmcp-profile-binding/3\",\"trustDomain\":null}",
-        "digest": "sha256:6f92e25db29e86261f179883746d6fdc331e8654ca51da076cb1f19da62791ce",
+        "canonical": "{\"approvalDigest\":null,\"bindingDigest\":\"sha256:56c14066b262e5f558db1e5f7a0e4d58a6af141be54413f50ff55c2283925bc4\",\"bindingId\":\"binding_deadbeef00000023\",\"bindingRevision\":2,\"claimGeneration\":0,\"inputBindingsDigest\":\"sha256:fbb669295dc80666bf1bb44b384edbb646e98be7dee2912d1471240c87e5fbcf\",\"projectId\":\"project_deadbeef00000023\",\"requestDigest\":\"sha256:4c711d8786d409bc95b54d5206e23e8a84e15c41cbead8e1417e5414ede871f5\",\"revisionDigest\":\"sha256:4734bd9872859e7fedfa7c748a9f8727e2e9ac3cd3b2adf1694c5348b847845c\",\"runId\":\"run_deadbeef00000023\",\"runbookDigest\":\"sha256:79c116565d798e3f4fc7339d6382e57af1e5cb10a76c479f3df1c9b368818026\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:6401dc7779ddf2550ec84324f818ab72129dc536439c529c049877915482ff76\",\"workspaceId\":\"workspace_deadbeef00000023\"}",
+        "digest": "sha256:5fd14a50b99e5efed5cc4a1420ddb181eeea5525d4180628e54b687809710f89",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed lowercase hex synthetic IDs, D1 JCS — must be byte-identical across Runner, Workflow CLI, Browser Kit"
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no raw profile path, no secret, D1 JCS"
+    },
+    {
+      "name": "claim-project-identity",
+      "description": "Claim covering both workspaceId and projectId with distinct inputBindingsDigest. Mutation of inputBindingsDigest must change digest; proves input pinning is protected.",
+      "protectedProjection": {
+        "schema": "webmcp-runner-claim/1",
+        "runId": "run_deadbeef00000024",
+        "claimGeneration": 2,
+        "workspaceId": "workspace_deadbeef00000024",
+        "projectId": "project_deadbeef00000024",
+        "sourceDigest": "sha256:49a49e0ee170a2921ba2b4d37fea45078b0e6e28fec98ea2410c2c33b6056c7c",
+        "revisionDigest": "sha256:d64de955e2fda0ce0be8974bb905be60ad9122ea56083cb1f694f39c0b804a97",
+        "runbookDigest": "sha256:3c47ff77018ae02a22bcc83d859d26f617aa8f8661cd2aa24d9e8a49f1b765b8",
+        "requestDigest": "sha256:d8224e3468db9211ec60d5bd8cce862528f3a84639abfec42b97b9bdcdd04366",
+        "inputBindingsDigest": "sha256:1d84f1f1b1e1d8fa588252dd098b9cc3806f667befe6e97d7dd11b502f5a55bf",
+        "bindingId": "binding_deadbeef00000024",
+        "bindingRevision": 5,
+        "bindingDigest": "sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136",
+        "approvalDigest": "sha256:84ac3fab694f7ed065c7131e56755abe04f9b22b9e5763320ce849e8774cac01"
+      },
+      "canonical": "{\"approvalDigest\":\"sha256:84ac3fab694f7ed065c7131e56755abe04f9b22b9e5763320ce849e8774cac01\",\"bindingDigest\":\"sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136\",\"bindingId\":\"binding_deadbeef00000024\",\"bindingRevision\":5,\"claimGeneration\":2,\"inputBindingsDigest\":\"sha256:1d84f1f1b1e1d8fa588252dd098b9cc3806f667befe6e97d7dd11b502f5a55bf\",\"projectId\":\"project_deadbeef00000024\",\"requestDigest\":\"sha256:d8224e3468db9211ec60d5bd8cce862528f3a84639abfec42b97b9bdcdd04366\",\"revisionDigest\":\"sha256:d64de955e2fda0ce0be8974bb905be60ad9122ea56083cb1f694f39c0b804a97\",\"runId\":\"run_deadbeef00000024\",\"runbookDigest\":\"sha256:3c47ff77018ae02a22bcc83d859d26f617aa8f8661cd2aa24d9e8a49f1b765b8\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:49a49e0ee170a2921ba2b4d37fea45078b0e6e28fec98ea2410c2c33b6056c7c\",\"workspaceId\":\"workspace_deadbeef00000024\"}",
+      "domainLabel": "webmcp-digest-v1:claim",
+      "domainSeparation": "webmcp-digest-v1:claim",
+      "digest": "sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579",
+      "contractId": "webmcp-runner-claim/1",
+      "excludedFromDigest": [
+        "claimDigest",
+        "claimToken",
+        "createdAt",
+        "claimedAt"
+      ],
+      "value": {
+        "schema": "webmcp-runner-claim/1",
+        "runId": "run_deadbeef00000024",
+        "claimGeneration": 2,
+        "workspaceId": "workspace_deadbeef00000024",
+        "projectId": "project_deadbeef00000024",
+        "sourceDigest": "sha256:49a49e0ee170a2921ba2b4d37fea45078b0e6e28fec98ea2410c2c33b6056c7c",
+        "revisionDigest": "sha256:d64de955e2fda0ce0be8974bb905be60ad9122ea56083cb1f694f39c0b804a97",
+        "runbookDigest": "sha256:3c47ff77018ae02a22bcc83d859d26f617aa8f8661cd2aa24d9e8a49f1b765b8",
+        "requestDigest": "sha256:d8224e3468db9211ec60d5bd8cce862528f3a84639abfec42b97b9bdcdd04366",
+        "inputBindingsDigest": "sha256:1d84f1f1b1e1d8fa588252dd098b9cc3806f667befe6e97d7dd11b502f5a55bf",
+        "bindingId": "binding_deadbeef00000024",
+        "bindingRevision": 5,
+        "bindingDigest": "sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136",
+        "approvalDigest": "sha256:84ac3fab694f7ed065c7131e56755abe04f9b22b9e5763320ce849e8774cac01",
+        "claimDigest": "sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579",
+        "claimToken": "claim-token-canary-24",
+        "createdAt": "2026-08-27T03:00:00.000Z",
+        "claimedAt": "2026-08-27T03:00:03.000Z"
+      },
+      "mutation": {
+        "protectedProjection": {
+          "schema": "webmcp-runner-claim/1",
+          "runId": "run_deadbeef00000024",
+          "claimGeneration": 2,
+          "workspaceId": "workspace_deadbeef00000024",
+          "projectId": "project_deadbeef00000024",
+          "sourceDigest": "sha256:49a49e0ee170a2921ba2b4d37fea45078b0e6e28fec98ea2410c2c33b6056c7c",
+          "revisionDigest": "sha256:d64de955e2fda0ce0be8974bb905be60ad9122ea56083cb1f694f39c0b804a97",
+          "runbookDigest": "sha256:3c47ff77018ae02a22bcc83d859d26f617aa8f8661cd2aa24d9e8a49f1b765b8",
+          "requestDigest": "sha256:d8224e3468db9211ec60d5bd8cce862528f3a84639abfec42b97b9bdcdd04366",
+          "inputBindingsDigest": "sha256:c7383b6280d2bcb5c4ff605c6887823e651e15ef19d7c2b35d9f0f79f7f8141a",
+          "bindingId": "binding_deadbeef00000024",
+          "bindingRevision": 5,
+          "bindingDigest": "sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136",
+          "approvalDigest": "sha256:84ac3fab694f7ed065c7131e56755abe04f9b22b9e5763320ce849e8774cac01"
+        },
+        "canonical": "{\"approvalDigest\":\"sha256:84ac3fab694f7ed065c7131e56755abe04f9b22b9e5763320ce849e8774cac01\",\"bindingDigest\":\"sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136\",\"bindingId\":\"binding_deadbeef00000024\",\"bindingRevision\":5,\"claimGeneration\":2,\"inputBindingsDigest\":\"sha256:c7383b6280d2bcb5c4ff605c6887823e651e15ef19d7c2b35d9f0f79f7f8141a\",\"projectId\":\"project_deadbeef00000024\",\"requestDigest\":\"sha256:d8224e3468db9211ec60d5bd8cce862528f3a84639abfec42b97b9bdcdd04366\",\"revisionDigest\":\"sha256:d64de955e2fda0ce0be8974bb905be60ad9122ea56083cb1f694f39c0b804a97\",\"runId\":\"run_deadbeef00000024\",\"runbookDigest\":\"sha256:3c47ff77018ae02a22bcc83d859d26f617aa8f8661cd2aa24d9e8a49f1b765b8\",\"schema\":\"webmcp-runner-claim/1\",\"sourceDigest\":\"sha256:49a49e0ee170a2921ba2b4d37fea45078b0e6e28fec98ea2410c2c33b6056c7c\",\"workspaceId\":\"workspace_deadbeef00000024\"}",
+        "digest": "sha256:40849252fc1ee5b387d6a859269f39864ea0cbfddc5f675f483846cbe404676c",
+        "digestsDiffer": true
+      },
+      "syntheticNote": "prefixed lowercase hex synthetic IDs (16 hex), non-placeholder canary digests — no raw profile path, no secret, D1 JCS"
     }
   ]
 }

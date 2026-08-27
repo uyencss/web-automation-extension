@@ -3,283 +3,488 @@
   "contract": "webmcp-execution-permit/1",
   "generatedAt": "2026-08-27T00:00:00.000Z",
   "synthetic": true,
-  "note": "D1-compliant permit vectors: RFC8785 JCS, domainLabel LF, detached signature excluded, TTL 60s max, prefixed hex IDs, reproducible digests.",
+  "note": "D1-compliant permit vectors: RFC8785 JCS, domainLabel LF, detached signature and permitDigest excluded, TTL 60s max, prefixed hex IDs, frozen composition (claimDigest + runId/claimGeneration + bindingId/bindingRevision/bindingDigest + exact action scope projectId/profileAlias/phaseId/origins/actionClasses/budget + keyId/nonce/revocation/validity window), reproducible digests. claimDigest references shared claim-digest fixture; profileAlias uses policy-plan kebab grammar.",
   "vectors": [
     {
       "name": "valid-permit-ttl-60s",
-      "description": "Valid execution permit — 60s TTL, notBefore/expiresAt window matches ttlMs, hex nonce, hex signature placeholder detached, prefixed hex IDs.",
+      "description": "Valid execution permit \u2014 60s TTL, notBefore/expiresAt matches ttlMs, hex nonce, hex signature detached, prefixed hex IDs, frozen composition includes binding pin and exact action scope (project/phase/origins/actionClasses/budget).",
       "value": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000041",
-        "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
-        "runId": "run_deadbeef00000041",
+        "runId": "run_deadbeef00000021",
         "claimGeneration": 3,
+        "projectId": "project_deadbeef00000021",
+        "bindingId": "binding_deadbeef00000021",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d",
+        "phaseId": "publish",
+        "origins": [
+          "https://example.com"
+        ],
+        "actionClasses": [
+          "browser.navigate"
+        ],
+        "budget": {
+          "maxCalls": 10
+        },
         "stateVersion": 4,
         "planRevision": 2,
-        "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-        "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-        "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+        "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+        "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+        "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
         "keyId": "ed25519-test-key-01",
+        "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "notBefore": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "ttlMs": 60000,
         "revocationId": "revoke_deadbeef00000041",
-        "signature": "7f8a53ba162894d1bcd13fab9f66ee4c24b71d8e1b5c468418477f3180d6ea570eca14bf49288d781bfd3733798ac72f54f4ae7b556a8b9588e2f977d7e49ce9"
+        "permitDigest": "sha256:5f3d035e4c3bdb488eb3849308d5c886255a3edb0aa8d7d3d032105bc1b7ed62",
+        "signature": "7f8a53ba162894d1bcd13fab9f66ee4c24b71d8e1b5c468418477f3180d6ea570eca14bf49288d781bfd3733798ac72f54f4ae7b556a8b9588e2f977d7e49ce9",
+        "claimDigest": "sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52",
+        "profileAlias": "research-profile"
       },
       "projection": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000041",
-        "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
-        "runId": "run_deadbeef00000041",
+        "runId": "run_deadbeef00000021",
         "claimGeneration": 3,
+        "projectId": "project_deadbeef00000021",
+        "bindingId": "binding_deadbeef00000021",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d",
+        "phaseId": "publish",
+        "origins": [
+          "https://example.com"
+        ],
+        "actionClasses": [
+          "browser.navigate"
+        ],
+        "budget": {
+          "maxCalls": 10
+        },
         "stateVersion": 4,
         "planRevision": 2,
-        "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-        "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-        "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+        "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+        "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+        "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
         "keyId": "ed25519-test-key-01",
+        "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "notBefore": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "ttlMs": 60000,
-        "revocationId": "revoke_deadbeef00000041"
+        "revocationId": "revoke_deadbeef00000041",
+        "claimDigest": "sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52",
+        "profileAlias": "research-profile"
       },
       "protectedProjection": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000041",
-        "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
-        "runId": "run_deadbeef00000041",
+        "runId": "run_deadbeef00000021",
         "claimGeneration": 3,
+        "projectId": "project_deadbeef00000021",
+        "bindingId": "binding_deadbeef00000021",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d",
+        "phaseId": "publish",
+        "origins": [
+          "https://example.com"
+        ],
+        "actionClasses": [
+          "browser.navigate"
+        ],
+        "budget": {
+          "maxCalls": 10
+        },
         "stateVersion": 4,
         "planRevision": 2,
-        "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-        "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-        "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+        "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+        "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+        "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
         "keyId": "ed25519-test-key-01",
+        "nonce": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "notBefore": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "ttlMs": 60000,
-        "revocationId": "revoke_deadbeef00000041"
+        "revocationId": "revoke_deadbeef00000041",
+        "claimDigest": "sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52",
+        "profileAlias": "research-profile"
       },
-      "canonical": "{\"claimGeneration\":3,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"permitId\":\"permit_deadbeef00000041\",\"planDigest\":\"sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64\",\"planRevision\":2,\"policyRevision\":\"sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053\",\"revocationId\":\"revoke_deadbeef00000041\",\"runId\":\"run_deadbeef00000041\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
-      "digest": "sha256:de6073f371f22886216711086c6066b3bb6b6ee667c7e8215a07d00e55a51c6c",
+      "canonical": "{\"actionClasses\":[\"browser.navigate\"],\"bindingDigest\":\"sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d\",\"bindingId\":\"binding_deadbeef00000021\",\"bindingRevision\":7,\"budget\":{\"maxCalls\":10},\"claimDigest\":\"sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52\",\"claimGeneration\":3,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"origins\":[\"https://example.com\"],\"permitId\":\"permit_deadbeef00000041\",\"phaseId\":\"publish\",\"planDigest\":\"sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d\",\"planRevision\":2,\"policyRevision\":\"sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d\",\"profileAlias\":\"research-profile\",\"projectId\":\"project_deadbeef00000021\",\"revocationId\":\"revoke_deadbeef00000041\",\"runId\":\"run_deadbeef00000021\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
+      "digest": "sha256:5f3d035e4c3bdb488eb3849308d5c886255a3edb0aa8d7d3d032105bc1b7ed62",
       "contractId": "webmcp-execution-permit/1",
       "domainLabel": "webmcp-digest-v1:permit",
       "domainSeparation": "webmcp-digest-v1:permit",
       "signatureExcluded": true,
       "excludedFromDigest": [
+        "permitDigest",
         "signature"
       ],
+      "permitDigest": "sha256:5f3d035e4c3bdb488eb3849308d5c886255a3edb0aa8d7d3d032105bc1b7ed62",
       "mutation": {
         "protectedProjection": {
           "schema": "webmcp-execution-permit/1",
           "permitId": "permit_deadbeef00000041",
-          "nonce": "6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
-          "runId": "run_deadbeef00000041",
+          "runId": "run_deadbeef00000021",
           "claimGeneration": 3,
+          "projectId": "project_deadbeef00000021",
+          "bindingId": "binding_deadbeef00000021",
+          "bindingRevision": 7,
+          "bindingDigest": "sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d",
+          "phaseId": "publish",
+          "origins": [
+            "https://example.com"
+          ],
+          "actionClasses": [
+            "browser.navigate"
+          ],
+          "budget": {
+            "maxCalls": 10
+          },
           "stateVersion": 4,
           "planRevision": 2,
-          "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-          "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-          "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+          "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+          "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+          "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
           "keyId": "ed25519-test-key-01",
+          "nonce": "6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
           "issuedAt": "2026-08-27T00:00:00.000Z",
           "notBefore": "2026-08-27T00:00:00.000Z",
           "expiresAt": "2026-08-27T00:01:00.000Z",
           "ttlMs": 60000,
-          "revocationId": "revoke_deadbeef00000041"
+          "revocationId": "revoke_deadbeef00000041",
+          "claimDigest": "sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52",
+          "profileAlias": "research-profile"
         },
-        "canonical": "{\"claimGeneration\":3,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"permitId\":\"permit_deadbeef00000041\",\"planDigest\":\"sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64\",\"planRevision\":2,\"policyRevision\":\"sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053\",\"revocationId\":\"revoke_deadbeef00000041\",\"runId\":\"run_deadbeef00000041\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
-        "digest": "sha256:e09156a8db1e7e2ccaac2a92b5783bc509a9289ea3b1ae1a7869fc6c2c8bdcea",
+        "canonical": "{\"actionClasses\":[\"browser.navigate\"],\"bindingDigest\":\"sha256:83ad62429d3b7d2505da2de26d18061c22cb8972f6f98ad7f83b9d130b5c2f4d\",\"bindingId\":\"binding_deadbeef00000021\",\"bindingRevision\":7,\"budget\":{\"maxCalls\":10},\"claimDigest\":\"sha256:0d50a8179acad0fdb10f22243af84e3e916c38e07796f1a0915e4f6bdf534a52\",\"claimGeneration\":3,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"origins\":[\"https://example.com\"],\"permitId\":\"permit_deadbeef00000041\",\"phaseId\":\"publish\",\"planDigest\":\"sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d\",\"planRevision\":2,\"policyRevision\":\"sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d\",\"profileAlias\":\"research-profile\",\"projectId\":\"project_deadbeef00000021\",\"revocationId\":\"revoke_deadbeef00000041\",\"runId\":\"run_deadbeef00000021\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
+        "digest": "sha256:6ae0019360a6e77e75878650dec06f32761c65409922ea7bf3aec40369af68e9",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed hex IDs (16 hex), hex nonce (32 hex), hex signature placeholder (128 hex) — no real key material, D1 JCS"
+      "syntheticNote": "prefixed hex IDs (16 hex), hex nonce (32 hex), hex signature (128 hex) \u2014 no real key material, D1 JCS"
     },
     {
       "name": "permit-replay-sibling-nonce",
-      "description": "Sibling permit with different nonce — same run/plan but distinct nonce must produce different digest; proves nonce is part of protected payload.",
+      "description": "Sibling permit with different nonce \u2014 same run/plan but distinct nonce must produce different digest; proves nonce is part of protected payload.",
       "value": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000042",
-        "nonce": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7",
-        "runId": "run_deadbeef00000041",
-        "claimGeneration": 3,
+        "runId": "run_deadbeef00000022",
+        "claimGeneration": 5,
+        "projectId": "project_deadbeef00000022",
+        "bindingId": "binding_deadbeef00000022",
+        "bindingRevision": 12,
+        "bindingDigest": "sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0",
+        "phaseId": "publish",
+        "origins": [
+          "https://example.com"
+        ],
+        "actionClasses": [
+          "browser.navigate"
+        ],
+        "budget": {
+          "maxCalls": 10
+        },
         "stateVersion": 4,
         "planRevision": 2,
-        "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-        "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-        "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+        "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+        "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+        "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
         "keyId": "ed25519-test-key-01",
+        "nonce": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7",
         "issuedAt": "2026-08-27T00:00:10.000Z",
         "notBefore": "2026-08-27T00:00:10.000Z",
         "expiresAt": "2026-08-27T00:01:10.000Z",
         "ttlMs": 60000,
         "revocationId": "revoke_deadbeef00000042",
-        "signature": "5d716d1e2a7db7b8e081e96827bf4bb8cd736a5a08e2972e2a14697f1739aeccf0a41b86bc416717dcc64e87c0074fc52f8d998669e46ceb5793837d847ed2de"
+        "permitDigest": "sha256:5c5752708439d44cae1a79cb4bb6237254f30ce205a10276c7de9358e858ce3b",
+        "signature": "5d716d1e2a7db7b8e081e96827bf4bb8cd736a5a08e2972e2a14697f1739aeccf0a41b86bc416717dcc64e87c0074fc52f8d998669e46ceb5793837d847ed2de",
+        "claimDigest": "sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f",
+        "profileAlias": "research-profile"
       },
       "projection": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000042",
-        "nonce": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7",
-        "runId": "run_deadbeef00000041",
-        "claimGeneration": 3,
+        "runId": "run_deadbeef00000022",
+        "claimGeneration": 5,
+        "projectId": "project_deadbeef00000022",
+        "bindingId": "binding_deadbeef00000022",
+        "bindingRevision": 12,
+        "bindingDigest": "sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0",
+        "phaseId": "publish",
+        "origins": [
+          "https://example.com"
+        ],
+        "actionClasses": [
+          "browser.navigate"
+        ],
+        "budget": {
+          "maxCalls": 10
+        },
         "stateVersion": 4,
         "planRevision": 2,
-        "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-        "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-        "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+        "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+        "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+        "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
         "keyId": "ed25519-test-key-01",
+        "nonce": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7",
         "issuedAt": "2026-08-27T00:00:10.000Z",
         "notBefore": "2026-08-27T00:00:10.000Z",
         "expiresAt": "2026-08-27T00:01:10.000Z",
         "ttlMs": 60000,
-        "revocationId": "revoke_deadbeef00000042"
+        "revocationId": "revoke_deadbeef00000042",
+        "claimDigest": "sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f",
+        "profileAlias": "research-profile"
       },
       "protectedProjection": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000042",
-        "nonce": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7",
-        "runId": "run_deadbeef00000041",
-        "claimGeneration": 3,
+        "runId": "run_deadbeef00000022",
+        "claimGeneration": 5,
+        "projectId": "project_deadbeef00000022",
+        "bindingId": "binding_deadbeef00000022",
+        "bindingRevision": 12,
+        "bindingDigest": "sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0",
+        "phaseId": "publish",
+        "origins": [
+          "https://example.com"
+        ],
+        "actionClasses": [
+          "browser.navigate"
+        ],
+        "budget": {
+          "maxCalls": 10
+        },
         "stateVersion": 4,
         "planRevision": 2,
-        "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-        "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-        "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+        "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+        "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+        "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
         "keyId": "ed25519-test-key-01",
+        "nonce": "b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7",
         "issuedAt": "2026-08-27T00:00:10.000Z",
         "notBefore": "2026-08-27T00:00:10.000Z",
         "expiresAt": "2026-08-27T00:01:10.000Z",
         "ttlMs": 60000,
-        "revocationId": "revoke_deadbeef00000042"
+        "revocationId": "revoke_deadbeef00000042",
+        "claimDigest": "sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f",
+        "profileAlias": "research-profile"
       },
-      "canonical": "{\"claimGeneration\":3,\"expiresAt\":\"2026-08-27T00:01:10.000Z\",\"instructionDigest\":\"sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8\",\"issuedAt\":\"2026-08-27T00:00:10.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7\",\"notBefore\":\"2026-08-27T00:00:10.000Z\",\"permitId\":\"permit_deadbeef00000042\",\"planDigest\":\"sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64\",\"planRevision\":2,\"policyRevision\":\"sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053\",\"revocationId\":\"revoke_deadbeef00000042\",\"runId\":\"run_deadbeef00000041\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
-      "digest": "sha256:1aab7a735c2cb58b4ce9733e83504be1f640479d36ea767e9e0d0f5c2227bb23",
+      "canonical": "{\"actionClasses\":[\"browser.navigate\"],\"bindingDigest\":\"sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0\",\"bindingId\":\"binding_deadbeef00000022\",\"bindingRevision\":12,\"budget\":{\"maxCalls\":10},\"claimDigest\":\"sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f\",\"claimGeneration\":5,\"expiresAt\":\"2026-08-27T00:01:10.000Z\",\"instructionDigest\":\"sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4\",\"issuedAt\":\"2026-08-27T00:00:10.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7\",\"notBefore\":\"2026-08-27T00:00:10.000Z\",\"origins\":[\"https://example.com\"],\"permitId\":\"permit_deadbeef00000042\",\"phaseId\":\"publish\",\"planDigest\":\"sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d\",\"planRevision\":2,\"policyRevision\":\"sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d\",\"profileAlias\":\"research-profile\",\"projectId\":\"project_deadbeef00000022\",\"revocationId\":\"revoke_deadbeef00000042\",\"runId\":\"run_deadbeef00000022\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
+      "digest": "sha256:5c5752708439d44cae1a79cb4bb6237254f30ce205a10276c7de9358e858ce3b",
       "contractId": "webmcp-execution-permit/1",
       "domainLabel": "webmcp-digest-v1:permit",
       "domainSeparation": "webmcp-digest-v1:permit",
       "signatureExcluded": true,
       "excludedFromDigest": [
+        "permitDigest",
         "signature"
       ],
+      "permitDigest": "sha256:5c5752708439d44cae1a79cb4bb6237254f30ce205a10276c7de9358e858ce3b",
       "mutation": {
         "protectedProjection": {
           "schema": "webmcp-execution-permit/1",
           "permitId": "permit_deadbeef00000042",
-          "nonce": "7a6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b",
-          "runId": "run_deadbeef00000041",
-          "claimGeneration": 3,
+          "runId": "run_deadbeef00000022",
+          "claimGeneration": 5,
+          "projectId": "project_deadbeef00000022",
+          "bindingId": "binding_deadbeef00000022",
+          "bindingRevision": 12,
+          "bindingDigest": "sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0",
+          "phaseId": "publish",
+          "origins": [
+            "https://example.com"
+          ],
+          "actionClasses": [
+            "browser.navigate"
+          ],
+          "budget": {
+            "maxCalls": 10
+          },
           "stateVersion": 4,
           "planRevision": 2,
-          "planDigest": "sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64",
-          "instructionDigest": "sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8",
-          "policyRevision": "sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053",
+          "planDigest": "sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d",
+          "instructionDigest": "sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4",
+          "policyRevision": "sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d",
           "keyId": "ed25519-test-key-01",
+          "nonce": "7a6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b",
           "issuedAt": "2026-08-27T00:00:10.000Z",
           "notBefore": "2026-08-27T00:00:10.000Z",
           "expiresAt": "2026-08-27T00:01:10.000Z",
           "ttlMs": 60000,
-          "revocationId": "revoke_deadbeef00000042"
+          "revocationId": "revoke_deadbeef00000042",
+          "claimDigest": "sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f",
+          "profileAlias": "research-profile"
         },
-        "canonical": "{\"claimGeneration\":3,\"expiresAt\":\"2026-08-27T00:01:10.000Z\",\"instructionDigest\":\"sha256:0558e309155db5f8866059f478365e6d2958e8fb018983f0c052f73c7e53fff8\",\"issuedAt\":\"2026-08-27T00:00:10.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"7a6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b\",\"notBefore\":\"2026-08-27T00:00:10.000Z\",\"permitId\":\"permit_deadbeef00000042\",\"planDigest\":\"sha256:f81679796b2196f1e2df8f2bc95026b91f05b5e515ebed69b8be5b1387008d64\",\"planRevision\":2,\"policyRevision\":\"sha256:1209ed02f2c7ad3923da811766aba034ab5b7b464e0db7fb0f847efff34d6053\",\"revocationId\":\"revoke_deadbeef00000042\",\"runId\":\"run_deadbeef00000041\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
-        "digest": "sha256:e33c1805004a8c05bb2d5077c215de5f909c2dd5e27c6f1bf4a5118f517637dd",
+        "canonical": "{\"actionClasses\":[\"browser.navigate\"],\"bindingDigest\":\"sha256:7c0f0695db4258a38e685af36314d797883a2d041da6154e6b6ae8ac30284aa0\",\"bindingId\":\"binding_deadbeef00000022\",\"bindingRevision\":12,\"budget\":{\"maxCalls\":10},\"claimDigest\":\"sha256:af7249d37438264bd9d567b06509970be47787840189977923931d9259961b5f\",\"claimGeneration\":5,\"expiresAt\":\"2026-08-27T00:01:10.000Z\",\"instructionDigest\":\"sha256:77e06215f307f889ca20d4d02427e0e9427fbaf9e99f0764cbde316d04b85ea4\",\"issuedAt\":\"2026-08-27T00:00:10.000Z\",\"keyId\":\"ed25519-test-key-01\",\"nonce\":\"7a6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b\",\"notBefore\":\"2026-08-27T00:00:10.000Z\",\"origins\":[\"https://example.com\"],\"permitId\":\"permit_deadbeef00000042\",\"phaseId\":\"publish\",\"planDigest\":\"sha256:795cb7a8a9b2e6f8615d9538762c5fe7177365c84bd52352a2e1f746bb52836d\",\"planRevision\":2,\"policyRevision\":\"sha256:84bf7807805c255c10e227815ea8a3a4da92dc876e2d90696ccdda202ce77a2d\",\"profileAlias\":\"research-profile\",\"projectId\":\"project_deadbeef00000022\",\"revocationId\":\"revoke_deadbeef00000042\",\"runId\":\"run_deadbeef00000022\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":4,\"ttlMs\":60000}",
+        "digest": "sha256:567cbe4b8cedb9b8d7bd222d7ad13d60a5c9bb45b91fca71d4ffbb0e174feb9b",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed hex IDs (16 hex), hex nonce (32 hex), hex signature placeholder (128 hex) — no real key material, D1 JCS"
+      "syntheticNote": "prefixed hex IDs (16 hex), hex nonce (32 hex), hex signature (128 hex) \u2014 no real key material, D1 JCS"
     },
     {
       "name": "permit-expired-window",
-      "description": "Expired window vector — notBefore/expiresAt still valid schema but verifier must reject as expired. Used for RED TTL enforcement test.",
+      "description": "Expired window vector \u2014 notBefore/expiresAt still valid schema but verifier must reject as expired. Includes action scope with different origins/actionClasses. Used for RED TTL enforcement test.",
       "value": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000043",
-        "nonce": "c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9",
-        "runId": "run_deadbeef00000043",
+        "runId": "run_deadbeef00000024",
         "claimGeneration": 2,
+        "projectId": "project_deadbeef00000024",
+        "bindingId": "binding_deadbeef00000024",
+        "bindingRevision": 5,
+        "bindingDigest": "sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136",
+        "phaseId": "browser-action",
+        "origins": [
+          "https://other.example.com"
+        ],
+        "actionClasses": [
+          "browser.click"
+        ],
+        "budget": {
+          "maxCalls": 5,
+          "maxWallMs": 60000
+        },
         "stateVersion": 1,
         "planRevision": 1,
-        "planDigest": "sha256:116c54e630bffa5d2c2cfe312a2c68735f34dfa483a7915ef48909f997b1381c",
-        "instructionDigest": "sha256:b25d3f29594ac07739d24deef8c94cff5e12df1fbe1e3f025efd91e83421d537",
-        "policyRevision": "sha256:e17404709d3b4cbde6273587a2cd238b56b3c1bb2bf02918914cb29c3c1cbe36",
+        "planDigest": "sha256:6daac513912ae97bb24601cb99224615d2da72a91d9f9f809f46dd3dd70531a2",
+        "instructionDigest": "sha256:487b92e5750c456d3458c401ee2387cc8b39d6aaddce7267dd2579bf411321bc",
+        "policyRevision": "sha256:91aecf900fc3502dd5da5beeb9cbfcca3eb82a33b1af0144502c94b1dad20713",
         "keyId": "ed25519-test-key-02",
+        "nonce": "c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "notBefore": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "ttlMs": 60000,
         "revocationId": "revoke_deadbeef00000043",
-        "signature": "01c283e07beca6591ffb0e98a417f15ed801526c7ad9188f273ffd253e6d04e564d2b796b875baf0a8d51aec5e10258618192ff6a6aeb760154b700f98ed3016"
+        "permitDigest": "sha256:02d7ee4c45d72a0380090a6512d6009c2c43390e2c5977b336b839747d58cabe",
+        "signature": "01c283e07beca6591ffb0e98a417f15ed801526c7ad9188f273ffd253e6d04e564d2b796b875baf0a8d51aec5e10258618192ff6a6aeb760154b700f98ed3016",
+        "claimDigest": "sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579",
+        "profileAlias": "suno-creator"
       },
       "projection": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000043",
-        "nonce": "c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9",
-        "runId": "run_deadbeef00000043",
+        "runId": "run_deadbeef00000024",
         "claimGeneration": 2,
+        "projectId": "project_deadbeef00000024",
+        "bindingId": "binding_deadbeef00000024",
+        "bindingRevision": 5,
+        "bindingDigest": "sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136",
+        "phaseId": "browser-action",
+        "origins": [
+          "https://other.example.com"
+        ],
+        "actionClasses": [
+          "browser.click"
+        ],
+        "budget": {
+          "maxCalls": 5,
+          "maxWallMs": 60000
+        },
         "stateVersion": 1,
         "planRevision": 1,
-        "planDigest": "sha256:116c54e630bffa5d2c2cfe312a2c68735f34dfa483a7915ef48909f997b1381c",
-        "instructionDigest": "sha256:b25d3f29594ac07739d24deef8c94cff5e12df1fbe1e3f025efd91e83421d537",
-        "policyRevision": "sha256:e17404709d3b4cbde6273587a2cd238b56b3c1bb2bf02918914cb29c3c1cbe36",
+        "planDigest": "sha256:6daac513912ae97bb24601cb99224615d2da72a91d9f9f809f46dd3dd70531a2",
+        "instructionDigest": "sha256:487b92e5750c456d3458c401ee2387cc8b39d6aaddce7267dd2579bf411321bc",
+        "policyRevision": "sha256:91aecf900fc3502dd5da5beeb9cbfcca3eb82a33b1af0144502c94b1dad20713",
         "keyId": "ed25519-test-key-02",
+        "nonce": "c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "notBefore": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "ttlMs": 60000,
-        "revocationId": "revoke_deadbeef00000043"
+        "revocationId": "revoke_deadbeef00000043",
+        "claimDigest": "sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579",
+        "profileAlias": "suno-creator"
       },
       "protectedProjection": {
         "schema": "webmcp-execution-permit/1",
         "permitId": "permit_deadbeef00000043",
-        "nonce": "c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9",
-        "runId": "run_deadbeef00000043",
+        "runId": "run_deadbeef00000024",
         "claimGeneration": 2,
+        "projectId": "project_deadbeef00000024",
+        "bindingId": "binding_deadbeef00000024",
+        "bindingRevision": 5,
+        "bindingDigest": "sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136",
+        "phaseId": "browser-action",
+        "origins": [
+          "https://other.example.com"
+        ],
+        "actionClasses": [
+          "browser.click"
+        ],
+        "budget": {
+          "maxCalls": 5,
+          "maxWallMs": 60000
+        },
         "stateVersion": 1,
         "planRevision": 1,
-        "planDigest": "sha256:116c54e630bffa5d2c2cfe312a2c68735f34dfa483a7915ef48909f997b1381c",
-        "instructionDigest": "sha256:b25d3f29594ac07739d24deef8c94cff5e12df1fbe1e3f025efd91e83421d537",
-        "policyRevision": "sha256:e17404709d3b4cbde6273587a2cd238b56b3c1bb2bf02918914cb29c3c1cbe36",
+        "planDigest": "sha256:6daac513912ae97bb24601cb99224615d2da72a91d9f9f809f46dd3dd70531a2",
+        "instructionDigest": "sha256:487b92e5750c456d3458c401ee2387cc8b39d6aaddce7267dd2579bf411321bc",
+        "policyRevision": "sha256:91aecf900fc3502dd5da5beeb9cbfcca3eb82a33b1af0144502c94b1dad20713",
         "keyId": "ed25519-test-key-02",
+        "nonce": "c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9",
         "issuedAt": "2026-08-27T00:00:00.000Z",
         "notBefore": "2026-08-27T00:00:00.000Z",
         "expiresAt": "2026-08-27T00:01:00.000Z",
         "ttlMs": 60000,
-        "revocationId": "revoke_deadbeef00000043"
+        "revocationId": "revoke_deadbeef00000043",
+        "claimDigest": "sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579",
+        "profileAlias": "suno-creator"
       },
-      "canonical": "{\"claimGeneration\":2,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:b25d3f29594ac07739d24deef8c94cff5e12df1fbe1e3f025efd91e83421d537\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-02\",\"nonce\":\"c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"permitId\":\"permit_deadbeef00000043\",\"planDigest\":\"sha256:116c54e630bffa5d2c2cfe312a2c68735f34dfa483a7915ef48909f997b1381c\",\"planRevision\":1,\"policyRevision\":\"sha256:e17404709d3b4cbde6273587a2cd238b56b3c1bb2bf02918914cb29c3c1cbe36\",\"revocationId\":\"revoke_deadbeef00000043\",\"runId\":\"run_deadbeef00000043\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":1,\"ttlMs\":60000}",
-      "digest": "sha256:5a4e28ca2bfcc8a9b6b01b3f0992613b1315f80b56497835640dc06306819874",
+      "canonical": "{\"actionClasses\":[\"browser.click\"],\"bindingDigest\":\"sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136\",\"bindingId\":\"binding_deadbeef00000024\",\"bindingRevision\":5,\"budget\":{\"maxCalls\":5,\"maxWallMs\":60000},\"claimDigest\":\"sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579\",\"claimGeneration\":2,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:487b92e5750c456d3458c401ee2387cc8b39d6aaddce7267dd2579bf411321bc\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-02\",\"nonce\":\"c3d4e5f6a7b8c9d0e1f3a4b5c6a7b8c9\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"origins\":[\"https://other.example.com\"],\"permitId\":\"permit_deadbeef00000043\",\"phaseId\":\"browser-action\",\"planDigest\":\"sha256:6daac513912ae97bb24601cb99224615d2da72a91d9f9f809f46dd3dd70531a2\",\"planRevision\":1,\"policyRevision\":\"sha256:91aecf900fc3502dd5da5beeb9cbfcca3eb82a33b1af0144502c94b1dad20713\",\"profileAlias\":\"suno-creator\",\"projectId\":\"project_deadbeef00000024\",\"revocationId\":\"revoke_deadbeef00000043\",\"runId\":\"run_deadbeef00000024\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":1,\"ttlMs\":60000}",
+      "digest": "sha256:02d7ee4c45d72a0380090a6512d6009c2c43390e2c5977b336b839747d58cabe",
       "contractId": "webmcp-execution-permit/1",
       "domainLabel": "webmcp-digest-v1:permit",
       "domainSeparation": "webmcp-digest-v1:permit",
       "signatureExcluded": true,
       "excludedFromDigest": [
+        "permitDigest",
         "signature"
       ],
+      "permitDigest": "sha256:02d7ee4c45d72a0380090a6512d6009c2c43390e2c5977b336b839747d58cabe",
       "mutation": {
         "protectedProjection": {
           "schema": "webmcp-execution-permit/1",
           "permitId": "permit_deadbeef00000043",
-          "nonce": "9c8b7a6c5b4a3f1e0d9c8b7a6f5e4d3c",
-          "runId": "run_deadbeef00000043",
+          "runId": "run_deadbeef00000024",
           "claimGeneration": 2,
+          "projectId": "project_deadbeef00000024",
+          "bindingId": "binding_deadbeef00000024",
+          "bindingRevision": 5,
+          "bindingDigest": "sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136",
+          "phaseId": "browser-action",
+          "origins": [
+            "https://other.example.com"
+          ],
+          "actionClasses": [
+            "browser.click"
+          ],
+          "budget": {
+            "maxCalls": 5,
+            "maxWallMs": 60000
+          },
           "stateVersion": 1,
           "planRevision": 1,
-          "planDigest": "sha256:116c54e630bffa5d2c2cfe312a2c68735f34dfa483a7915ef48909f997b1381c",
-          "instructionDigest": "sha256:b25d3f29594ac07739d24deef8c94cff5e12df1fbe1e3f025efd91e83421d537",
-          "policyRevision": "sha256:e17404709d3b4cbde6273587a2cd238b56b3c1bb2bf02918914cb29c3c1cbe36",
+          "planDigest": "sha256:6daac513912ae97bb24601cb99224615d2da72a91d9f9f809f46dd3dd70531a2",
+          "instructionDigest": "sha256:487b92e5750c456d3458c401ee2387cc8b39d6aaddce7267dd2579bf411321bc",
+          "policyRevision": "sha256:91aecf900fc3502dd5da5beeb9cbfcca3eb82a33b1af0144502c94b1dad20713",
           "keyId": "ed25519-test-key-02",
+          "nonce": "9c8b7a6c5b4a3f1e0d9c8b7a6f5e4d3c",
           "issuedAt": "2026-08-27T00:00:00.000Z",
           "notBefore": "2026-08-27T00:00:00.000Z",
           "expiresAt": "2026-08-27T00:01:00.000Z",
           "ttlMs": 60000,
-          "revocationId": "revoke_deadbeef00000043"
+          "revocationId": "revoke_deadbeef00000043",
+          "claimDigest": "sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579",
+          "profileAlias": "suno-creator"
         },
-        "canonical": "{\"claimGeneration\":2,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:b25d3f29594ac07739d24deef8c94cff5e12df1fbe1e3f025efd91e83421d537\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-02\",\"nonce\":\"9c8b7a6c5b4a3f1e0d9c8b7a6f5e4d3c\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"permitId\":\"permit_deadbeef00000043\",\"planDigest\":\"sha256:116c54e630bffa5d2c2cfe312a2c68735f34dfa483a7915ef48909f997b1381c\",\"planRevision\":1,\"policyRevision\":\"sha256:e17404709d3b4cbde6273587a2cd238b56b3c1bb2bf02918914cb29c3c1cbe36\",\"revocationId\":\"revoke_deadbeef00000043\",\"runId\":\"run_deadbeef00000043\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":1,\"ttlMs\":60000}",
-        "digest": "sha256:e8f567b1cea31ea3e9de4bce6feef93d7bf02f37666760f927a89432dd2a2218",
+        "canonical": "{\"actionClasses\":[\"browser.click\"],\"bindingDigest\":\"sha256:0127b85e5c3c534b3f4514563a6f3c12b1dda97f1f4ac20c7824cdc94e436136\",\"bindingId\":\"binding_deadbeef00000024\",\"bindingRevision\":5,\"budget\":{\"maxCalls\":5,\"maxWallMs\":60000},\"claimDigest\":\"sha256:06fbb6f3657855d61dca21919221c7ab1688050d7e8db3a3326ef8a0a4572579\",\"claimGeneration\":2,\"expiresAt\":\"2026-08-27T00:01:00.000Z\",\"instructionDigest\":\"sha256:487b92e5750c456d3458c401ee2387cc8b39d6aaddce7267dd2579bf411321bc\",\"issuedAt\":\"2026-08-27T00:00:00.000Z\",\"keyId\":\"ed25519-test-key-02\",\"nonce\":\"9c8b7a6c5b4a3f1e0d9c8b7a6f5e4d3c\",\"notBefore\":\"2026-08-27T00:00:00.000Z\",\"origins\":[\"https://other.example.com\"],\"permitId\":\"permit_deadbeef00000043\",\"phaseId\":\"browser-action\",\"planDigest\":\"sha256:6daac513912ae97bb24601cb99224615d2da72a91d9f9f809f46dd3dd70531a2\",\"planRevision\":1,\"policyRevision\":\"sha256:91aecf900fc3502dd5da5beeb9cbfcca3eb82a33b1af0144502c94b1dad20713\",\"profileAlias\":\"suno-creator\",\"projectId\":\"project_deadbeef00000024\",\"revocationId\":\"revoke_deadbeef00000043\",\"runId\":\"run_deadbeef00000024\",\"schema\":\"webmcp-execution-permit/1\",\"stateVersion\":1,\"ttlMs\":60000}",
+        "digest": "sha256:ff669a83bcea80944b162094882b7f9b210747769acbb6c8523aea2bf719fb21",
         "digestsDiffer": true
       },
-      "syntheticNote": "prefixed hex IDs (16 hex), hex nonce (32 hex), hex signature placeholder (128 hex) — no real key material, D1 JCS"
+      "syntheticNote": "prefixed hex IDs (16 hex), hex nonce (32 hex), hex signature (128 hex) \u2014 no real key material, D1 JCS"
     }
   ]
 }
