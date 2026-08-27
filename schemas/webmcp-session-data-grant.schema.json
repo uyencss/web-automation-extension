@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webmcp.example/schemas/webmcp-session-data-grant.schema.json",
+  "title": "WebMCP Session Data Grant — webmcp-session-data-grant/1",
+  "description": "Browser session data effective grant v1 (fixture-only A1). Scope: cookie/storage/IndexedDB with exact origin/domain/key/database/store/index/range + budgets + destination + taint. D3 provisional: full/HttpOnly/export require high-risk human grant. Read≠export.",
+  "type": "object",
+  "required": [
+    "schema",
+    "grantId",
+    "runId",
+    "claimDigest",
+    "bindingId",
+    "bindingDigest",
+    "leaseId",
+    "fenceEpoch",
+    "origin",
+    "surface",
+    "mode",
+    "destination",
+    "purpose",
+    "approvalDigest",
+    "budgets",
+    "ttlMs",
+    "maxUses"
+  ],
+  "properties": {
+    "schema": {
+      "const": "webmcp-session-data-grant/1"
+    },
+    "grantId": {
+      "type": "string",
+      "pattern": "^sdg_[0-9a-f]{16}$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[a-z0-9-]{8,}$"
+    },
+    "claimDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "bindingId": {
+      "type": "string",
+      "pattern": "^pb_[a-z0-9-]+$"
+    },
+    "bindingDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "leaseId": {
+      "type": "string",
+      "pattern": "^lease_[0-9a-f]{16}$"
+    },
+    "fenceEpoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "leaseBindingDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "origin": {
+      "type": "string",
+      "format": "uri",
+      "description": "Exact canonical origin, e.g. https://example.test. No wildcard."
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^([a-z0-9-]+\\.)*[a-z0-9-]+$",
+      "description": "Optional cookie domain scope; exact match after canonicalization."
+    },
+    "surface": {
+      "type": "string",
+      "enum": ["cookies", "localStorage", "sessionStorage", "indexeddb"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["metadata-only", "scoped-values", "export"],
+      "description": "Metadata-only, scoped-values (plaintext to approved destination), export (encrypted artifact). Strict isolation."
+    },
+    "destination": {
+      "type": "string",
+      "enum": ["trusted-step", "agent-tool-result", "transcript", "artifact", "external-sink"],
+      "description": "Where plaintext may materialize. Each requires separate grant."
+    },
+    "transcriptExposure": {
+      "type": "boolean",
+      "description": "True if plaintext may reach provider transcript; requires explicit approval per D2."
+    },
+    "purpose": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "minLength": 3
+    },
+    "selectors": {
+      "type": "object",
+      "properties": {
+        "cookieNames": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 16
+        },
+        "storageKeys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "indexedDb": {
+          "type": "object",
+          "properties": {
+            "database": { "type": "string", "minLength": 1 },
+            "store": { "type": "string", "minLength": 1 },
+            "index": { "type": "string" },
+            "keyRange": {
+              "type": "object",
+              "properties": {
+                "lower": { "type": ["string", "number"] },
+                "upper": { "type": ["string", "number"] },
+                "lowerOpen": { "type": "boolean" },
+                "upperOpen": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            "fieldProjection": {
+              "type": "array",
+              "items": { "type": "string" },
+              "maxItems": 16
+            }
+          },
+          "required": ["database", "store"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "includeHttpOnly": {
+      "type": "boolean",
+      "description": "Explicit HttpOnly permission. Page JS fallback forbidden."
+    },
+    "approvalDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "budgets": {
+      "type": "object",
+      "required": ["maxRows", "maxBytes", "maxDurationMs"],
+      "properties": {
+        "maxRows": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "maxBytes": { "type": "integer", "minimum": 1024, "maximum": 10485760 },
+        "maxEncodedBytes": { "type": "integer", "minimum": 1024, "maximum": 20971520 },
+        "maxPages": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "maxDurationMs": { "type": "integer", "minimum": 1000, "maximum": 120000 },
+        "maxDepth": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "maxKeys": { "type": "integer", "minimum": 1, "maximum": 256 }
+      },
+      "additionalProperties": false
+    },
+    "ttlMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 600000
+    },
+    "maxUses": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "sensitivity": {
+      "type": "string",
+      "enum": ["public", "internal", "personal", "sensitive-unknown", "session-secret", "session-secret-high"]
+    },
+    "grantDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "H(leaseBinding+purpose+exactScope+TTL+maxUses+approvalDigest) D1 provisional."
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16,32}$"
+    }
+  },
+  "additionalProperties": false
+}

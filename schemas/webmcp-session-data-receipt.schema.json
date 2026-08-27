@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webmcp.example/schemas/webmcp-session-data-receipt.schema.json",
+  "title": "WebMCP Session Data Receipt — webmcp-session-data-receipt/1",
+  "description": "Redacted receipt for session-data grant use (A1 fixture-only). Contains counts/digests/taint, never values. Read≠export enforced.",
+  "type": "object",
+  "required": [
+    "schema",
+    "receiptId",
+    "grantId",
+    "runId",
+    "leaseId",
+    "fenceEpoch",
+    "mode",
+    "surface",
+    "scopeDigest",
+    "createdAt"
+  ],
+  "properties": {
+    "schema": {
+      "const": "webmcp-session-data-receipt/1"
+    },
+    "receiptId": {
+      "type": "string",
+      "pattern": "^sdr_[0-9a-f]{16}$"
+    },
+    "grantId": {
+      "type": "string",
+      "pattern": "^sdg_[0-9a-f]{16}$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[a-z0-9-]{8,}$"
+    },
+    "leaseId": {
+      "type": "string",
+      "pattern": "^lease_[0-9a-f]{16}$"
+    },
+    "fenceEpoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["metadata-only", "scoped-values", "export"]
+    },
+    "surface": {
+      "type": "string",
+      "enum": ["cookies", "localStorage", "sessionStorage", "indexeddb"]
+    },
+    "scopeDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Digest over canonical scope (origin/domain/keys/db/store/range/projection)."
+    },
+    "purpose": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "destination": {
+      "type": "string",
+      "enum": ["trusted-step", "agent-tool-result", "transcript", "artifact", "external-sink"]
+    },
+    "taint": {
+      "type": "string",
+      "enum": ["public", "internal", "personal", "sensitive-unknown", "session-secret", "session-secret-high"]
+    },
+    "counts": {
+      "type": "object",
+      "required": ["uses", "rows", "sourceBytes"],
+      "properties": {
+        "uses": { "type": "integer", "minimum": 0 },
+        "rows": { "type": "integer", "minimum": 0 },
+        "sourceBytes": { "type": "integer", "minimum": 0 },
+        "encodedBytes": { "type": "integer", "minimum": 0 },
+        "pages": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "complete": {
+      "type": "boolean",
+      "description": "False if truncated/partial. Never report complete when budget exceeded."
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "consistency": {
+      "type": "string",
+      "enum": ["snapshot-consistent", "page-consistent", "inconsistent", "unknown"]
+    },
+    "cursor": {
+      "type": "string",
+      "pattern": "^cur_[a-z0-9-]{8,}$",
+      "description": "Opaque short-lived cursor, single-grant bound."
+    },
+    "typedOutcome": {
+      "type": "string",
+      "enum": [
+        "SESSION_DATA_GRANT_REQUIRED",
+        "SESSION_DATA_SCOPE_VIOLATION",
+        "SESSION_DATA_MODE_VIOLATION",
+        "SESSION_DATA_DESTINATION_NOT_APPROVED",
+        "SESSION_DATA_TRANSCRIPT_EXPOSURE_NOT_APPROVED",
+        "SESSION_DATA_ORIGIN_MISMATCH",
+        "SESSION_DATA_BUDGET_EXCEEDED",
+        "SESSION_DATA_CURSOR_STALE",
+        "PROFILE_LEASE_LOST",
+        "PROFILE_BINDING_CHANGED",
+        "OK",
+        "PARTIAL",
+        "REVOKED"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revokedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "artifactDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

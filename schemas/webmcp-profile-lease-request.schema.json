@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webmcp.example/schemas/webmcp-profile-lease-request.schema.json",
+  "title": "WebMCP Profile Lease Request — webmcp-profile-lease-request/1",
+  "description": "Claim/binding-scoped acquire request (A1 fixture-only). Verifies Runner claim before physical acquire. D1 provisional digests; D2 host channel not portable.",
+  "type": "object",
+  "required": [
+    "schema",
+    "requestId",
+    "ownerType",
+    "nodeId",
+    "runId",
+    "runnerClaimDigest",
+    "bindingId",
+    "bindingRevision",
+    "bindingDigest",
+    "profileAlias",
+    "leaseMode",
+    "idempotencyKey"
+  ],
+  "properties": {
+    "schema": {
+      "const": "webmcp-profile-lease-request/1"
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^plr_[a-z0-9-]{8,}$",
+      "description": "Opaque request id."
+    },
+    "ownerType": {
+      "enum": ["automation", "external"]
+    },
+    "nodeId": {
+      "type": "string",
+      "pattern": "^node-[a-z0-9-]+$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[a-z0-9-]{8,}$"
+    },
+    "runnerClaimDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "bindingId": {
+      "type": "string",
+      "pattern": "^pb_[a-z0-9-]+$"
+    },
+    "bindingRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bindingDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "profileAlias": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "leaseMode": {
+      "enum": ["single-context", "shared-trust-domain"]
+    },
+    "requestedActions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["browser-read", "browser-write", "browser-session-data", "credential-fill"]
+      },
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true
+    },
+    "heartbeatIntervalMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 120000
+    },
+    "leaseTtlMs": {
+      "type": "integer",
+      "minimum": 5000,
+      "maximum": 600000
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128,
+      "description": "Claim-scoped opaque key; reuse only on exact same active claim/binding."
+    },
+    "profileResourceIdHint": {
+      "type": "string",
+      "description": "Must NOT be used as authority; physical resolution is Governor-internal. Present only for fixture cross-check.",
+      "pattern": "^prsc_[a-z0-9-]{4,}$"
+    }
+  },
+  "additionalProperties": false
+}

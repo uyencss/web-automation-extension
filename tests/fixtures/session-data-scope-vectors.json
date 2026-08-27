@@ -1,0 +1,143 @@
+{
+  "schema": "webmcp-session-data-scope-vectors/1",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "note": "Scope/budget/destination RED vectors. Synthetic origins/keys. No real cookie/storage values beyond canary.",
+  "vectors": [
+    {
+      "id": "cookie-host-only-exact",
+      "description": "Cookie host-only exact match should allow; parent domain should deny without domain scope",
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "cookies",
+        "mode": "scoped-values",
+        "selectors": { "cookieNames": ["session_id"], "paths": ["/"] }
+      },
+      "query": { "name": "session_id", "domain": "example.test", "path": "/", "origin": "https://example.test" },
+      "expect": "allow"
+    },
+    {
+      "id": "cookie-domain-mismatch-denied",
+      "description": "Wrong cookie domain denied",
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "cookies",
+        "mode": "scoped-values",
+        "selectors": { "cookieNames": ["session_id"] }
+      },
+      "query": { "name": "session_id", "domain": "evil.test", "origin": "https://evil.test" },
+      "expect": "SESSION_DATA_SCOPE_VIOLATION"
+    },
+    {
+      "id": "cookie-path-mismatch-denied",
+      "description": "Correct name but wrong path should be separate record",
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "cookies",
+        "mode": "scoped-values",
+        "selectors": { "cookieNames": ["session_id"], "paths": ["/app"] }
+      },
+      "query": { "name": "session_id", "path": "/", "origin": "https://example.test" },
+      "expect": "SESSION_DATA_SCOPE_VIOLATION"
+    },
+    {
+      "id": "cookie-httponly-without-flag-denied",
+      "description": "HttpOnly cookie denied without explicit includeHttpOnly",
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "cookies",
+        "mode": "scoped-values",
+        "includeHttpOnly": false,
+        "selectors": { "cookieNames": ["auth_token"] }
+      },
+      "query": { "name": "auth_token", "httpOnly": true },
+      "expect": "SESSION_DATA_HTTPONLY_NOT_GRANTED"
+    },
+    {
+      "id": "cookie-httponly-with-flag-allowed",
+      "description": "HttpOnly with flag and cdP capability allowed",
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "cookies",
+        "mode": "scoped-values",
+        "includeHttpOnly": true,
+        "selectors": { "cookieNames": ["auth_token"] }
+      },
+      "query": { "name": "auth_token", "httpOnly": true },
+      "expect": "allow when runtime capability present"
+    },
+    {
+      "id": "storage-wrong-origin-denied",
+      "description": "localStorage wrong origin denied",
+      "grant": { "origin": "https://example.test", "surface": "localStorage", "mode": "scoped-values", "selectors": { "storageKeys": ["app:pendingOrders"] } },
+      "query": { "origin": "https://evil.test", "key": "app:pendingOrders" },
+      "expect": "SESSION_DATA_ORIGIN_MISMATCH"
+    },
+    {
+      "id": "storage-wrong-key-denied",
+      "description": "Correct origin wrong key denied",
+      "grant": { "origin": "https://example.test", "surface": "localStorage", "mode": "scoped-values", "selectors": { "storageKeys": ["app:pendingOrders"] } },
+      "query": { "origin": "https://example.test", "key": "app:secretEvil" },
+      "expect": "SESSION_DATA_SCOPE_VIOLATION"
+    },
+    {
+      "id": "indexeddb-wrong-store-denied",
+      "description": "IndexedDB wrong store denied",
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "indexeddb",
+        "mode": "scoped-values",
+        "selectors": { "indexedDb": { "database": "app-db", "store": "orders" } }
+      },
+      "query": { "database": "app-db", "store": "users" },
+      "expect": "SESSION_DATA_SCOPE_VIOLATION"
+    },
+    {
+      "id": "indexeddb-keyrange-projection-enforced",
+      "description": "IndexedDB key range and field projection enforced",
+      "grant": {
+        "origin": "https://example.test",
+        "surface": "indexeddb",
+        "mode": "scoped-values",
+        "selectors": { "indexedDb": { "database": "app-db", "store": "orders", "keyRange": { "lower": "pending", "upper": "pending" }, "fieldProjection": ["id", "status", "total"] } },
+        "budgets": { "maxRows": 50, "maxBytes": 65536, "maxDurationMs": 5000 }
+      },
+      "query": { "key": "pending", "expectFields": ["id", "status", "total"], "expectNoExtra": true },
+      "expect": "allow only projected fields, no siblings"
+    },
+    {
+      "id": "budget-max-rows-enforced",
+      "description": "Row/byte budgets enforced; truncated page returns complete:false",
+      "grant": { "budgets": { "maxRows": 2, "maxBytes": 1024, "maxDurationMs": 5000 } },
+      "queryRows": 10,
+      "expect": "SESSION_DATA_BUDGET_EXCEEDED with truncated:false->true and cursor or failure"
+    },
+    {
+      "id": "lease-fence-loss-abort-mid-query",
+      "description": "Mid-query fence loss aborts remaining pages",
+      "grant": { "leaseId": "lease_deadbeef01234567", "fenceEpoch": 19 },
+      "midQueryFenceEpoch": 20,
+      "expect": "PROFILE_LEASE_LOST, no further pages"
+    },
+    {
+      "id": "metadata-no-values",
+      "description": "Metadata-only grant must not return values",
+      "grant": { "mode": "metadata-only", "surface": "cookies" },
+      "query": { "mode": "scoped-values" },
+      "expect": "SESSION_DATA_MODE_VIOLATION"
+    },
+    {
+      "id": "read-not-export",
+      "description": "Scoped-values read must not silently export/persist",
+      "grant": { "mode": "scoped-values", "destination": "trusted-step" },
+      "attemptExport": true,
+      "expect": "SESSION_DATA_EXPORT_APPROVAL_REQUIRED"
+    },
+    {
+      "id": "cross-profile-rejected",
+      "description": "Cross-profile access rejected",
+      "grant": { "leaseId": "lease_deadbeef01234567", "profileAlias": "research-profile" },
+      "attemptLease": "lease_otherprofile999",
+      "expect": "SESSION_DATA_SCOPE_VIOLATION"
+    }
+  ]
+}

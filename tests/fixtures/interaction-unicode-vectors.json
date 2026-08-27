@@ -1,0 +1,119 @@
+{
+  "schema": "webmcp-interaction-unicode-vectors/1",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "note": "Human-compatible interaction Unicode/IME fixtures. Synthetic strings only. Canonical canaries. Graphemic clusters must not be split.",
+  "vectors": [
+    {
+      "id": "vi-nfc-precomposed",
+      "description": "Vietnamese NFC precomposed; direct and paced must preserve",
+      "input": "Trường Sa, tiếng Việt",
+      "codepoints": "U+0054 U+0072 U+01B0 U+1EDD U+006E ...",
+      "nfc": "Trường Sa, tiếng Việt",
+      "nfd": "Trường Sa, tiếng Việt",
+      "expectNormalization": "exact or declared nfc equivalence via policy",
+      "expectChunks": "grapheme-safe"
+    },
+    {
+      "id": "vi-decomposed-combining",
+      "description": "Vietnamese decomposed combining marks must not be separated",
+      "input": "tiếng",
+      "combining": "e + U+0302 + s + ...",
+      "expect": "single grapheme chunks, no boundary inside combining sequence"
+    },
+    {
+      "id": "combining-multiple-marks",
+      "description": "Multiple combining diacritics on base",
+      "input": "ộ",
+      "sequence": "o + U+0302 + U+0323",
+      "expect": "one grapheme"
+    },
+    {
+      "id": "emoji-single-surrogate",
+      "description": "Single emoji surrogate pair exact sequence",
+      "input": "😀",
+      "expect": "exact sequence, no split surrogate"
+    },
+    {
+      "id": "emoji-variation-selector",
+      "description": "Emoji with variation selector-16",
+      "input": "❤️",
+      "codepoints": "U+2764 U+FE0F",
+      "expect": "not split"
+    },
+    {
+      "id": "emoji-skin-tone",
+      "description": "Emoji with skin tone modifier",
+      "input": "👋🏽",
+      "codepoints": "U+1F44B U+1F3FD",
+      "expect": "single cluster"
+    },
+    {
+      "id": "emoji-zwj-family",
+      "description": "ZWJ family profession sequence must not be chunked inside",
+      "input": "👩‍💻",
+      "codepoints": "U+1F469 U+200D U+1F4BB",
+      "expect": "one grapheme cluster per extended grapheme"
+    },
+    {
+      "id": "mixed-rtl-ltr-newline",
+      "description": "Mixed RTL/LTR with newline; preserve value+selection",
+      "input": "hello\\nمرحبا\\nworld",
+      "expect": "value and caret/selection read-back"
+    },
+    {
+      "id": "ime-composition",
+      "description": "IME composition lifecycle compositionstart/update/end",
+      "input": "tōkyō",
+      "compositionEvents": ["compositionstart", "compositionupdate", "compositionend"],
+      "expect": "paced IME-aware chunks, app state matches DOM"
+    },
+    {
+      "id": "contenteditable-plain",
+      "description": "contenteditable plain text + caret",
+      "input": "hello world",
+      "target": "contenteditable",
+      "expect": "text + caret/selection; framework state not just DOM attribute"
+    },
+    {
+      "id": "contenteditable-nested-markup",
+      "description": "contenteditable nested markup per policy",
+      "input": "<b>hello</b> <i>world</i>",
+      "expect": "semantic text/markup policy decides"
+    },
+    {
+      "id": "replace-append-insert",
+      "description": "Operation modes replace/append/insert-at-selection",
+      "cases": [
+        { "op": "replace", "initial": "old text", "input": "new", "expect": "new" },
+        { "op": "append", "initial": "hello", "input": " world", "expect": "hello world" },
+        { "op": "insert-at-selection", "initial": "he|lo", "input": "X", "expect": "heXlo" }
+      ]
+    },
+    {
+      "id": "react-controlled",
+      "description": "React controlled input must update component state and rendered value",
+      "framework": "react",
+      "expect": "model update and DOM read-back both match"
+    },
+    {
+      "id": "vue-vmodel",
+      "description": "Vue v-model input",
+      "framework": "vue",
+      "expect": "model and DOM read-back match"
+    },
+    {
+      "id": "max-length-validation",
+      "description": "Max-length/validation reject reports typed mismatch, not false success",
+      "input": "this string is too long for field",
+      "maxLength": 10,
+      "expect": "INTERACTION_READBACK_MISMATCH not success"
+    },
+    {
+      "id": "password-broker-only",
+      "description": "Credential/password field must use broker-only handle",
+      "field": "password",
+      "valueSource": "broker-handle-opaque-001",
+      "expect": "valueSource brokered, no raw value in evidence"
+    }
+  ]
+}

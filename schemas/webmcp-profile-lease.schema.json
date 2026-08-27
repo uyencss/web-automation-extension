@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webmcp.example/schemas/webmcp-profile-lease.schema.json",
+  "title": "WebMCP Profile Lease — webmcp-profile-lease/2",
+  "description": "Governor lease projection v2 (fixture-only A1). Safe projection; raw profileResourceId and fence token are machine-local and never in this payload. Provisional D1-D6 semantics per A1 draft; domain labels webmcp-digest-v1:* still proposed.",
+  "type": "object",
+  "required": [
+    "schema",
+    "leaseId",
+    "profileAlias",
+    "bindingId",
+    "bindingRevision",
+    "bindingDigest",
+    "runId",
+    "runnerClaimDigest",
+    "leaseMode",
+    "fenceEpoch",
+    "state",
+    "expiresAt",
+    "leaseBindingDigest"
+  ],
+  "properties": {
+    "schema": {
+      "const": "webmcp-profile-lease/2",
+      "description": "Contract version. Reject unknown major."
+    },
+    "leaseId": {
+      "type": "string",
+      "pattern": "^lease_[0-9a-f]{16}$",
+      "description": "Opaque lease handle, 16 lowercase hex suffix."
+    },
+    "profileAlias": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "minLength": 2,
+      "maxLength": 64,
+      "description": "Kebab-case logical alias (no underscore). Synthetic."
+    },
+    "bindingId": {
+      "type": "string",
+      "pattern": "^pb_[a-z0-9-]+$",
+      "description": "Logical binding id."
+    },
+    "bindingRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bindingDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "JCS canonical SHA-256 over binding schema+id+revision+policy (D1 provisional, label webmcp-digest-v1:binding)."
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[a-z0-9-]{8,}$"
+    },
+    "runnerClaimDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Provisional claimDigest composition H(runId+generation+workspace+runbookDigest) label webmcp-digest-v1:claim."
+    },
+    "leaseBindingDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "leaseBinding = H(claimDigest+bindingDigest+profileResourceId+fenceEpoch) label webmcp-digest-v1:lease (provisional)."
+    },
+    "leaseMode": {
+      "enum": ["single-context", "shared-trust-domain"],
+      "description": "Lease mode per ADR 0005; shared-trust-domain still requires exclusive fence."
+    },
+    "fenceEpoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic durable epoch per physical resource; never decrements."
+    },
+    "state": {
+      "enum": ["leased", "active", "cooldown", "quarantined", "external_use"],
+      "description": "Governor state projection (unknown/ready not emitted for active leases)."
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "heartbeatIntervalMs": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 120000
+    },
+    "leaseTtlMs": {
+      "type": "integer",
+      "minimum": 5000,
+      "maximum": 600000
+    },
+    "nodeId": {
+      "type": "string",
+      "pattern": "^node-[a-z0-9-]+$"
+    },
+    "ownerType": {
+      "enum": ["automation", "external"],
+      "default": "automation"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128
+    }
+  },
+  "additionalProperties": false
+}

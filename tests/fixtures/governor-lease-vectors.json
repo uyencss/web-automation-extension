@@ -1,0 +1,145 @@
+{
+  "schema": "webmcp-governor-lease-vectors/1",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "note": "Synthetic Governor lease vectors for A1 contract freeze RED. Opaque ids, canonical canaries. No real profile/claim material.",
+  "vectors": [
+    {
+      "id": "lease-happy-single-context",
+      "description": "Happy acquire single-context with active claim and reviewed binding",
+      "request": {
+        "schema": "webmcp-profile-lease-request/1",
+        "requestId": "plr_a1b2c3d4e5f6g7h8",
+        "ownerType": "automation",
+        "nodeId": "node-alpha-1",
+        "runId": "run_aaa111bbb222",
+        "runnerClaimDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bindingId": "pb_research-profile",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "profileAlias": "research-profile",
+        "leaseMode": "single-context",
+        "requestedActions": ["browser-read"],
+        "heartbeatIntervalMs": 30000,
+        "leaseTtlMs": 120000,
+        "idempotencyKey": "claim-aaa111bbb222:pb_research-profile:7"
+      },
+      "expectedLease": {
+        "schema": "webmcp-profile-lease/2",
+        "leaseId": "lease_deadbeef01234567",
+        "profileAlias": "research-profile",
+        "bindingId": "pb_research-profile",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "runId": "run_aaa111bbb222",
+        "runnerClaimDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "leaseMode": "single-context",
+        "fenceEpoch": 19,
+        "state": "leased",
+        "expiresAt": "2026-08-27T00:02:00.000Z",
+        "issuedAt": "2026-08-27T00:00:00.000Z"
+      },
+      "expect": "acquire succeeds"
+    },
+    {
+      "id": "lease-race-two-processes-same-physical",
+      "description": "Two concurrent processes acquire same physical resource via different aliases within same trust domain — exactly one winner (RED P1 case)",
+      "physicalResourceSynthetic": "prsc_synthetic_resource_alpha",
+      "requests": [
+        {
+          "schema": "webmcp-profile-lease-request/1",
+          "requestId": "plr_race-001-procA",
+          "ownerType": "automation",
+          "nodeId": "node-alpha-1",
+          "runId": "run_procA111",
+          "runnerClaimDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "bindingId": "pb_research-profile",
+          "bindingRevision": 7,
+          "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "profileAlias": "research-profile",
+          "leaseMode": "single-context",
+          "idempotencyKey": "procA-claim"
+        },
+        {
+          "schema": "webmcp-profile-lease-request/1",
+          "requestId": "plr_race-001-procB",
+          "ownerType": "automation",
+          "nodeId": "node-alpha-1",
+          "runId": "run_procB222",
+          "runnerClaimDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "bindingId": "pb_research-profile",
+          "bindingRevision": 7,
+          "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "profileAlias": "research-profile",
+          "leaseMode": "single-context",
+          "idempotencyKey": "procB-claim"
+        }
+      ],
+      "expect": "exactly one lease granted, other PROFILE_LEASE_CONFLICT"
+    },
+    {
+      "id": "lease-alias-duplicate-physical-exclusive",
+      "description": "Two aliases (suno/research-profile) mapping to same physical synthetic resource cannot both hold exclusive leases",
+      "aliases": ["suno-profile", "research-profile"],
+      "physicalSynthetic": "prsc_shared_physical_001",
+      "expect": "both fail with CONFIG_INVALID or PROFILE_LEASE_CONFLICT once mapper deduped"
+    },
+    {
+      "id": "lease-stale-release-idempotent",
+      "description": "Release is idempotent but stale release must not delete new epoch lease",
+      "existingLease": {
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19
+      },
+      "newLeaseAfterReclaim": {
+        "leaseId": "lease_abcdef0123456789",
+        "fenceEpoch": 20
+      },
+      "staleReleaseAttempt": {
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19
+      },
+      "expect": "stale release returns released:false and does not affect new lease"
+    },
+    {
+      "id": "lease-ttl-expired-browser-alive-no-reclaim",
+      "description": "TTL expiry while holder browser still alive must NOT reclaim; requires liveness proof",
+      "lease": {
+        "leaseId": "lease_ttltest01234567",
+        "fenceEpoch": 5,
+        "expiresAt": "2026-08-27T00:01:00.000Z",
+        "browserAlive": true,
+        "extensionConnected": true
+      },
+      "reacquireAttempt": {
+        "requestId": "plr_ttl-reacquire-001",
+        "runId": "run_newAttempt333"
+      },
+      "expect": "PROFILE_LEASE_CONFLICT / PROFILE_RECLAIM_UNSAFE not ready"
+    },
+    {
+      "id": "lease-same-run-multi-tab-one-lease",
+      "description": "Same run multi-tab must use one lease/fence with bounded tab handles",
+      "runId": "run_multitab999",
+      "leaseId": "lease_multitab01234567",
+      "fenceEpoch": 7,
+      "tabHandles": ["tab_alpha-1", "tab_alpha-2", "tab_alpha-3"],
+      "maxTabs": 4,
+      "expect": "all tabs share leaseId/fenceEpoch, tabHandle validated per action"
+    },
+    {
+      "id": "lease-binding-stale-after-admission",
+      "description": "Binding revision changed after admission must block acquire",
+      "admission": {
+        "bindingId": "pb_research-profile",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "current": {
+        "bindingRevision": 8,
+        "bindingDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "expect": "PROFILE_BINDING_STALE"
+    }
+  ]
+}

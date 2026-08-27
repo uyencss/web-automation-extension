@@ -1,0 +1,134 @@
+{
+  "schema": "webmcp-fence-proof-vectors/1",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "note": "Synthetic per-action fence proof vectors. High-entropy fence token not in payload; only digests. Canary values only.",
+  "vectors": [
+    {
+      "id": "fence-happy-browser-read",
+      "description": "Valid fence for browser-read within TTL/maxUses",
+      "proof": {
+        "schema": "webmcp-profile-action-fence/1",
+        "fenceId": "fence_aaaaaaaaaaaaaaaa",
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19,
+        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "runId": "run_aaa111bbb222",
+        "bindingId": "pb_research-profile",
+        "purpose": "reconcile-pending",
+        "scope": {
+          "profileAlias": "research-profile",
+          "actions": ["browser-read"]
+        },
+        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ttlMs": 60000,
+        "maxUses": 50,
+        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "issuedAt": "2026-08-27T00:00:00.000Z",
+        "expiresAt": "2026-08-27T00:01:00.000Z",
+        "actionKind": "read"
+      },
+      "dispatchAt": "2026-08-27T00:00:30.000Z",
+      "expect": "authorize succeeds"
+    },
+    {
+      "id": "fence-stale-epoch-rejected",
+      "description": "Old fenceEpoch after reclaim must be rejected before dispatch",
+      "currentEpoch": 20,
+      "proof": {
+        "schema": "webmcp-profile-action-fence/1",
+        "fenceId": "fence_bbbbbbbbbbbbbbbb",
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19,
+        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "runId": "run_aaa111bbb222",
+        "bindingId": "pb_research-profile",
+        "purpose": "reconcile-pending",
+        "scope": { "profileAlias": "research-profile", "actions": ["browser-read"] },
+        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ttlMs": 60000,
+        "maxUses": 50,
+        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "issuedAt": "2026-08-27T00:00:00.000Z",
+        "expiresAt": "2026-08-27T00:01:00.000Z"
+      },
+      "expect": "PROFILE_FENCE_STALE"
+    },
+    {
+      "id": "fence-missing-required",
+      "description": "Production browser action without fence must be denied",
+      "proof": null,
+      "actionKind": "click",
+      "expect": "PROFILE_FENCE_REQUIRED"
+    },
+    {
+      "id": "fence-max-uses-exhausted",
+      "description": "Fence maxUses exhausted must deny further dispatch",
+      "proof": {
+        "schema": "webmcp-profile-action-fence/1",
+        "fenceId": "fence_cccccccccccccccc",
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19,
+        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "runId": "run_aaa111bbb222",
+        "bindingId": "pb_research-profile",
+        "purpose": "reconcile-pending",
+        "scope": { "profileAlias": "research-profile", "actions": ["browser-read"] },
+        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ttlMs": 60000,
+        "maxUses": 1,
+        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "issuedAt": "2026-08-27T00:00:00.000Z",
+        "expiresAt": "2026-08-27T00:01:00.000Z"
+      },
+      "usesConsumed": 1,
+      "expect": "PROFILE_FENCE_STALE or CREDENTIAL_GRANT_EXPIRED equivalent"
+    },
+    {
+      "id": "fence-tab-not-owned",
+      "description": "Action with tabHandle not owned by lease must be rejected",
+      "proof": {
+        "schema": "webmcp-profile-action-fence/1",
+        "fenceId": "fence_dddddddddddddddd",
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19,
+        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "runId": "run_aaa111bbb222",
+        "bindingId": "pb_research-profile",
+        "purpose": "reconcile-pending",
+        "scope": {
+          "profileAlias": "research-profile",
+          "actions": ["browser-read"],
+          "tabHandle": "tab_alpha-1"
+        },
+        "fenceDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "ttlMs": 60000,
+        "maxUses": 50,
+        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "issuedAt": "2026-08-27T00:00:00.000Z",
+        "expiresAt": "2026-08-27T00:01:00.000Z"
+      },
+      "dispatchedTabHandle": "tab_evil-9",
+      "expect": "PROFILE_TAB_NOT_OWNED"
+    },
+    {
+      "id": "fence-heartbeat-wrong-claim",
+      "description": "Heartbeat with mismatched claimDigest/fence must be rejected",
+      "leaseId": "lease_deadbeef01234567",
+      "fenceEpoch": 19,
+      "heartbeat": {
+        "runnerClaimDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "fenceEpoch": 18
+      },
+      "expect": "PROFILE_CLAIM_INVALID and PROFILE_FENCE_STALE"
+    },
+    {
+      "id": "fence-batch-each-boundary",
+      "description": "Batch command must fence each side-effect boundary",
+      "batch": {
+        "actions": [{ "method": "clickByRef" }, { "method": "typeByRef" }, { "method": "evaluateJS" }],
+        "fenceEpoch": 19
+      },
+      "expect": "each action individually authorized or whole batch rejected if not fence-capable"
+    }
+  ]
+}

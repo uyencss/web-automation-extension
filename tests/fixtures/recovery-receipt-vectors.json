@@ -1,0 +1,137 @@
+{
+  "schema": "webmcp-recovery-receipt-vectors/1",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "note": "Synthetic Governor recovery receipts. Redacted; no raw profile path/value. Provisional D5/D6.",
+  "vectors": [
+    {
+      "id": "recovery-host-restart-no-stale-resurrection",
+      "description": "Host restart must not resurrect stale lease as ready",
+      "prior": {
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19,
+        "state": "active"
+      },
+      "receipt": {
+        "schema": "webmcp-profile-recovery-receipt/1",
+        "receiptId": "prr_1111111111111111",
+        "leaseId": "lease_deadbeef01234567",
+        "profileAlias": "research-profile",
+        "bindingId": "pb_research-profile",
+        "bindingRevision": 7,
+        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "runId": "run_aaa111bbb222",
+        "priorState": "active",
+        "newState": "unknown",
+        "priorFenceEpoch": 19,
+        "newFenceEpoch": 20,
+        "reasonCode": "RECOVERY_HOST_RESTART",
+        "probeOutcomes": {
+          "governorHealth": "unknown",
+          "runnerClaim": "unknown",
+          "browserAlive": false,
+          "extensionConnected": false
+        },
+        "lastActionOutcome": "indeterminate",
+        "dependentGrantRevokeStatus": "pending",
+        "authorityKind": "governor-automatic",
+        "createdAt": "2026-08-27T00:05:00.000Z",
+        "receiptDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "eventId": "pse_aaaaaaaaaaaaaaaa"
+      },
+      "expect": "resource stays unknown/quarantined until reconciliation, never ready with old epoch"
+    },
+    {
+      "id": "recovery-process-crash-indeterminate-quarantine",
+      "description": "Process crash with indeterminate outward effect quarantines resource",
+      "prior": {
+        "leaseId": "lease_crash0123456789",
+        "fenceEpoch": 5,
+        "state": "active",
+        "lastAction": "dispatched but postcondition unknown"
+      },
+      "receipt": {
+        "schema": "webmcp-profile-recovery-receipt/1",
+        "receiptId": "prr_2222222222222222",
+        "leaseId": "lease_crash0123456789",
+        "profileAlias": "research-profile",
+        "priorState": "active",
+        "newState": "quarantined",
+        "priorFenceEpoch": 5,
+        "newFenceEpoch": 6,
+        "reasonCode": "PROFILE_OUTWARD_EFFECT_INDETERMINATE",
+        "probeOutcomes": {
+          "governorHealth": "healthy",
+          "runnerClaim": "terminal",
+          "browserAlive": true,
+          "extensionConnected": true
+        },
+        "lastActionOutcome": "indeterminate",
+        "dependentGrantRevokeStatus": "revoked",
+        "authorityKind": "governor-automatic",
+        "createdAt": "2026-08-27T00:06:00.000Z",
+        "receiptDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "expect": "quarantined blocks retry and reacquire until operator reconcile"
+    },
+    {
+      "id": "recovery-manual-external-use-detected",
+      "description": "Manual Chrome external_use detected blocks automation; receipt records detection",
+      "event": {
+        "schema": "webmcp-profile-session-event/1",
+        "eventId": "pse_bbbbbbbbbbbbbbbb",
+        "leaseId": "lease_deadbeef01234567",
+        "profileAlias": "research-profile",
+        "state": "external_use",
+        "stateReasonCode": "PROFILE_EXTERNAL_USE",
+        "fenceEpoch": 19,
+        "bindingDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "timestamp": "2026-08-27T00:07:00.000Z",
+        "livenessSummary": "healthy",
+        "counts": { "heartbeats": 12, "actions": 45 }
+      },
+      "receiptAfterClear": {
+        "schema": "webmcp-profile-recovery-receipt/1",
+        "receiptId": "prr_3333333333333333",
+        "leaseId": "lease_deadbeef01234567",
+        "profileAlias": "research-profile",
+        "priorState": "external_use",
+        "newState": "ready",
+        "priorFenceEpoch": 19,
+        "newFenceEpoch": 20,
+        "reasonCode": "RECOVERY_EXTERNAL_USE_CLEARED",
+        "probeOutcomes": {
+          "governorHealth": "healthy",
+          "runnerClaim": "terminal",
+          "browserAlive": false,
+          "extensionConnected": false
+        },
+        "lastActionOutcome": "none",
+        "dependentGrantRevokeStatus": "none",
+        "authorityKind": "operator-approved",
+        "createdAt": "2026-08-27T00:08:00.000Z",
+        "receiptDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expect": "automation acquire fails with PROFILE_EXTERNAL_USE until receipt reconciles"
+    },
+    {
+      "id": "recovery-reclaim-unsafe-no-proof",
+      "description": "Reclaim with TTL only and no liveness/effect proof must fail closed",
+      "attempt": {
+        "leaseId": "lease_deadbeef01234567",
+        "fenceEpoch": 19,
+        "evidence": { "ttlExpired": true, "browserAlive": true, "grantRevoked": false }
+      },
+      "expect": "PROFILE_RECLAIM_UNSAFE, resource stays quarantined/unknown"
+    },
+    {
+      "id": "recovery-epoch-monotonic",
+      "description": "Every recovery must increment fenceEpoch atomically and never decrement",
+      "sequence": [
+        { "receiptId": "prr_4444444444444444", "priorFenceEpoch": 1, "newFenceEpoch": 2 },
+        { "receiptId": "prr_5555555555555555", "priorFenceEpoch": 2, "newFenceEpoch": 3 },
+        { "receiptId": "prr_6666666666666666", "priorFenceEpoch": 3, "newFenceEpoch": 4 }
+      ],
+      "expect": "monotonic increase verified; rollback/migration must preserve"
+    }
+  ]
+}

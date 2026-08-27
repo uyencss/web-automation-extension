@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webmcp.example/schemas/webmcp-profile-session-event.schema.json",
+  "title": "WebMCP Profile Session Event — webmcp-profile-session-event/1",
+  "description": "Redacted append-only Governor event (A1 fixture-only). 30d Governor retention / 90d Fleet evidence provisional per D5. No raw profile path/cookie/value/secret.",
+  "type": "object",
+  "required": [
+    "schema",
+    "eventId",
+    "leaseId",
+    "profileAlias",
+    "state",
+    "stateReasonCode",
+    "fenceEpoch",
+    "bindingDigest",
+    "timestamp"
+  ],
+  "properties": {
+    "schema": {
+      "const": "webmcp-profile-session-event/1"
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^pse_[0-9a-f]{16}$"
+    },
+    "leaseId": {
+      "type": "string",
+      "pattern": "^lease_[0-9a-f]{16}$"
+    },
+    "profileAlias": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "state": {
+      "enum": ["unknown", "ready", "leased", "active", "cooldown", "external_use", "auth_required", "challenge", "rate_limited", "quarantined"]
+    },
+    "stateReasonCode": {
+      "type": "string",
+      "enum": [
+        "PROFILE_LEASE_CONFLICT",
+        "PROFILE_GOVERNOR_NOT_READY",
+        "PROFILE_EXTERNAL_USE",
+        "PROFILE_AUTH_REQUIRED",
+        "PROFILE_CHALLENGE_REQUIRED",
+        "PROFILE_RATE_LIMITED",
+        "PROFILE_LEASE_EXPIRED",
+        "PROFILE_LEASE_REVOKED",
+        "PROFILE_QUARANTINED",
+        "PROFILE_RELEASE",
+        "PROFILE_RECLAIM_UNSAFE",
+        "PROFILE_OUTWARD_EFFECT_INDETERMINATE",
+        "HEARTBEAT_OK",
+        "LIVENESS_UNKNOWN",
+        "RECOVERY_APPLIED"
+      ]
+    },
+    "fenceEpoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bindingDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "bindingId": {
+      "type": "string",
+      "pattern": "^pb_[a-z0-9-]+$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[a-z0-9-]{8,}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "leaseBindingDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "heartbeats": { "type": "integer", "minimum": 0 },
+        "actions": { "type": "integer", "minimum": 0 },
+        "pages": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "livenessSummary": {
+      "type": "string",
+      "enum": ["healthy", "degraded", "unknown", "failed"]
+    },
+    "grantRevokeStatus": {
+      "type": "string",
+      "enum": ["none", "revoked", "pending", "failed"]
+    }
+  },
+  "additionalProperties": false
+}

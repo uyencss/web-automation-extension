@@ -1,0 +1,100 @@
+{
+  "schema": "webmcp-session-data-canonical-vectors/1",
+  "generatedAt": "2026-08-27T00:00:00.000Z",
+  "note": "Synthetic canonical JCS vectors for D1 digest work (fixture-only). Domain labels provisional. SHA-256 hex lower. Sort keys, no whitespace. Reject duplicate keys/non-finite/lone surrogates.",
+  "domainLabels": {
+    "binding": "webmcp-digest-v1:binding",
+    "claim": "webmcp-digest-v1:claim",
+    "lease": "webmcp-digest-v1:lease",
+    "grant": "webmcp-digest-v1:grant",
+    "fence": "webmcp-digest-v1:fence"
+  },
+  "vectors": [
+    {
+      "id": "canonical-binding-policy",
+      "description": "Binding policy canonical input and digest",
+      "input": {
+        "bindingId": "pb_research-profile",
+        "bindingRevision": 7,
+        "policy": {
+          "assignmentMode": "dedicated",
+          "trustDomain": "research-trust-a",
+          "allowedAutomationIds": ["automation-alpha"],
+          "allowedSiteIds": ["site-example"]
+        }
+      },
+      "canonicalJson": "{\"bindingId\":\"pb_research-profile\",\"bindingRevision\":7,\"policy\":{\"allowedAutomationIds\":[\"automation-alpha\"],\"allowedSiteIds\":[\"site-example\"],\"assignmentMode\":\"dedicated\",\"trustDomain\":\"research-trust-a\"}}",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "excludeVolatile": ["createdAt", "leaseId"]
+    },
+    {
+      "id": "canonical-claim-context",
+      "description": "Runner claim context digest",
+      "input": {
+        "runId": "run_aaa111bbb222",
+        "claimGeneration": 1,
+        "workspace": "workspace-synthetic-001",
+        "runbookDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "canonicalJson": "{\"claimGeneration\":1,\"runId\":\"run_aaa111bbb222\",\"runbookDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"workspace\":\"workspace-synthetic-001\"}",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "id": "canonical-lease-binding",
+      "description": "leaseBinding = H(claimDigest + bindingDigest + profileResourceId + fenceEpoch)",
+      "input": {
+        "claimDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bindingDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "profileResourceId": "prsc_synthetic_resource_alpha",
+        "fenceEpoch": 19
+      },
+      "canonicalJson": "{\"bindingDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"claimDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"fenceEpoch\":19,\"profileResourceId\":\"prsc_synthetic_resource_alpha\"}",
+      "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "note": "profileResourceId is synthetic opaque; raw path never portable"
+    },
+    {
+      "id": "canonical-grant-scope",
+      "description": "grantDigest = H(leaseBinding + purpose + exactScope + TTL + maxUses + approvalDigest)",
+      "input": {
+        "leaseBindingDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "purpose": "reconcile-pending-orders",
+        "scope": {
+          "origin": "https://example.test",
+          "surface": "cookies",
+          "selectors": { "cookieNames": ["session_id"], "paths": ["/"] }
+        },
+        "ttlMs": 60000,
+        "maxUses": 5,
+        "approvalDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "canonicalJson": "{\"approvalDigest\":\"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"leaseBindingDigest\":\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"maxUses\":5,\"purpose\":\"reconcile-pending-orders\",\"scope\":{\"origin\":\"https://example.test\",\"selectors\":{\"cookieNames\":[\"session_id\"],\"paths\":[\"/\"]},\"surface\":\"cookies\"},\"ttlMs\":60000}",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "id": "canonical-mutation-protects-field",
+      "description": "Changing any protected field must change digest",
+      "baseDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "mutated": {
+        "purpose": "reconcile-pending-orders-evil",
+        "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "expectMismatch": true
+      }
+    },
+    {
+      "id": "canary-cookie-values",
+      "description": "Generated canary cookie values (never production)",
+      "canaries": [
+        { "name": "session_id", "value": "canary_cookie_sess_8f3a9c1e", "origin": "https://example.test" },
+        { "name": "auth_token", "value": "canary_auth_2b4d6f8a0c1e3", "origin": "https://example.test", "httpOnly": true }
+      ]
+    },
+    {
+      "id": "canary-storage-values",
+      "description": "Generated canary Web Storage values",
+      "canaries": [
+        { "origin": "https://example.test", "key": "app:pendingOrders", "value": "canary_storage_abc123" },
+        { "origin": "https://example.test", "key": "app:userPrefs", "value": "{\"theme\":\"dark\"}" }
+      ]
+    }
+  ]
+}
