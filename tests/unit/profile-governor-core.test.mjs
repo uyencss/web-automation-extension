@@ -272,7 +272,7 @@ test('authenticated local transition persists canonical lifecycle state', async 
   assert.equal(result.stateReasonCode, 'PROFILE_AUTH_REQUIRED');
 });
 
-test('package closure remains an explicit blocker because package files omit profile-governor', () => {
+test('package closure includes profile-governor for distribution', () => {
   const packageJson = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-  assert.equal(packageJson.files.some((entry) => entry === 'profile-governor/' || entry.startsWith('profile-governor/')), false);
+  assert.equal(packageJson.files.some((entry) => entry === 'profile-governor/' || entry.startsWith('profile-governor/')), true);
 });
