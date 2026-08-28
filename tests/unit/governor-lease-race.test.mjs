@@ -3,8 +3,41 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import os from 'node:os';
+import { GovernorRepository } from '../../profile-governor/repository.mjs';
+import { ProfileGovernor } from '../../profile-governor/lease-service.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+const DIGEST = 'sha256:' + 'a'.repeat(64);
+const CLAIM_A = 'sha256:' + 'b'.repeat(64);
+const CLAIM_B = 'sha256:' + 'c'.repeat(64);
+
+function request(overrides = {}) {
+  return {
+    schema: 'webmcp-profile-lease-request/1', requestId: 'plr_race-0001', ownerType: 'automation',
+    nodeId: 'node-test-1', runId: 'run_race111x', runnerClaimDigest: CLAIM_A,
+    bindingId: 'pb_test-profile', bindingRevision: 1, bindingDigest: DIGEST,
+    profileAlias: 'test-profile', leaseMode: 'single-context', requestedActions: ['browser-read'],
+    heartbeatIntervalMs: 1000, leaseTtlMs: 5000, idempotencyKey: 'race-a', ...overrides,
+  };
+}
+
+function governor(aliases = { 'test-profile': 'prsc_shared_resource' }) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-race-'));
+  const repository = new GovernorRepository({ statePath: path.join(dir, 'state.json') });
+  return new ProfileGovernor({
+    repository,
+    registry: { resolve: async (alias) => ({ physicalResourceId: aliases[alias], bindingId: 'pb_test-profile', bindingRevision: 1, bindingDigest: DIGEST, allowedActions: ['browser-read'] }) },
+    claims: { validate: async (req) => ({ valid: true, active: true, allowedActions: ['browser-read'], ...req }) },
+    liveness: async () => ({ governor: 'healthy', registry: 'healthy', runnerClaim: 'active', browserAlive: true, extensionConnected: true }),
+    revokeGrants: async () => true,
+    maxTabs: 2,
+  });
+}
 
 function loadJson(p) {
   return JSON.parse(readFileSync(p, 'utf8'));
@@ -66,9 +99,9 @@ test('RED: Governor exclusive acquire — two processes same physical resource y
   // A1 is RED-only: runtime must not exist yet. This test proves the missing capability,
   // not malformed setup, by asserting the future Governor lease service exists.
   const candidates = [
-    path.join(ROOT, 'server/profile-governor/lease-service.mjs'),
-    path.join(ROOT, 'server/profile-governor/repository.mjs'),
-    path.join(ROOT, 'server/profile-governor/state-machine.mjs'),
+    path.join(ROOT, 'profile-governor/lease-service.mjs'),
+    path.join(ROOT, 'profile-governor/repository.mjs'),
+    path.join(ROOT, 'profile-governor/state-machine.mjs'),
   ];
   const found = candidates.filter((p) => existsSync(p));
   assert.ok(
@@ -77,16 +110,95 @@ test('RED: Governor exclusive acquire — two processes same physical resource y
       `Expected: cross-process exclusive acquire keyed by physical resource (not alias), ` +
       `same trust domain still conflicts, idempotent exact re-acquire, and PROFILE_LEASE_CONFLICT for loser. ` +
       `Vectors: tests/fixtures/governor-lease-vectors.json#lease-race-two-processes-same-physical. ` +
-      `Do not implement in A1; this RED must fail until server/profile-governor/* is landed.`
+      `Do not implement outside the A3 profile-governor/* write-set.`
   );
 });
 
+test('atomic acquire serializes two claimants and conflicts across aliases for one physical resource', async () => {
+  const g = governor({ alpha: 'prsc_shared_resource', beta: 'prsc_shared_resource' });
+  await g.reconcileProfile('alpha');
+  const [a, b] = await Promise.allSettled([
+    g.acquire(request({ profileAlias: 'alpha', runId: 'run_race111x', idempotencyKey: 'race-a', runnerClaimDigest: CLAIM_A })),
+    g.acquire(request({ profileAlias: 'beta', runId: 'run_race222x', idempotencyKey: 'race-b', runnerClaimDigest: CLAIM_B })),
+  ]);
+  assert.equal([a, b].filter((x) => x.status === 'fulfilled').length, 1);
+  const rejected = [a, b].find((x) => x.status === 'rejected');
+  assert.equal(rejected.reason.code, 'PROFILE_LEASE_CONFLICT');
+});
+
 test('RED: Governor same-run multi-tab uses one lease/fence (bounded handles)', () => {
-  const impl = path.join(ROOT, 'server/profile-governor/lease-service.mjs');
+  const impl = path.join(ROOT, 'profile-governor/lease-service.mjs');
   assert.ok(
     existsSync(impl),
     `RED: missing Governor same-run multi-tab capability — ${impl} not found. ` +
       `Expected: one run/claim/lease/fence with opaque tab handles under maxTabs, ` +
       `tabHandle validated per action, child run cannot join. Vector lease-same-run-multi-tab-one-lease.`
   );
+});
+
+test('same-run tabs share one bounded lease and child runs cannot join', async () => {
+  const g = governor();
+  await g.reconcileProfile('test-profile');
+  const lease = await g.acquire(request());
+  const first = await g.openTab({ leaseId: lease.leaseId, runId: lease.runId });
+  const second = await g.openTab({ leaseId: lease.leaseId, runId: lease.runId });
+  assert.match(first.tabHandle, /^tab_[a-z0-9-]{4,}$/);
+  assert.notEqual(first.tabHandle, second.tabHandle);
+  await assert.rejects(g.openTab({ leaseId: lease.leaseId, runId: 'run_child999' }), (error) => error.code === 'PROFILE_TAB_NOT_OWNED');
+  await assert.rejects(g.openTab({ leaseId: lease.leaseId, runId: lease.runId }), (error) => error.code === 'PROFILE_TAB_LIMIT');
+});
+
+test('duplicate Governor repositories are rejected while the writer is live and dead writer locks are recoverable', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-writer-'));
+  const statePath = path.join(dir, 'state.json');
+  const first = new GovernorRepository({ statePath });
+  assert.throws(() => new GovernorRepository({ statePath }), (error) => error.code === 'PROFILE_GOVERNOR_MULTI_WRITER');
+  first.close();
+  const staleLock = `${statePath}.writer`;
+  mkdirSync(staleLock, { mode: 0o700 });
+  writeFileSync(path.join(staleLock, 'owner.json'), JSON.stringify({ pid: 999999, writerId: 'dead-writer' }), { mode: 0o600 });
+  const recovered = new GovernorRepository({ statePath });
+  recovered.close();
+});
+
+test('a real exited writer leaves recoverable ownership without corrupting durable state', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-crash-'));
+  const statePath = path.join(dir, 'state.json');
+  const moduleUrl = pathToFileURL(path.join(ROOT, 'profile-governor/repository.mjs')).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `import { GovernorRepository } from ${JSON.stringify(moduleUrl)}; new GovernorRepository({ statePath: ${JSON.stringify(statePath)} });`], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  const recovered = new GovernorRepository({ statePath });
+  recovered.transact(() => undefined);
+  assert.equal(statSync(statePath).isFile(), true);
+  assert.equal(statSync(statePath).mode & 0o777, 0o600);
+  assert.equal(statSync(dir).mode & 0o777, 0o700);
+  assert.equal(recovered.read().schema, 'webmcp-profile-session-governor-state/1');
+  recovered.close();
+});
+
+test('a child process cannot open a duplicate writer for acquire authority', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-child-writer-'));
+  const statePath = path.join(dir, 'state.json');
+  const first = new GovernorRepository({ statePath });
+  const moduleUrl = pathToFileURL(path.join(ROOT, 'profile-governor/repository.mjs')).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `import { GovernorRepository } from ${JSON.stringify(moduleUrl)}; try { new GovernorRepository({ statePath: ${JSON.stringify(statePath)} }); process.exit(3); } catch (error) { process.stdout.write(error.code); }`], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.stdout, 'PROFILE_GOVERNOR_MULTI_WRITER');
+  first.close();
+});
+
+test('a child process can acquire durably and its crashed writer can be recovered', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-child-acquire-'));
+  const statePath = path.join(dir, 'state.json');
+  const repositoryUrl = pathToFileURL(path.join(ROOT, 'profile-governor/repository.mjs')).href;
+  const serviceUrl = pathToFileURL(path.join(ROOT, 'profile-governor/lease-service.mjs')).href;
+  const childRequest = request({ requestId: 'plr_child-0001', idempotencyKey: 'child-acquire-1', runId: 'run_child111' });
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `import { GovernorRepository } from ${JSON.stringify(repositoryUrl)}; import { ProfileGovernor } from ${JSON.stringify(serviceUrl)}; const repository = new GovernorRepository({ statePath: ${JSON.stringify(statePath)} }); const governor = new ProfileGovernor({ repository, registry: { resolve: async () => ({ physicalResourceId: 'prsc_shared_resource', bindingId: 'pb_test-profile', bindingRevision: 1, bindingDigest: ${JSON.stringify(DIGEST)}, allowedActions: ['browser-read'] }) }, claims: { validate: async (req) => ({ valid: true, active: true, allowedActions: ['browser-read'], ...req }) }, liveness: async () => ({ governor: 'healthy', registry: 'healthy', runnerClaim: 'active', browserAlive: true, extensionConnected: true }), revokeGrants: async () => true }); await governor.reconcileProfile('test-profile'); const lease = await governor.acquire(${JSON.stringify(childRequest)}); process.stdout.write(lease.leaseId);`], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /^lease_[0-9a-f]{16}$/);
+  const recovered = new GovernorRepository({ statePath });
+  const state = recovered.read();
+  assert.equal(state.leases[child.stdout].runId, 'run_child111');
+  assert.equal(state.leases[child.stdout].state, 'leased');
+  recovered.close();
 });
