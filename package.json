@@ -30,6 +30,7 @@
     "chrome-launcher/",
     "profile-governor/",
     "server/gateway_server.js",
+    "server/gateway/",
     "server/mcp_server.mjs",
     "server/mcp-tool-catalog.mjs",
     "catalog/command-catalog.js",

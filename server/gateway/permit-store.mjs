@@ -20,11 +20,17 @@ export class PermitStore {
   }
 
   revoke(revocationId) {
-    this.revoked.add(revocationId);
+    if (revocationId) this.revoked.add(revocationId);
   }
 
   isRevoked(revocationId, permitId) {
     return this.revoked.has(revocationId) || this.revoked.has(permitId);
+  }
+
+  // E5: explicit in-memory only, no persistence
+  revokeBoth(permitId, revocationId) {
+    if (permitId) this.revoked.add(permitId);
+    if (revocationId) this.revoked.add(revocationId);
   }
 
   reserveBudget(permit) {

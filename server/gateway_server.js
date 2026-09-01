@@ -1,23 +1,27 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const { WebSocketServer } = require('ws');
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import crypto from 'node:crypto';
+import { WebSocketServer } from 'ws';
+import { InteractiveRuntime } from './gateway/interactive-runtime.mjs';
+import { PermitStore } from './gateway/permit-store.mjs';
+import { TrustedContextChannel } from './gateway/trusted-context-channel.mjs';
+
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const { getCommandGroups, listCommands } = require('../catalog/command-catalog.js');
 
 const PORT = Number(process.env.WEBMCP_GATEWAY_PORT || process.env.PORT || 7865);
-// Bind to loopback by default so the local automation API is not reachable from
-// the LAN. Set WEBMCP_GATEWAY_HOST=0.0.0.0 explicitly to expose it (e.g. for a
-// remote agent on the same network) — you should pair that with a token.
 const HOST = process.env.WEBMCP_GATEWAY_HOST || '127.0.0.1';
-// Optional shared secret. When set, POST /api requires a matching
-// `Authorization: Bearer <token>` (or `x-webmcp-token: <token>`) header. The
-// managed app injects this into every child/agent via env; unset = open (the
-// current default, safe because we now bind loopback only).
 const TOKEN = process.env.WEBMCP_GATEWAY_TOKEN || '';
 const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
+const KEEPALIVE_PING_MS = Number(process.env.WEBMCP_GATEWAY_PING_MS || 15000);
+const MAX_DOWNLOAD_EVENTS_PER_PROFILE = Number(process.env.WEBMCP_DOWNLOAD_EVENT_LIMIT || 200);
 
-// Version metadata surfaced on /health so a supervising app can detect drift
-// between the gateway package and the bundled extension without extra IPC.
 function readJsonSafe(relPath) {
   try {
     return JSON.parse(fs.readFileSync(path.resolve(__dirname, relPath), 'utf8'));
@@ -28,13 +32,12 @@ function readJsonSafe(relPath) {
 const GATEWAY_VERSION = readJsonSafe('../package.json')?.version || null;
 const EXTENSION_VERSION = readJsonSafe('../webmcp-extension/dist/manifest.json')?.version || null;
 
-// Timing-safe token comparison so a set token can't be probed by response time.
-function tokenMatches(provided) {
-  if (!TOKEN) return true;
+function tokenMatches(provided, expectedToken = TOKEN) {
+  if (!expectedToken) return true;
   const a = Buffer.from(String(provided || ''));
-  const b = Buffer.from(TOKEN);
+  const b = Buffer.from(expectedToken);
   if (a.length !== b.length) return false;
-  return require('crypto').timingSafeEqual(a, b);
+  return crypto.timingSafeEqual(a, b);
 }
 
 function extractToken(req) {
@@ -43,102 +46,22 @@ function extractToken(req) {
   if (bearer) return bearer[1].trim();
   return req.headers['x-webmcp-token'] || '';
 }
-// Interval at which the gateway pings the extension. In Manifest V3, any
-// inbound WebSocket message resets the service-worker idle timer (~30s).
-// Pinging well under 30s keeps the extension's service worker alive so the
-// connection survives even when all tabs/windows are closed.
-const KEEPALIVE_PING_MS = Number(process.env.WEBMCP_GATEWAY_PING_MS || 15000);
 
-// ── Result normalization ─────────────────────────────────────
-// P1: Page WebMCP tools return results nested as:
-//   result.result.content[0].text = '{"count":20,"elements":[...]}'
-// Auto-parse that text into result.parsedContent so callers never need
-// to unwrap manually. The original result.result is kept for compatibility.
-//
-// P4: If parsedContent indicates a page-tool error, mark it for HTTP 422.
 function normalizeResult(result) {
   if (!result) return result;
   try {
     const text = result?.result?.content?.[0]?.text;
     if (typeof text === 'string' && (text.trimStart().startsWith('{') || text.trimStart().startsWith('['))) {
       const parsed = JSON.parse(text);
-      // P4: page tool signalled an error
       if (parsed && typeof parsed === 'object' && parsed.error === true && parsed.message) {
         return { ...result, parsedContent: parsed, _pageToolError: { message: parsed.message } };
       }
       return { ...result, parsedContent: parsed };
     }
   } catch {
-    // Not JSON or parse failed — return as-is
+    // parse failed — return as-is
   }
   return result;
-}
-
-// ── State ────────────────────────────────────────────────────
-// Map<profileId, ws> of identified extension connections. A connection is
-// registered once it sends an `extensionReady` handshake carrying its
-// profileId, and removed on close. Multiple Chrome profiles can connect
-// concurrently to this one gateway.
-const extensions = new Map();
-// Connections that have opened but not yet identified themselves. Tracked only
-// so keep-alive timers/cleanup behave before the handshake arrives.
-const pendingConnections = new Set();
-let nextId = 1;
-// rpcId -> { res, timeoutTimer, method, ws }
-const pendingHttpRequests = new Map();
-// profileId -> bounded download event records. These events are emitted by the
-// extension's chrome.downloads listeners and consumed later by workflow/runtime
-// code to build per-run `.incoming/downloads.json` manifests. Keep them out of
-// /health so private local filenames are never exposed in readiness probes.
-const downloadEventsByProfile = new Map();
-const MAX_DOWNLOAD_EVENTS_PER_PROFILE = Number(process.env.WEBMCP_DOWNLOAD_EVENT_LIMIT || 200);
-
-function connectedProfileIds() {
-  const ids = [];
-  for (const [profileId, ws] of extensions) {
-    if (ws.readyState === 1) ids.push(profileId);
-  }
-  return ids;
-}
-
-function connectedProfileDetails() {
-  const details = [];
-  for (const [profileId, ws] of extensions) {
-    if (ws.readyState === 1) {
-      details.push({
-        profileId,
-        email: ws._profileEmail || '',
-        name: ws._profileName || '',
-        extensionVersion: ws._extensionVersion || '',
-        capabilities: Array.isArray(ws._capabilities) ? ws._capabilities : [],
-      });
-    }
-  }
-  return details;
-}
-
-// Resolve which extension WebSocket should receive a command.
-// Returns { ws } on success or { error, status } on failure.
-function resolveTarget(profileId) {
-  const ids = connectedProfileIds();
-  if (ids.length === 0) {
-    return { error: 'Chrome extension is not connected to the gateway', status: 503 };
-  }
-  if (profileId) {
-    const ws = extensions.get(profileId);
-    if (!ws || ws.readyState !== 1) {
-      return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
-    }
-    return { ws };
-  }
-  // No profileId specified: unambiguous only when exactly one profile is connected.
-  if (ids.length === 1) {
-    return { ws: extensions.get(ids[0]) };
-  }
-  return {
-    error: `Multiple Chrome profiles are connected (${ids.join(', ')}). Specify "profileId" in the request body.`,
-    status: 400,
-  };
 }
 
 function writeJson(res, statusCode, payload) {
@@ -174,276 +97,903 @@ function downloadOrigin(url) {
   }
 }
 
-function recordDownloadEvent(profileId, type, params = {}) {
-  if (!profileId) return;
-  const events = downloadEventsByProfile.get(profileId) || [];
-  events.push({
-    schema: 'webmcp-download-event/1',
-    type,
-    observedAt: new Date().toISOString(),
-    profileId,
-    id: params.id ?? null,
-    url: params.url || null,
-    sourceOrigin: downloadOrigin(params.url),
-    filename: params.filename || null,
-    mimeType: params.mime || params.mimeType || null,
-    fileSize: Number.isFinite(Number(params.fileSize)) ? Number(params.fileSize) : null,
-    state: params.state || null,
-    error: params.error || null,
-  });
-  while (events.length > MAX_DOWNLOAD_EVENTS_PER_PROFILE) events.shift();
-  downloadEventsByProfile.set(profileId, events);
-}
-
-function listDownloadEvents(profileId, params = {}) {
-  const since = typeof params.since === 'string' ? params.since : null;
-  const limit = boundedLimit(params.limit);
-  const entries = profileId
-    ? (downloadEventsByProfile.get(profileId) || [])
-    : [...downloadEventsByProfile.values()].flat();
-  const filtered = since
-    ? entries.filter((event) => event.observedAt > since)
-    : entries;
-  return {
-    schema: 'webmcp-download-events/1',
-    profileId: profileId || null,
-    count: filtered.slice(-limit).length,
-    events: filtered.slice(-limit),
-  };
-}
-
-function clearDownloadEvents(profileId) {
-  if (profileId) {
-    const cleared = (downloadEventsByProfile.get(profileId) || []).length;
-    downloadEventsByProfile.set(profileId, []);
-    return { schema: 'webmcp-download-events-cleared/1', profileId, cleared };
+function deriveTargetOriginForMethod(method, params, explicitTargetOrigin) {
+  if (typeof explicitTargetOrigin === 'string' && explicitTargetOrigin) {
+    try {
+      const u = new URL(explicitTargetOrigin);
+      if ((u.protocol === 'http:' || u.protocol === 'https:') && u.origin === explicitTargetOrigin) return u.origin;
+      if (u.origin) return u.origin;
+    } catch {}
   }
-  const cleared = [...downloadEventsByProfile.values()].reduce((sum, events) => sum + events.length, 0);
-  downloadEventsByProfile.clear();
-  return { schema: 'webmcp-download-events-cleared/1', profileId: null, cleared };
-}
-
-// ── HTTP Server ──────────────────────────────────────────────
-const server = http.createServer((req, res) => {
-  // CORS Headers to allow scripts/agents to query from anywhere
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-webmcp-token');
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
-    return res.end();
-  }
-
-  if (req.method === 'GET' && req.url === '/health') {
-    const profiles = connectedProfileIds();
-    const profileDetails = connectedProfileDetails();
-    return writeJson(res, 200, {
-      ok: true,
-      schema: 'webmcp-browser-gateway-health/1',
-      extensionConnected: profiles.length > 0,
-      profiles,
-      profileDetails,
-      profileCount: profiles.length,
-      port: PORT,
-      wsUrl: `ws://localhost:${PORT}`,
-      apiUrl: `http://localhost:${PORT}/api`,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      gatewayVersion: GATEWAY_VERSION,
-      extensionVersion: EXTENSION_VERSION,
-      authRequired: Boolean(TOKEN),
-      commands: listGatewayCommands(),
-      commandGroups: getGatewayCommandGroups(),
-    });
-  }
-
-  if (req.method === 'POST' && req.url === '/api') {
-    if (!tokenMatches(extractToken(req))) {
-      return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
+  if (params && typeof params === 'object') {
+    for (const key of ['targetOrigin', 'url', 'sourceOrigin']) {
+      const v = params[key];
+      if (typeof v === 'string' && v) {
+        try {
+          const u = new URL(v);
+          if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
+        } catch {}
+      }
     }
-    let body = '';
-    req.on('data', chunk => {
-      body += chunk.toString();
+  }
+  return null;
+}
+
+function createGatewayServer({
+  port = PORT,
+  host = HOST,
+  token = TOKEN,
+  commandTimeoutMs = COMMAND_TIMEOUT_MS,
+  keepalivePingMs = KEEPALIVE_PING_MS,
+  interactiveRuntime = null,
+  socketPath = process.env.WEBMCP_TRUSTED_CONTEXT_SOCKET || null,
+  publicKey = process.env.WEBMCP_RUNNER_PUBLIC_KEY || process.env.WEBMCP_GATEWAY_PUBLIC_KEY || null,
+  keyId = process.env.WEBMCP_RUNNER_KEY_ID || null,
+  expectedPhase = null,
+  interactiveMode = null,
+  allowTestSeams = false,
+  _testSeam = false,
+} = {}) {
+  const extensions = new Map();
+  const pendingConnections = new Set();
+  const pendingHttpRequests = new Map();
+  const downloadEventsByProfile = new Map();
+  const keepAliveTimers = new Set();
+  let nextId = 1;
+
+  const isTestEnv = process.env.NODE_ENV === 'test';
+  const isTestContract = isTestEnv && process.env.WEBMCP_ALLOW_TEST_SEAMS === '1';
+  const isTestSeamAllowed = isTestContract && Boolean(allowTestSeams || _testSeam);
+
+  if (interactiveRuntime && !isTestSeamAllowed) {
+    throw new Error('Passing custom interactiveRuntime is not permitted in production construction');
+  }
+
+  const pinnedPublicKey = process.env.WEBMCP_RUNNER_PUBLIC_KEY || process.env.WEBMCP_GATEWAY_PUBLIC_KEY || null;
+  const pinnedKeyId = process.env.WEBMCP_RUNNER_KEY_ID || null;
+  const pinnedSocketPath = process.env.WEBMCP_TRUSTED_CONTEXT_SOCKET || null;
+
+  if (!isTestSeamAllowed) {
+    if (publicKey && publicKey !== pinnedPublicKey) {
+      throw new Error('Passing custom publicKey is not permitted in production construction');
+    }
+    if (keyId && keyId !== pinnedKeyId) {
+      throw new Error('Passing custom keyId is not permitted in production construction');
+    }
+    if (socketPath && socketPath !== pinnedSocketPath) {
+      throw new Error('Passing custom socketPath is not permitted in production construction');
+    }
+  }
+
+  const isProduction = process.env.NODE_ENV === 'production';
+  const hasInteractiveConfig = Boolean(
+    publicKey ||
+    socketPath ||
+    process.env.WEBMCP_RUNNER_PUBLIC_KEY ||
+    process.env.WEBMCP_GATEWAY_PUBLIC_KEY ||
+    process.env.WEBMCP_TRUSTED_CONTEXT_SOCKET ||
+    process.env.WEBMCP_GATEWAY_INTERACTIVE === '1' ||
+    process.env.WEBMCP_INTERACTIVE_MODE ||
+    isProduction
+  );
+
+  const defaultMode = hasInteractiveConfig ? 'enforce' : 'off';
+  let effectiveMode = interactiveMode || process.env.WEBMCP_INTERACTIVE_MODE || defaultMode;
+
+  if (effectiveMode === 'observe' && !isTestSeamAllowed) {
+    throw new Error(`Interactive mode 'observe' is only allowed through explicit test seams and cannot be selected by production`);
+  }
+
+  if (effectiveMode !== 'enforce') {
+    if (isProduction && !isTestSeamAllowed) {
+      throw new Error(`Interactive mode '${effectiveMode}' cannot be selected by production caller`);
+    }
+  }
+
+  const runtime =
+    (isTestSeamAllowed && interactiveRuntime) ||
+    new InteractiveRuntime({
+      publicKey: !isTestSeamAllowed ? pinnedPublicKey : publicKey,
+      keyId: !isTestSeamAllowed ? pinnedKeyId : keyId,
+      expectedPhase,
+      socketPath: !isTestSeamAllowed ? pinnedSocketPath : socketPath,
+      mode: effectiveMode,
+      allowTestSeams: isTestSeamAllowed,
+      _testSeam: isTestSeamAllowed,
     });
 
-    req.on('end', () => {
-      let requestPayload;
-      try {
-        requestPayload = JSON.parse(body);
-      } catch (err) {
-        return writeJson(res, 400, { error: 'Invalid JSON request payload' });
-      }
+  function connectedProfileIds() {
+    const ids = [];
+    for (const [profileId, ws] of extensions) {
+      if (ws.readyState === 1) ids.push(profileId);
+    }
+    return ids;
+  }
 
-      const { method, params, profileId } = requestPayload;
-      if (!method) {
-        return writeJson(res, 400, { error: 'Missing "method" in request' });
+  function connectedProfileDetails() {
+    const details = [];
+    for (const [profileId, ws] of extensions) {
+      if (ws.readyState === 1) {
+        details.push({
+          profileId,
+          email: ws._profileEmail || '',
+          name: ws._profileName || '',
+          extensionVersion: ws._extensionVersion || '',
+          capabilities: Array.isArray(ws._capabilities) ? ws._capabilities : [],
+        });
       }
+    }
+    return details;
+  }
 
-      if (method === 'listDownloadEvents') {
-        return writeJson(res, 200, { result: listDownloadEvents(profileId || params?.profileId || null, params || {}) });
+  function resolveTarget(profileId) {
+    const ids = connectedProfileIds();
+    if (ids.length === 0) {
+      return { error: 'Chrome extension is not connected to the gateway', status: 503 };
+    }
+    if (profileId) {
+      const ws = extensions.get(profileId);
+      if (!ws || ws.readyState !== 1) {
+        return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
       }
-      if (method === 'clearDownloadEvents') {
-        return writeJson(res, 200, { result: clearDownloadEvents(profileId || params?.profileId || null) });
-      }
+      return { ws, profileId };
+    }
+    if (ids.length === 1) {
+      const singleId = ids[0];
+      return { ws: extensions.get(singleId), profileId: singleId };
+    }
+    return {
+      error: `Multiple Chrome profiles are connected (${ids.join(', ')}). Specify "profileId" in the request body.`,
+      status: 400,
+    };
+  }
 
-      const target = resolveTarget(profileId);
-      if (target.error) {
-        return writeJson(res, target.status, { error: target.error });
-      }
-      const ws = target.ws;
+  function recordDownloadEvent(profileId, type, params = {}) {
+    if (!profileId) return;
+    const events = downloadEventsByProfile.get(profileId) || [];
+    events.push({
+      schema: 'webmcp-download-event/1',
+      type,
+      observedAt: new Date().toISOString(),
+      profileId,
+      id: params.id ?? null,
+      url: params.url || null,
+      sourceOrigin: downloadOrigin(params.url),
+      filename: params.filename || null,
+      mimeType: params.mime || params.mimeType || null,
+      fileSize: Number.isFinite(Number(params.fileSize)) ? Number(params.fileSize) : null,
+      state: params.state || null,
+      error: params.error || null,
+    });
+    while (events.length > MAX_DOWNLOAD_EVENTS_PER_PROFILE) events.shift();
+    downloadEventsByProfile.set(profileId, events);
+  }
 
-      // Assign a unique JSON-RPC ID
-      const rpcId = nextId++;
-      const extensionPayload = {
-        jsonrpc: '2.0',
-        id: rpcId,
-        method,
-        params: params || {}
+  function listDownloadEvents(profileId, params = {}) {
+    const since = typeof params.since === 'string' ? params.since : null;
+    const limit = boundedLimit(params.limit);
+    const entries = profileId
+      ? (downloadEventsByProfile.get(profileId) || [])
+      : [...downloadEventsByProfile.values()].flat();
+    const filtered = since
+      ? entries.filter((event) => event.observedAt > since)
+      : entries;
+    return {
+      schema: 'webmcp-download-events/1',
+      profileId: profileId || null,
+      count: filtered.slice(-limit).length,
+      events: filtered.slice(-limit),
+    };
+  }
+
+  function clearDownloadEvents(profileId) {
+    if (profileId) {
+      const cleared = (downloadEventsByProfile.get(profileId) || []).length;
+      downloadEventsByProfile.set(profileId, []);
+      return { schema: 'webmcp-download-events-cleared/1', profileId, cleared };
+    }
+    const cleared = [...downloadEventsByProfile.values()].reduce((sum, events) => sum + events.length, 0);
+    downloadEventsByProfile.clear();
+    return { schema: 'webmcp-download-events-cleared/1', profileId: null, cleared };
+  }
+
+  // ── HTTP Server ──────────────────────────────────────────────
+  const server = http.createServer((req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-webmcp-token');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      return res.end();
+    }
+
+    if (req.method === 'GET' && req.url === '/health') {
+      const profiles = connectedProfileIds();
+      const profileDetails = connectedProfileDetails();
+      const activeCtx = runtime.getCurrentContext();
+      const boundPort = server.address()?.port || port;
+      const isAuthenticated = !token || tokenMatches(extractToken(req), token);
+
+      const healthPayload = {
+        ok: true,
+        schema: 'webmcp-browser-gateway-health/1',
+        extensionConnected: profiles.length > 0,
+        profiles,
+        profileDetails,
+        profileCount: profiles.length,
+        port: boundPort,
+        wsUrl: `ws://localhost:${boundPort}`,
+        apiUrl: `http://localhost:${boundPort}/api`,
+        timeoutMs: commandTimeoutMs,
+        gatewayVersion: GATEWAY_VERSION,
+        extensionVersion: EXTENSION_VERSION,
+        authRequired: Boolean(token),
+        commands: listGatewayCommands(),
+        commandGroups: getGatewayCommandGroups(),
+        interactive: {
+          enabled: Boolean(runtime),
+          mode: runtime.mode,
+          hasContext: Boolean(activeCtx),
+        },
       };
 
-      // Set up a timeout for this request. Batch runs several commands
-      // sequentially → longer, proportional timeout (hard-capped at 300s).
-      const actionCount =
-        method === 'batch' && Array.isArray(params?.actions) ? params.actions.length : 1;
-      const effectiveTimeout = Math.min(COMMAND_TIMEOUT_MS * actionCount, 300_000);
-      const timeoutTimer = setTimeout(() => {
-        const pending = pendingHttpRequests.get(rpcId);
-        if (pending) {
-          pendingHttpRequests.delete(rpcId);
-          writeJson(
-            pending.res,
-            504,
-            { error: `Command '${method}' timed out after ${effectiveTimeout}ms` }
-          );
+      if (isAuthenticated && runtime.getContextSummary) {
+        healthPayload.interactive.contextSummary = runtime.getContextSummary();
+      }
+
+      return writeJson(res, 200, healthPayload);
+    }
+
+    if (req.method === 'POST' && req.url === '/api') {
+      if (!tokenMatches(extractToken(req), token)) {
+        return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
+      }
+
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+
+      req.on('end', () => {
+        let requestPayload;
+        try {
+          requestPayload = JSON.parse(body);
+        } catch {
+          return writeJson(res, 400, { error: 'Invalid JSON request payload' });
         }
-      }, effectiveTimeout);
 
-      // Store the pending HTTP response, tagged with the target connection so
-      // we can fail it precisely if that connection drops.
-      pendingHttpRequests.set(rpcId, { res, timeoutTimer, method, ws });
+        const { method, params, profileId, permit, targetOrigin } = requestPayload;
+        if (!method) {
+          return writeJson(res, 400, { error: 'Missing "method" in request' });
+        }
 
-      // Forward to the chosen extension via WebSocket
-      ws.send(JSON.stringify(extensionPayload));
-      console.log(`[Gateway] Forwarded command: ID=${rpcId} | Method=${method} | profile=${profileId || '(single)'}`);
-    });
-  } else {
-    writeJson(res, 404, { error: 'Not Found. Exposes GET /health and POST /api for automation.' });
-  }
-});
+        const isDownloadMethod = method === 'listDownloadEvents' || method === 'clearDownloadEvents';
 
-// ── WebSocket Server (for Chrome Extension) ─────────────────
-const wss = new WebSocketServer({ server });
+        // First resolve target to obtain effective profile ID
+        let ws = null;
+        let effectiveProfileId = profileId || params?.profileId || null;
 
-wss.on('connection', (ws, req) => {
-  pendingConnections.add(ws);
-  ws._profileId = null;
-  console.log(`[Gateway] Chrome Extension connected from ${req.socket.remoteAddress} (awaiting handshake)`);
-
-  // ── Keep the MV3 service worker alive ──────────────────────
-  // Send a lightweight ping notification on an interval. The extension does
-  // not need to reply — the mere act of receiving a message resets Chrome's
-  // service-worker idle timer, keeping the WebSocket connection alive.
-  const keepAliveTimer = setInterval(() => {
-    if (ws.readyState === 1) {
-      ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'ping', params: { ts: Date.now() } }));
-    }
-  }, KEEPALIVE_PING_MS);
-
-  ws.on('message', (data) => {
-    let msg;
-    try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      return;
-    }
-
-    // It's a response to a command we forwarded
-    if ('id' in msg && !('method' in msg)) {
-      const pending = pendingHttpRequests.get(msg.id);
-      if (pending) {
-        pendingHttpRequests.delete(msg.id);
-        clearTimeout(pending.timeoutTimer);
-
-        if ('error' in msg) {
-          console.log(`[Gateway] Error response received for ID=${msg.id}:`, msg.error);
-          writeJson(pending.res, 500, { error: msg.error?.message || 'Execution error' });
+        if (!isDownloadMethod) {
+          const target = resolveTarget(profileId);
+          if (target.error) {
+            // Create blocked receipt for no-target case
+            let blockedReceipt = null;
+            const isInteractive = runtime.mode !== 'off' || Boolean(permit);
+            if (isInteractive) {
+              try {
+                const ctx = runtime.getCurrentContext();
+                const derivedOrigin = deriveTargetOriginForMethod(method, params || {}, targetOrigin);
+                blockedReceipt = runtime.createBlockedReceipt({
+                  permit,
+                  context: ctx,
+                  method,
+                  params: params || {},
+                  targetOrigin: derivedOrigin,
+                  reason: 'NO_TARGET',
+                  sequence: 1,
+                });
+              } catch {
+                blockedReceipt = null;
+              }
+            }
+            return writeJson(res, target.status, { error: target.error, receipt: blockedReceipt });
+          }
+          ws = target.ws;
+          effectiveProfileId = profileId || target.profileId || ws._profileId;
         } else {
-          console.log(`[Gateway] Success response received for ID=${msg.id}`);
-          // P1: auto-unwrap nested page-tool JSON so callers get parsedContent directly
-          // P4: surface page-tool errors at HTTP level (422) instead of burying in 200 body
-          const normalized = normalizeResult(msg.result);
-          if (normalized._pageToolError) {
-            const { _pageToolError, ...rest } = normalized;
-            console.log(`[Gateway] Page tool error for ID=${msg.id}: ${_pageToolError.message}`);
-            writeJson(pending.res, 422, { error: _pageToolError.message, errorType: 'pageToolError', raw: rest });
+          const ids = connectedProfileIds();
+          if (!effectiveProfileId && ids.length === 1) {
+            effectiveProfileId = ids[0];
+          }
+        }
+
+        // Interactive Server-side Verification
+        const isInteractive = runtime.mode !== 'off' || Boolean(permit);
+        let executionReceipt = null;
+        let enforcement = null;
+
+        if (isInteractive) {
+          enforcement = runtime.enforceRequest({
+            method,
+            params: params || {},
+            profileId: effectiveProfileId,
+            permit,
+            targetOrigin,
+            now: new Date(),
+          });
+
+          executionReceipt = enforcement.receipt;
+
+          // Handle batch denied with zero-forward: create blocked child receipts
+          const isBatch = method === 'batch' || method === 'browser_batch';
+          if ((enforcement.decision === 'deny' || enforcement.decision === 'would-deny')) {
+            if (isBatch && Array.isArray(params?.actions) && params.actions.length > 0) {
+              const ctx = runtime.getCurrentContext();
+              const blocked = runtime.createBatchBlockedReceipts({
+                permit,
+                context: ctx,
+                actions: params.actions.map((a) => ({ method: a.method || a.tool, params: a.params || {}, targetOrigin: a.targetOrigin })),
+                reason: enforcement.reason || 'EXECUTION_PERMIT_SCOPE_DENIED',
+              });
+              console.log(`[Gateway] Batch denied: reason=${enforcement.reason} actionClass=${enforcement.actionClass} decision=${enforcement.decision}`);
+              return writeJson(res, 403, {
+                error: enforcement.reason,
+                decision: enforcement.decision,
+                reason: enforcement.reason,
+                actionClass: enforcement.actionClass,
+                receipt: blocked.aggregate,
+                receipts: blocked.children,
+              });
+            }
+            console.log(`[Gateway] Request denied: reason=${enforcement.reason} actionClass=${enforcement.actionClass} decision=${enforcement.decision}`);
+            return writeJson(res, 403, {
+              error: enforcement.reason,
+              decision: enforcement.decision,
+              reason: enforcement.reason,
+              actionClass: enforcement.actionClass,
+              receipt: enforcement.receipt,
+            });
+          }
+        }
+
+        if (isDownloadMethod) {
+          if (method === 'listDownloadEvents') {
+            const result = listDownloadEvents(effectiveProfileId, params || {});
+            if (isInteractive) {
+              const ctx = runtime.getCurrentContext();
+              const derivedOrigin = deriveTargetOriginForMethod(method, params || {}, targetOrigin);
+              const finalReceipt = runtime.createAppliedReceipt({
+                permit,
+                context: ctx,
+                method,
+                params: params || {},
+                targetOrigin: derivedOrigin,
+                result,
+                sequence: 1,
+              });
+              return writeJson(res, 200, { result, receipt: finalReceipt });
+            }
+            return writeJson(res, 200, { result });
+          }
+          if (method === 'clearDownloadEvents') {
+            const result = clearDownloadEvents(effectiveProfileId);
+            if (isInteractive) {
+              const ctx = runtime.getCurrentContext();
+              const derivedOrigin = deriveTargetOriginForMethod(method, params || {}, targetOrigin);
+              const finalReceipt = runtime.createAppliedReceipt({
+                permit,
+                context: ctx,
+                method,
+                params: params || {},
+                targetOrigin: derivedOrigin,
+                result,
+                sequence: 1,
+              });
+              return writeJson(res, 200, { result, receipt: finalReceipt });
+            }
+            return writeJson(res, 200, { result });
+          }
+        }
+
+        let forwardedParams = params || {};
+        if (method === 'batch' || method === 'browser_batch') {
+          const rawActions = Array.isArray(params?.actions) ? params.actions : (Array.isArray(params?.batch) ? params.batch : []);
+          const canonicalActions = rawActions.map((act) => ({
+            method: act.method || act.tool,
+            params: act.params || {},
+          }));
+          forwardedParams = {
+            ...params,
+            ...(Array.isArray(params?.actions) ? { actions: canonicalActions } : {}),
+            ...(Array.isArray(params?.batch) ? { batch: canonicalActions } : {}),
+          };
+        }
+
+        const rpcId = nextId++;
+        const extensionPayload = {
+          jsonrpc: '2.0',
+          id: rpcId,
+          method,
+          params: forwardedParams,
+        };
+
+        const batchItems = method === 'batch' || method === 'browser_batch'
+          ? (Array.isArray(params?.actions) ? params.actions : params?.batch)
+          : null;
+        const actionCount = Array.isArray(batchItems) ? Math.max(batchItems.length, 1) : 1;
+        const effectiveTimeout = Math.min(commandTimeoutMs * actionCount, 300_000);
+
+        const timeoutTimer = setTimeout(() => {
+          const pending = pendingHttpRequests.get(rpcId);
+          if (pending) {
+            pendingHttpRequests.delete(rpcId);
+            let finalReceipt = null;
+            const isBatch = pending.method === 'batch' || pending.method === 'browser_batch';
+            if (isBatch && Array.isArray(pending.params?.actions)) {
+              const finalReceipts = [];
+              for (let i = 0; i < pending.params.actions.length; i++) {
+                const act = pending.params.actions[i];
+                const r = runtime.createIndeterminateReceipt({
+                  permit: pending.permit,
+                  context: pending.context,
+                  method: act.method || act.tool,
+                  params: act.params || {},
+                  targetOrigin: act.targetOrigin || deriveTargetOriginForMethod(act.method || act.tool, act.params || {}, null),
+                  sequence: i + 1,
+                  reason: 'GATEWAY_TIMEOUT',
+                });
+                finalReceipts.push(r);
+              }
+              const agg = runtime.createIndeterminateReceipt({
+                permit: pending.permit,
+                context: pending.context,
+                method: 'batch',
+                params: { count: pending.params.actions.length },
+                targetOrigin: finalReceipts[0]?.targetOrigin || null,
+                sequence: 1,
+                reason: 'GATEWAY_TIMEOUT',
+                children: finalReceipts,
+              });
+              writeJson(pending.res, 504, {
+                error: 'GATEWAY_TIMEOUT',
+                receipt: agg,
+                receipts: finalReceipts,
+              });
+              return;
+            }
+            finalReceipt = runtime.createIndeterminateReceipt({
+              permit: pending.permit,
+              context: pending.context,
+              method: pending.method,
+              params: pending.params || {},
+              targetOrigin: pending.targetOrigin || deriveTargetOriginForMethod(pending.method, pending.params || {}, null),
+              sequence: 1,
+              reason: 'GATEWAY_TIMEOUT',
+            });
+            writeJson(pending.res, 504, {
+              error: 'GATEWAY_TIMEOUT',
+              receipt: finalReceipt,
+            });
+          }
+        }, effectiveTimeout);
+
+        pendingHttpRequests.set(rpcId, {
+          res,
+          timeoutTimer,
+          method,
+          params: params || {},
+          permit,
+          context: runtime.getCurrentContext(),
+          targetOrigin: targetOrigin || deriveTargetOriginForMethod(method, params || {}, null),
+          ws,
+          receipt: executionReceipt,
+        });
+
+        ws.send(JSON.stringify(extensionPayload));
+        console.log(`[Gateway] Forwarded command: ID=${rpcId} | Method=${method} | profile=${effectiveProfileId || '(single)'}`);
+      });
+    } else if (req.method === 'POST' && req.url === '/interactive/receipts/verify') {
+      if (!tokenMatches(extractToken(req), token)) {
+        return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
+      }
+      let body = '';
+      req.on('data', (chunk) => { body += chunk.toString(); });
+      req.on('end', () => {
+        let payload;
+        try {
+          payload = JSON.parse(body);
+        } catch {
+          return writeJson(res, 400, { error: 'Invalid JSON' });
+        }
+        const receipts = payload?.receipts;
+        if (!Array.isArray(receipts) || receipts.length === 0) {
+          return writeJson(res, 400, { error: 'Malformed request: receipts array required' });
+        }
+        // Validate each receipt has required fields without echoing raw
+        for (const r of receipts) {
+          if (!r || typeof r !== 'object' || typeof r.receiptId !== 'string' || typeof r.receiptDigest !== 'string' || typeof r.actionDigest !== 'string') {
+            return writeJson(res, 400, { error: 'Malformed receipt' });
+          }
+        }
+        const result = runtime.verifyReceipts(receipts);
+        if (!result.ok) {
+          return writeJson(res, 403, { error: 'Receipt verification failed', reason: result.reason });
+        }
+        return writeJson(res, 200, { ok: true, verified: true });
+      });
+    } else if (req.method === 'POST' && req.url === '/interactive/revoke') {
+      if (!tokenMatches(extractToken(req), token)) {
+        return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
+      }
+      let body = '';
+      req.on('data', (chunk) => { body += chunk.toString(); });
+      req.on('end', () => {
+        let payload;
+        try {
+          payload = JSON.parse(body);
+        } catch {
+          return writeJson(res, 400, { error: 'Invalid JSON' });
+        }
+        const permitId = payload?.permitId;
+        const revocationId = payload?.revocationId;
+        if ((!permitId || typeof permitId !== 'string') && (!revocationId || typeof revocationId !== 'string')) {
+          return writeJson(res, 400, { error: 'Malformed request: permitId or revocationId required' });
+        }
+        if (permitId && typeof permitId !== 'string') {
+          return writeJson(res, 400, { error: 'Malformed permitId' });
+        }
+        if (revocationId && typeof revocationId !== 'string') {
+          return writeJson(res, 400, { error: 'Malformed revocationId' });
+        }
+        const result = runtime.revokePermit({ permitId, revocationId });
+        return writeJson(res, 200, { ok: true, revoked: result.revoked });
+      });
+    } else {
+      writeJson(res, 404, { error: 'Not Found. Exposes GET /health and POST /api for automation.' });
+    }
+  });
+
+  // ── WebSocket Server ─────────────────────────────────────────
+  const wss = new WebSocketServer({ server });
+
+  wss.on('connection', (ws, req) => {
+    pendingConnections.add(ws);
+    ws._profileId = null;
+    console.log(`[Gateway] Chrome Extension connected from ${req.socket.remoteAddress} (awaiting handshake)`);
+
+    const keepAliveTimer = setInterval(() => {
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'ping', params: { ts: Date.now() } }));
+      }
+    }, keepalivePingMs);
+    keepAliveTimers.add(keepAliveTimer);
+
+    ws.on('message', (data) => {
+      let msg;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+
+      if ('id' in msg && !('method' in msg)) {
+        const pending = pendingHttpRequests.get(msg.id);
+        if (pending) {
+          pendingHttpRequests.delete(msg.id);
+          clearTimeout(pending.timeoutTimer);
+
+          const isBatch = pending.method === 'batch' || pending.method === 'browser_batch';
+          const ctx = pending.context;
+          const permit = pending.permit;
+
+          if ('error' in msg) {
+            console.log(`[Gateway] Error response received for ID=${msg.id}`);
+            let finalReceipt = null;
+            let receipts = null;
+            if (isBatch && Array.isArray(pending.params?.actions)) {
+              receipts = [];
+              for (let i = 0; i < pending.params.actions.length; i++) {
+                const act = pending.params.actions[i];
+                const r = runtime.createFailedReceipt({
+                  permit,
+                  context: ctx,
+                  method: act.method || act.tool,
+                  params: act.params || {},
+                  targetOrigin: act.targetOrigin || deriveTargetOriginForMethod(act.method || act.tool, act.params || {}, null),
+                  result: msg.error,
+                  sequence: i + 1,
+                  reason: 'EXECUTION_FAILED',
+                });
+                receipts.push(r);
+              }
+              const agg = runtime.createFailedReceipt({
+                permit,
+                context: ctx,
+                method: 'batch',
+                params: { count: pending.params.actions.length },
+                targetOrigin: receipts[0]?.targetOrigin || null,
+                result: msg.error,
+                sequence: 1,
+                reason: 'EXECUTION_FAILED',
+                children: receipts,
+              });
+              writeJson(pending.res, 500, {
+                error: 'EXECUTION_FAILED',
+                receipt: agg,
+                receipts,
+              });
+              return;
+            }
+            finalReceipt = runtime.createFailedReceipt({
+              permit,
+              context: ctx,
+              method: pending.method,
+              params: pending.params || {},
+              targetOrigin: pending.targetOrigin,
+              result: msg.error,
+              sequence: 1,
+              reason: 'EXECUTION_FAILED',
+            });
+            writeJson(pending.res, 500, {
+              error: 'EXECUTION_FAILED',
+              receipt: finalReceipt,
+            });
           } else {
-            writeJson(pending.res, 200, { result: normalized });
+            console.log(`[Gateway] Success response received for ID=${msg.id}`);
+            const normalized = normalizeResult(msg.result) || {};
+            if (normalized._pageToolError) {
+              const { _pageToolError } = normalized;
+              console.log(`[Gateway] Page tool error for ID=${msg.id}`);
+              let finalReceipt = null;
+              let receipts = null;
+              if (isBatch && Array.isArray(pending.params?.actions)) {
+                receipts = [];
+                for (let i = 0; i < pending.params.actions.length; i++) {
+                  const act = pending.params.actions[i];
+                  const r = runtime.createFailedReceipt({
+                    permit,
+                    context: ctx,
+                    method: act.method || act.tool,
+                    params: act.params || {},
+                    targetOrigin: act.targetOrigin || deriveTargetOriginForMethod(act.method || act.tool, act.params || {}, null),
+                    result: _pageToolError,
+                    sequence: i + 1,
+                    reason: 'PAGE_TOOL_ERROR',
+                  });
+                  receipts.push(r);
+                }
+                const agg = runtime.createFailedReceipt({
+                  permit,
+                  context: ctx,
+                  method: 'batch',
+                  params: { count: pending.params.actions.length },
+                  targetOrigin: receipts[0]?.targetOrigin || null,
+                  result: _pageToolError,
+                  sequence: 1,
+                  reason: 'PAGE_TOOL_ERROR',
+                  children: receipts,
+                });
+                writeJson(pending.res, 422, {
+                  error: 'PAGE_TOOL_ERROR',
+                  errorType: 'PAGE_TOOL_ERROR',
+                  receipt: agg,
+                  receipts,
+                });
+                return;
+              }
+              finalReceipt = runtime.createFailedReceipt({
+                permit,
+                context: ctx,
+                method: pending.method,
+                params: pending.params || {},
+                targetOrigin: pending.targetOrigin,
+                result: _pageToolError,
+                sequence: 1,
+                reason: 'PAGE_TOOL_ERROR',
+              });
+              writeJson(pending.res, 422, {
+                error: 'PAGE_TOOL_ERROR',
+                errorType: 'PAGE_TOOL_ERROR',
+                receipt: finalReceipt,
+              });
+            } else {
+              // Success applied
+              if (isBatch && Array.isArray(pending.params?.actions)) {
+                const actions = pending.params.actions;
+                const resultsArray = Array.isArray(normalized?.result) ? normalized.result : actions.map(() => normalized);
+                const batchRes = runtime.createBatchAppliedReceipts({
+                  permit,
+                  context: ctx,
+                  actions: actions.map((a) => ({ method: a.method || a.tool, params: a.params || {}, targetOrigin: a.targetOrigin })),
+                  results: resultsArray,
+                });
+                writeJson(pending.res, 200, {
+                  result: normalized,
+                  receipt: batchRes.aggregate,
+                  receipts: batchRes.children,
+                });
+                return;
+              }
+              const finalReceipt = runtime.createAppliedReceipt({
+                permit,
+                context: ctx,
+                method: pending.method,
+                params: pending.params || {},
+                targetOrigin: pending.targetOrigin,
+                result: normalized,
+                sequence: 1,
+              });
+              writeJson(pending.res, 200, {
+                result: normalized,
+                receipt: finalReceipt,
+              });
+            }
+          }
+        }
+        return;
+      }
+
+      if ('method' in msg) {
+        const { method, params = {} } = msg;
+        if (method === 'extensionReady') {
+          const profId = params.profileId || `anon-${req.socket.remoteAddress}-${Date.now()}`;
+          ws._profileId = profId;
+          ws._profileEmail = params.profileEmail || '';
+          ws._profileName = params.profileName || '';
+          ws._extensionVersion = params.version || '';
+          ws._capabilities = Array.isArray(params.capabilities) ? params.capabilities : [];
+          pendingConnections.delete(ws);
+
+          const existing = extensions.get(profId);
+          if (existing && existing !== ws) {
+            try { existing.close(); } catch { /* already closed */ }
+          }
+          extensions.set(profId, ws);
+          console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${profId} | email=${ws._profileEmail} | name=${ws._profileName}`);
+        } else if (method === 'heartbeat' || method === 'pong') {
+          // Silent keep-alive traffic
+        } else if (method === 'downloadStarted' || method === 'downloadChanged') {
+          recordDownloadEvent(ws._profileId, method, params);
+        } else {
+          console.log(`[Gateway] Event from Extension: ${method}`, params);
+        }
+      }
+    });
+
+    ws.on('close', () => {
+      clearInterval(keepAliveTimer);
+      keepAliveTimers.delete(keepAliveTimer);
+      pendingConnections.delete(ws);
+      if (ws._profileId && extensions.get(ws._profileId) === ws) {
+        extensions.delete(ws._profileId);
+      }
+      console.log(`[Gateway] Chrome Extension disconnected | profile=${ws._profileId || '(unidentified)'}`);
+
+      for (const [rpcId, pending] of pendingHttpRequests) {
+        if (pending.ws === ws) {
+          clearTimeout(pending.timeoutTimer);
+          pendingHttpRequests.delete(rpcId);
+          const isBatch = pending.method === 'batch' || pending.method === 'browser_batch';
+          if (isBatch && Array.isArray(pending.params?.actions)) {
+            const receipts = [];
+            for (let i = 0; i < pending.params.actions.length; i++) {
+              const act = pending.params.actions[i];
+              const r = runtime.createIndeterminateReceipt({
+                permit: pending.permit,
+                context: pending.context,
+                method: act.method || act.tool,
+                params: act.params || {},
+                targetOrigin: act.targetOrigin || deriveTargetOriginForMethod(act.method || act.tool, act.params || {}, null),
+                sequence: i + 1,
+                reason: 'EXTENSION_DISCONNECT',
+              });
+              receipts.push(r);
+            }
+            const agg = runtime.createIndeterminateReceipt({
+              permit: pending.permit,
+              context: pending.context,
+              method: 'batch',
+              params: { count: pending.params.actions.length },
+              targetOrigin: receipts[0]?.targetOrigin || null,
+              sequence: 1,
+              reason: 'EXTENSION_DISCONNECT',
+              children: receipts,
+            });
+            writeJson(pending.res, 502, {
+              error: 'Chrome extension disconnected during command execution',
+              receipt: agg,
+              receipts,
+            });
+          } else {
+            const finalReceipt = runtime.createIndeterminateReceipt({
+              permit: pending.permit,
+              context: pending.context,
+              method: pending.method,
+              params: pending.params || {},
+              targetOrigin: pending.targetOrigin,
+              sequence: 1,
+              reason: 'EXTENSION_DISCONNECT',
+            });
+            writeJson(pending.res, 502, {
+              error: 'Chrome extension disconnected during command execution',
+              receipt: finalReceipt,
+            });
           }
         }
       }
-      return;
-    }
-
-    // Handle notifications or state changes from the extension (optional logs)
-    if ('method' in msg) {
-      const { method, params = {} } = msg;
-      if (method === 'extensionReady') {
-        // Fall back to a synthetic id so a profileId-less (older) extension is
-        // still routable as a single connection.
-        const profileId = params.profileId || `anon-${req.socket.remoteAddress}-${Date.now()}`;
-        ws._profileId = profileId;
-        ws._profileEmail = params.profileEmail || '';
-        ws._profileName = params.profileName || '';
-        ws._extensionVersion = params.version || '';
-        ws._capabilities = Array.isArray(params.capabilities) ? params.capabilities : [];
-        pendingConnections.delete(ws);
-        // Replace any stale connection registered under the same profile.
-        const existing = extensions.get(profileId);
-        if (existing && existing !== ws) {
-          try { existing.close(); } catch { /* already closed */ }
-        }
-        extensions.set(profileId, ws);
-        console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${profileId} | email=${ws._profileEmail} | name=${ws._profileName}`);
-      } else if (method === 'heartbeat' || method === 'pong') {
-        // Silent keep-alive traffic
-      } else if (method === 'downloadStarted' || method === 'downloadChanged') {
-        recordDownloadEvent(ws._profileId, method, params);
-      } else {
-        console.log(`[Gateway] Event from Extension: ${method}`, params);
-      }
-    }
+    });
   });
 
-  ws.on('close', () => {
-    clearInterval(keepAliveTimer);
-    pendingConnections.delete(ws);
-    if (ws._profileId && extensions.get(ws._profileId) === ws) {
-      extensions.delete(ws._profileId);
-    }
-    console.log(`[Gateway] Chrome Extension disconnected | profile=${ws._profileId || '(unidentified)'}`);
+  async function start() {
+    await runtime.start();
+    await new Promise((resolve) => {
+      server.listen(port, host, () => {
+        resolve();
+      });
+    });
+    const boundPort = server.address()?.port || port;
+    return { server, wss, runtime, port: boundPort, host };
+  }
 
-    // Fail only the pending requests that were routed to THIS connection.
-    for (const [rpcId, pending] of pendingHttpRequests) {
-      if (pending.ws === ws) {
-        clearTimeout(pending.timeoutTimer);
-        pendingHttpRequests.delete(rpcId);
-        writeJson(pending.res, 502, { error: 'Chrome extension disconnected during command execution' });
-      }
+  async function close() {
+    for (const timer of keepAliveTimers) {
+      clearInterval(timer);
     }
+    keepAliveTimers.clear();
+
+    for (const ws of extensions.values()) {
+      try { ws.terminate(); } catch {}
+    }
+    for (const ws of pendingConnections) {
+      try { ws.terminate(); } catch {}
+    }
+
+    await runtime.stop();
+
+    await new Promise((resolve) => {
+      wss.close(() => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    });
+  }
+
+  return {
+    server,
+    wss,
+    runtime,
+    start,
+    close,
+    resolveTarget,
+    connectedProfileIds,
+  };
+}
+
+export {
+  createGatewayServer,
+  PORT,
+  HOST,
+  TOKEN,
+};
+
+export default createGatewayServer;
+
+// Start Gateway Server if run directly
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  const instance = createGatewayServer();
+  instance.start().then(({ port, host }) => {
+    console.log('='.repeat(70));
+    console.log(`  WebMCP Automation Gateway Server is running!`);
+    console.log(`  - Bind Host: ${host}${host === '0.0.0.0' ? ' (exposed to LAN)' : ' (loopback only)'}`);
+    console.log(`  - Gateway v${GATEWAY_VERSION || '?'} | Extension v${EXTENSION_VERSION || '?'}`);
+    console.log(`  - Auth: ${TOKEN ? 'token required' : 'open (no token set)'}`);
+    console.log(`  - Extension WebSocket Endpoint: ws://${host}:${port}`);
+    console.log(`  - Health Endpoint: GET http://${host}:${port}/health`);
+    console.log(`  - HTTP API Endpoint for Agents/Scripts: POST http://${host}:${port}/api`);
+    console.log(`  - Command Timeout: ${COMMAND_TIMEOUT_MS}ms`);
+    console.log('='.repeat(70));
+    console.log('Load/reload the Extension in Chrome to connect.');
   });
-});
-
-// Start Gateway Server
-server.listen(PORT, HOST, () => {
-  console.log('='.repeat(70));
-  console.log(`  WebMCP Automation Gateway Server is running!`);
-  console.log(`  - Bind Host: ${HOST}${HOST === '0.0.0.0' ? ' (exposed to LAN)' : ' (loopback only)'}`);
-  console.log(`  - Gateway v${GATEWAY_VERSION || '?'} | Extension v${EXTENSION_VERSION || '?'}`);
-  console.log(`  - Auth: ${TOKEN ? 'token required' : 'open (no token set)'}`);
-  console.log(`  - Extension WebSocket Endpoint: ws://${HOST}:${PORT}`);
-  console.log(`  - Health Endpoint: GET http://${HOST}:${PORT}/health`);
-  console.log(`  - HTTP API Endpoint for Agents/Scripts: POST http://${HOST}:${PORT}/api`);
-  console.log(`  - Command Timeout: ${COMMAND_TIMEOUT_MS}ms`);
-  console.log('='.repeat(70));
-  console.log('Load/reload the Extension in Chrome to connect.');
-});
+}
