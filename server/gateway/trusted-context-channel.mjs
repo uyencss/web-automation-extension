@@ -14,6 +14,71 @@ import {
 
 const MAX_MESSAGE_BYTES = 65536; // 64 KB bounded framing
 
+export function assertNoTcpTransport(source) {
+  if (!source || typeof source !== 'object') return;
+  if (
+    source.host !== undefined ||
+    source.port !== undefined ||
+    source.contextHost !== undefined ||
+    source.contextPort !== undefined ||
+    source.trustedContextHost !== undefined ||
+    source.trustedContextPort !== undefined ||
+    source.contextTcp !== undefined ||
+    source.WEBMCP_GATEWAY_CONTEXT_PORT !== undefined ||
+    source.WEBMCP_GATEWAY_CONTEXT_HOST !== undefined ||
+    source.WEBMCP_GATEWAY_TRUSTED_CONTEXT_PORT !== undefined ||
+    source.WEBMCP_GATEWAY_TRUSTED_CONTEXT_HOST !== undefined ||
+    source.WEBMCP_GATEWAY_CONTEXT_TCP !== undefined ||
+    source.WEBMCP_CONTEXT_PORT !== undefined ||
+    source.WEBMCP_CONTEXT_HOST !== undefined ||
+    source.WEBMCP_TRUSTED_CONTEXT_HOST !== undefined ||
+    source.WEBMCP_TRUSTED_CONTEXT_PORT !== undefined
+  ) {
+    throw new Error('Trusted context forbids TCP host/port transport; machine-local stream IPC required');
+  }
+  const endpoint =
+    source.endpoint ||
+    source.socketPath ||
+    source.contextEndpoint ||
+    source.WEBMCP_GATEWAY_CONTEXT_ENDPOINT ||
+    source.WEBMCP_TRUSTED_CONTEXT_SOCKET;
+  if (typeof endpoint === 'string') {
+    if (/^(https?|tcp|ws|wss):\/\//i.test(endpoint)) {
+      throw new Error('Trusted context forbids TCP host/port transport; machine-local stream IPC required');
+    }
+  }
+}
+
+export function assertValidEndpoint(endpoint, platform = process.platform) {
+  if (typeof endpoint !== 'string' || endpoint.trim().length === 0) {
+    throw new Error('Trusted context endpoint must be a non-empty string');
+  }
+  if (/^(https?|tcp|ws|wss):\/\//i.test(endpoint)) {
+    throw new Error('Trusted context forbids TCP host/port transport; machine-local stream IPC required');
+  }
+  if (platform === 'win32') {
+    if (!endpoint.startsWith('\\\\.\\pipe\\webmcp-gateway-')) {
+      throw new Error('Windows trusted context endpoint must be a named pipe in the webmcp-gateway- namespace (\\\\.\\pipe\\webmcp-gateway-...)');
+    }
+    return;
+  }
+  if (!path.isAbsolute(endpoint)) {
+    throw new Error(`POSIX trusted context endpoint must be an absolute path (got: ${endpoint})`);
+  }
+  const segments = endpoint.split(/[/\\]/);
+  if (segments.includes('..')) {
+    throw new Error(`POSIX trusted context endpoint must not contain ".." traversal segments (got: ${endpoint})`);
+  }
+  if (!endpoint.endsWith('.sock')) {
+    throw new Error('POSIX trusted context endpoint must be a local .sock socket');
+  }
+  if (Buffer.byteLength(endpoint, 'utf8') > 103) {
+    throw new Error(
+      `POSIX trusted context endpoint exceeds maximum allowed length of 103 bytes (got ${Buffer.byteLength(endpoint, 'utf8')} bytes: ${endpoint})`
+    );
+  }
+}
+
 export class TrustedContextChannel {
   constructor({
     socketPath = null,
@@ -21,11 +86,30 @@ export class TrustedContextChannel {
     keyId = null,
     onContextUpdate = null,
     permitStore = null,
+    endpoint = null,
   } = {}) {
-    this.socketPath =
-      socketPath ||
-      process.env.WEBMCP_TRUSTED_CONTEXT_SOCKET ||
+    assertNoTcpTransport({ socketPath, endpoint });
+    assertNoTcpTransport(process.env);
+    const envSocket = process.env.WEBMCP_TRUSTED_CONTEXT_SOCKET;
+    const envEndpoint = process.env.WEBMCP_GATEWAY_CONTEXT_ENDPOINT;
+    const hasEnvSocket = typeof envSocket === 'string' && envSocket.trim() && envSocket !== 'undefined' && envSocket !== 'null';
+    const hasEnvEndpoint = typeof envEndpoint === 'string' && envEndpoint.trim() && envEndpoint !== 'undefined' && envEndpoint !== 'null';
+    const hasSocketPath = typeof socketPath === 'string' && socketPath.trim() && socketPath !== 'undefined' && socketPath !== 'null';
+    const hasEndpoint = typeof endpoint === 'string' && endpoint.trim() && endpoint !== 'undefined' && endpoint !== 'null';
+    const effectivePath =
+      (hasSocketPath ? socketPath : null) ||
+      (hasEndpoint ? endpoint : null) ||
+      (hasEnvSocket ? envSocket : null) ||
+      (hasEnvEndpoint ? envEndpoint : null) ||
       path.join(os.tmpdir(), `webmcp-ctx-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sock`);
+    const isExplicit = hasSocketPath || hasEndpoint || hasEnvSocket || hasEnvEndpoint;
+    if (isExplicit) {
+      assertValidEndpoint(effectivePath, process.platform);
+    } else {
+      // auto-generated: still validate to ensure short path when TMPDIR=/tmp
+      assertValidEndpoint(effectivePath, process.platform);
+    }
+    this.socketPath = effectivePath;
     this.publicKey = publicKey;
     this.keyId = keyId || null;
     this.onContextUpdate = onContextUpdate;
@@ -34,31 +118,70 @@ export class TrustedContextChannel {
     this.seenMessageIds = new Map(); // messageId -> expiresAtMs
     this.lastSeq = 0;
     this.currentContext = null;
+    this._socketOwned = false;
+  }
+
+  async _preparePosixSocket(endpoint) {
+    if (!fs.existsSync(endpoint)) return;
+    let stat;
+    try {
+      stat = fs.lstatSync(endpoint);
+    } catch {
+      return;
+    }
+    if (!stat.isSocket()) {
+      throw new Error(`Cannot bind trusted context socket: '${endpoint}' exists and is not a socket`);
+    }
+    const isLive = await new Promise((res) => {
+      const client = net.connect(endpoint);
+      const timer = setTimeout(() => {
+        try { client.destroy(); } catch {}
+        res(true);
+      }, 300);
+      client.on('connect', () => {
+        clearTimeout(timer);
+        try { client.destroy(); } catch {}
+        res(true);
+      });
+      client.on('error', (err) => {
+        clearTimeout(timer);
+        if (err.code === 'ECONNREFUSED' || err.code === 'ENOENT') {
+          res(false);
+        } else {
+          res(true);
+        }
+      });
+    });
+    if (isLive) {
+      throw new Error(`Cannot bind trusted context socket: endpoint '${endpoint}' is in use by another process`);
+    }
+    try {
+      fs.unlinkSync(endpoint);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
   }
 
   start() {
     if (this.server) return Promise.resolve(this.socketPath);
-    return new Promise((resolve, reject) => {
-      try {
-        if (fs.existsSync(this.socketPath)) {
-          fs.unlinkSync(this.socketPath);
-        }
-      } catch {
-        // ignore unlink errors
-      }
-
-      this.server = net.createServer((socket) => {
-        this.handleConnection(socket);
-      });
-
-      this.server.on('error', (err) => {
-        reject(err);
-      });
-
-      this.server.listen(this.socketPath, () => {
-        resolve(this.socketPath);
-      });
-    });
+    assertNoTcpTransport({ socketPath: this.socketPath });
+    assertValidEndpoint(this.socketPath, process.platform);
+    const prepare = process.platform !== 'win32' ? this._preparePosixSocket(this.socketPath) : Promise.resolve();
+    return prepare.then(
+      () =>
+        new Promise((resolve, reject) => {
+          this.server = net.createServer((socket) => {
+            this.handleConnection(socket);
+          });
+          this.server.on('error', (err) => {
+            reject(err);
+          });
+          this.server.listen(this.socketPath, () => {
+            this._socketOwned = process.platform !== 'win32';
+            resolve(this.socketPath);
+          });
+        })
+    );
   }
 
   stop() {
@@ -66,16 +189,24 @@ export class TrustedContextChannel {
       if (!this.server) return resolve();
       this.server.close(() => {
         try {
-          if (fs.existsSync(this.socketPath)) {
-            fs.unlinkSync(this.socketPath);
+          if (this._socketOwned && fs.existsSync(this.socketPath)) {
+            const stat = fs.lstatSync(this.socketPath);
+            if (stat.isSocket()) {
+              fs.unlinkSync(this.socketPath);
+            }
           }
         } catch {
           // ignore
         }
         this.server = null;
+        this._socketOwned = false;
         resolve();
       });
     });
+  }
+
+  close() {
+    return this.stop();
   }
 
   handleConnection(socket) {
@@ -168,7 +299,6 @@ export class TrustedContextChannel {
     const expiresAtMs = Date.parse(msg.expiresAt);
     const notBeforeMs = msg.notBefore ? Date.parse(msg.notBefore) : NaN;
 
-    // Validity window checks
     if (!Number.isNaN(expiresAtMs) && nowMs > expiresAtMs) {
       return finish({
         ok: false,
@@ -197,7 +327,6 @@ export class TrustedContextChannel {
       });
     }
 
-    // Message ID anti-replay check
     this.gcSeenMessages(nowMs);
     if (this.seenMessageIds.has(msg.messageId)) {
       return finish({
@@ -208,7 +337,6 @@ export class TrustedContextChannel {
       });
     }
 
-    // Monotonic sequence check
     if (typeof msg.seq === 'number') {
       if (msg.seq <= this.lastSeq) {
         return finish({
@@ -220,7 +348,6 @@ export class TrustedContextChannel {
       }
     }
 
-    // Pinned machine-local public key requirement & binding verification
     const pinnedKey = this.publicKey;
     if (!pinnedKey) {
       return finish({
@@ -240,7 +367,6 @@ export class TrustedContextChannel {
       });
     }
 
-    // Reject alternate-key context: if msg provides a publicKey, it MUST match the pinned key
     if (msg.publicKey) {
       if (!keysMatch(msg.publicKey, pinnedKey)) {
         return finish({
@@ -252,7 +378,6 @@ export class TrustedContextChannel {
       }
     }
 
-    // KeyId binding check
     if (this.keyId && msg.keyId && msg.keyId !== this.keyId) {
       return finish({
         ok: false,
@@ -262,7 +387,6 @@ export class TrustedContextChannel {
       });
     }
 
-    // Verify trusted-context digest/signature exactly once with the frozen canonical/domain contract
     const { signature: _sig, contextDigest: _cd, ...projection } = msg;
     const expectedDigest = digestCanonical('webmcp-digest-v1:trusted-context', projection);
 
@@ -285,13 +409,11 @@ export class TrustedContextChannel {
       });
     }
 
-    // Commit anti-replay and sequence
     this.seenMessageIds.set(msg.messageId, Number.isNaN(expiresAtMs) ? nowMs + 60000 : expiresAtMs);
     if (typeof msg.seq === 'number') {
       this.lastSeq = msg.seq;
     }
 
-    // Process revocations
     if (Array.isArray(msg.revocations) && this.permitStore) {
       for (const revId of msg.revocations) {
         if (typeof revId === 'string') {
@@ -300,7 +422,6 @@ export class TrustedContextChannel {
       }
     }
 
-    // Update cache-backed active context
     this.currentContext = Object.freeze({ ...msg, contextDigest: expectedDigest });
     if (typeof this.onContextUpdate === 'function') {
       this.onContextUpdate(this.currentContext);
@@ -325,7 +446,6 @@ export class TrustedContextChannel {
       const canonical = canonicalJson(projection);
       const sigBuffer = Buffer.from(msg.signature, 'hex');
 
-      // Exact frozen canonical/domain contract: 'webmcp-digest-v1:trusted-context\n' + canonicalJson
       const toSign = Buffer.from(`webmcp-digest-v1:trusted-context\n${canonical}`, 'utf8');
       return verify(null, toSign, keyObj, sigBuffer);
     } catch {
@@ -344,14 +464,28 @@ export class TrustedContextChannel {
     const nowMs = Date.now();
     const expiresAtMs = Date.parse(this.currentContext.expiresAt);
     if (!Number.isNaN(expiresAtMs) && nowMs > expiresAtMs) {
-      return null; // context expired
+      return null;
     }
     if (this.currentContext.ttlMs !== undefined) {
       const issuedAtMs = Date.parse(this.currentContext.issuedAt);
       if (!Number.isNaN(issuedAtMs) && nowMs > issuedAtMs + this.currentContext.ttlMs) {
-        return null; // context expired by TTL
+        return null;
       }
     }
     return this.currentContext;
   }
+
+  getTrustedContext() {
+    return this.getContext();
+  }
+
+  getCurrentContext() {
+    return this.getContext();
+  }
+}
+
+export async function createTrustedContextChannel(options = {}) {
+  const channel = new TrustedContextChannel(options);
+  await channel.start();
+  return channel;
 }

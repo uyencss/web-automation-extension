@@ -22,6 +22,29 @@ const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000
 const KEEPALIVE_PING_MS = Number(process.env.WEBMCP_GATEWAY_PING_MS || 15000);
 const MAX_DOWNLOAD_EVENTS_PER_PROFILE = Number(process.env.WEBMCP_DOWNLOAD_EVENT_LIMIT || 200);
 
+// ── Hardening: deep stripping of permit/signature/token and physical identity before forwarding ──
+const _PERMIT_LEAK_KEYS = new Set(['permit', 'executionPermit', '_permit', '_executionPermit', 'permitId', 'signature', 'permitDigest', 'token', 'claimToken', 'contextDigest', 'revocationId', 'nonce']);
+const _PHYSICAL_LEAK_KEYS = new Set(['profileId', 'physicalProfileId', 'physicalPath', 'profilePath', 'executablePath', 'hostProfileId']);
+function stripPermitKeysDeep(value) {
+  if (Array.isArray(value)) return value.map(stripPermitKeysDeep);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (_PERMIT_LEAK_KEYS.has(k)) continue;
+      if (_PHYSICAL_LEAK_KEYS.has(k)) continue;
+      if (/(?:secret|token|cookie|credential|password|privateKey|authorization|bearer|apiKey|auth)/i.test(k)) continue;
+      out[k] = stripPermitKeysDeep(v);
+    }
+    return out;
+  }
+  return value;
+}
+function sanitizeParams(params) {
+  if (!params || typeof params !== 'object') return params || {};
+  return stripPermitKeysDeep(params);
+}
+function sanitizeParamsForTest(params) { return sanitizeParams(params); }
+
 function readJsonSafe(relPath) {
   try {
     return JSON.parse(fs.readFileSync(path.resolve(__dirname, relPath), 'utf8'));
@@ -370,12 +393,23 @@ function createGatewayServer({
 
         const isDownloadMethod = method === 'listDownloadEvents' || method === 'clearDownloadEvents';
 
+        // Trusted signed context controls physical routing when multiple profiles are connected.
+        // Request-supplied profile must not select an attacker profile. Single-profile case remains
+        // compatible but fail-closed via verification (403) rather than routing 404, as covered by tests.
+        const trustedProfileId = runtime.getCurrentContext()?.profileId || null;
+        const hasTrusted = Boolean(trustedProfileId && runtime.mode !== 'off');
+        let profileForResolve = profileId;
+        if (hasTrusted && connectedProfileIds().length > 1) {
+          profileForResolve = trustedProfileId;
+        }
+
         // First resolve target to obtain effective profile ID
         let ws = null;
         let effectiveProfileId = profileId || params?.profileId || null;
+        if (hasTrusted && connectedProfileIds().length > 1) effectiveProfileId = trustedProfileId;
 
         if (!isDownloadMethod) {
-          const target = resolveTarget(profileId);
+          const target = resolveTarget(profileForResolve);
           if (target.error) {
             // Create blocked receipt for no-target case
             let blockedReceipt = null;
@@ -400,11 +434,18 @@ function createGatewayServer({
             return writeJson(res, target.status, { error: target.error, receipt: blockedReceipt });
           }
           ws = target.ws;
-          effectiveProfileId = profileId || target.profileId || ws._profileId;
+          if (hasTrusted && connectedProfileIds().length > 1) {
+            effectiveProfileId = trustedProfileId;
+          } else {
+            effectiveProfileId = profileId || target.profileId || ws._profileId;
+          }
         } else {
           const ids = connectedProfileIds();
           if (!effectiveProfileId && ids.length === 1) {
             effectiveProfileId = ids[0];
+          }
+          if (hasTrusted && ids.length > 1) {
+            effectiveProfileId = trustedProfileId;
           }
         }
 
@@ -496,15 +537,42 @@ function createGatewayServer({
           }
         }
 
-        let forwardedParams = params || {};
+        // Hardening: enforce trusted routing for actual forwarding when multiple profiles (single-profile compatibility preserved)
+        if (hasTrusted && connectedProfileIds().length > 1) {
+          const trustedTarget = resolveTarget(trustedProfileId);
+          if (!trustedTarget.error) {
+            ws = trustedTarget.ws;
+            effectiveProfileId = trustedProfileId;
+          } else {
+            let blockedReceipt = null;
+            try {
+              const ctx = runtime.getCurrentContext();
+              const derivedOrigin = deriveTargetOriginForMethod(method, params || {}, targetOrigin);
+              blockedReceipt = runtime.createBlockedReceipt({
+                permit,
+                context: ctx,
+                method,
+                params: params || {},
+                targetOrigin: derivedOrigin,
+                reason: 'NO_TARGET',
+                sequence: 1,
+              });
+            } catch {
+              blockedReceipt = null;
+            }
+            return writeJson(res, trustedTarget.status, { error: trustedTarget.error, receipt: blockedReceipt });
+          }
+        }
+
+        let forwardedParams = sanitizeParams(params || {});
         if (method === 'batch' || method === 'browser_batch') {
           const rawActions = Array.isArray(params?.actions) ? params.actions : (Array.isArray(params?.batch) ? params.batch : []);
           const canonicalActions = rawActions.map((act) => ({
             method: act.method || act.tool,
-            params: act.params || {},
+            params: sanitizeParams(act.params || {}),
           }));
           forwardedParams = {
-            ...params,
+            ...sanitizeParams(params || {}),
             ...(Array.isArray(params?.actions) ? { actions: canonicalActions } : {}),
             ...(Array.isArray(params?.batch) ? { batch: canonicalActions } : {}),
           };
@@ -976,6 +1044,8 @@ export {
   PORT,
   HOST,
   TOKEN,
+  sanitizeParams,
+  sanitizeParamsForTest,
 };
 
 export default createGatewayServer;
