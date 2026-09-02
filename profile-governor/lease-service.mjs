@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { computeFenceDigest, computeLeaseBindingDigest, digestLf, opaqueId, redactLease, redactResource, requestFingerprint, SCHEMAS, stableStringify, validateActionFence, validateLeaseRequest } from './contracts.mjs';
+import { computeFenceDigest, computeLeaseBindingDigest, digestLf, opaqueId, redactLease, redactResource, requestFingerprint, SCHEMAS, stableStringify, validateActionFence, validateActionRecordInput, validateCreateFenceInput, validateLeaseControlInput, validateLeaseRequest, validateOpenTabInput, validateTransitionInput } from './contracts.mjs';
 import { profileError } from './errors.mjs';
-import { appendEvent, listRedactedEvents } from './events.mjs';
+import { appendEvent, EVENT_REASONS, listRedactedEvents } from './events.mjs';
 import { reconcileResource, assertReconciliationForAcquire } from './reconciliation.mjs';
-import { applyEvidenceRecovery, buildRecoveryReceipt, computeRecoveryPlanDigest, listRecoveryReceipts } from './recovery.mjs';
+import { applyEvidenceRecovery, assertSafeExternalRecoveryEvidence, assertSafeRecoveryEvidence, buildRecoveryReceipt, computeExternalRecoveryEvidenceDigest, computeRecoveryPlanDigest, listRecoveryReceipts } from './recovery.mjs';
 import { probeLiveness } from './liveness.mjs';
 import { transition } from './state-machine.mjs';
 
@@ -18,19 +18,57 @@ function resolveMethod(adapter, method) {
 
 function nowIso(now) { return new Date(now).toISOString(); }
 
+function validateProfileAlias(profileAlias) {
+  if (typeof profileAlias !== 'string' || profileAlias.length < 2 || profileAlias.length > 64 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(profileAlias)) throw profileError('PROFILE_REQUEST_INVALID', 'profileAlias is invalid');
+  return profileAlias;
+}
+
+function eventReason(reasonCode) {
+  if (EVENT_REASONS.has(reasonCode)) return reasonCode;
+  if (['PROFILE_CLAIM_INVALID', 'PROFILE_BINDING_STALE'].includes(reasonCode)) return 'PROFILE_LEASE_REVOKED';
+  if (reasonCode === 'PROFILE_DEPENDENT_GRANT_REVOKE_FAILED') return 'PROFILE_RECLAIM_UNSAFE';
+  return 'LIVENESS_UNKNOWN';
+}
+
 function safeBinding(resolved, request) {
   if (!resolved || typeof resolved.physicalResourceId !== 'string' || resolved.physicalResourceId.length < 2 || resolved.physicalResourceId.length > 512) throw profileError('PROFILE_BINDING_STALE', 'Registry did not resolve a physical resource');
   if (resolved.bindingId !== request.bindingId || resolved.bindingRevision !== request.bindingRevision || resolved.bindingDigest !== request.bindingDigest) throw profileError('PROFILE_BINDING_STALE', 'Registry binding does not match the admission pin');
   return resolved;
 }
 
-function same(a, b) { return a === b; }
-
 function requireActionLiveness(live) {
   if (live.externalUse) throw profileError('PROFILE_EXTERNAL_USE', 'Profile resource is in external use');
   if (live.lifecycleCode) throw profileError(live.lifecycleCode, 'Profile action lifecycle gate is active');
   if (live.summary !== 'healthy' || live.indeterminate || live.browserAlive !== true || live.extensionConnected !== true) throw profileError('PROFILE_LIVENESS_UNKNOWN', 'Composite action liveness is not healthy');
   return live;
+}
+
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function assertAuthorizerResult(result, allowedKeys, label = 'Authorization result', code = 'PROFILE_RECLAIM_UNSAFE') {
+  if (!isPlainObject(result)) {
+    throw profileError(code, `${label} must be a plain object`);
+  }
+  const unknown = Object.keys(result).find((key) => !allowedKeys.has(key));
+  if (unknown) {
+    throw profileError(code, `${label} contains an unknown field`);
+  }
+  if (result.authorized !== true) {
+    throw profileError(code, `${label} was not granted`);
+  }
+  return result;
+}
+
+function isExternalRecoveryResource(resource, lease) {
+  return resource?.state === 'external_use' || resource?.recoverySubjectKind === 'unregistered-external' || resource?.recoverySubjectKind === 'registered-external' || lease?.ownerType === 'external';
+}
+
+function assertExternalRecoveryBlocked(resource, lease) {
+  if (isExternalRecoveryResource(resource, lease)) throw profileError('PROFILE_RECLAIM_UNSAFE', 'External-use resource cannot be released or reclaimed through the ordinary lifecycle');
 }
 
 export class ProfileGovernor {
@@ -53,11 +91,12 @@ export class ProfileGovernor {
   close() { this.repository.close?.(); }
 
   async _resolve(profileAlias) {
-    if (typeof profileAlias !== 'string') throw profileError('PROFILE_REQUEST_INVALID', 'profileAlias is required');
+    validateProfileAlias(profileAlias);
     const result = await resolveMethod(this.registry, 'resolve')(profileAlias);
     if (!result || typeof result !== 'object') throw profileError('PROFILE_BINDING_STALE', 'Registry resolution is unavailable');
-    if (result.physicalResourceId === undefined) return { ...result, physicalResourceId: result.resourceId ?? result.profileResourceId };
-    return result;
+    const resolved = result.physicalResourceId === undefined ? { ...result, physicalResourceId: result.resourceId ?? result.profileResourceId } : result;
+    if (typeof resolved.physicalResourceId !== 'string' || !/^prsc_[a-zA-Z0-9._-]{2,512}$/.test(resolved.physicalResourceId) || typeof resolved.bindingId !== 'string' || !/^pb_[a-z0-9-]+$/.test(resolved.bindingId) || !Number.isInteger(resolved.bindingRevision) || resolved.bindingRevision < 1 || typeof resolved.bindingDigest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(resolved.bindingDigest) || !Array.isArray(resolved.allowedActions) || resolved.allowedActions.length < 1 || resolved.allowedActions.some((action) => !['browser-read', 'browser-write', 'browser-session-data', 'credential-fill'].includes(action))) throw profileError('PROFILE_BINDING_STALE', 'Registry resolution is not authoritative');
+    return resolved;
   }
 
   async _claim(request) {
@@ -109,24 +148,32 @@ export class ProfileGovernor {
     try { return (await this.revokeGrants(redactLease(lease))) === true; } catch { return false; }
   }
 
-  async _establishRevocationBarrier(lease, { reasonCode = 'PROFILE_CLAIM_INVALID', grantRevokeStatus = 'pending', livenessSummary = 'unknown', now = this.clock() } = {}) {
-    const revoked = grantRevokeStatus === 'revoked' || (grantRevokeStatus === 'pending' && await this._revokeGrants(lease));
+  async _establishRevocationBarrier(lease, { reasonCode = 'PROFILE_CLAIM_INVALID', grantRevokeStatus = 'pending', livenessSummary = 'unknown' } = {}) {
+    const isExt = lease?.ownerType === 'external';
+    const revoked = isExt || grantRevokeStatus === 'revoked' || (grantRevokeStatus === 'pending' && await this._revokeGrants(lease));
     this.repository.transact((state) => {
       const current = state.leases[lease.leaseId];
       const resource = current && state.resources[current.physicalResourceId];
       if (!current || !resource || resource.currentLeaseId !== current.leaseId) return;
+      if (isExternalRecoveryResource(resource, current)) {
+        resource.needsReconciliation = true;
+        resource.livenessSummary = livenessSummary;
+        return;
+      }
+      const mutationNow = this.clock();
+      const mutationNowIso = nowIso(mutationNow);
       const priorEpoch = resource.fenceEpoch;
-      if (resource.state !== 'quarantined') transition(resource, 'quarantined', reasonCode, nowIso(now));
+      if (resource.state !== 'quarantined') transition(resource, 'quarantined', reasonCode, mutationNowIso);
       resource.fenceEpoch = priorEpoch + 1;
       resource.needsReconciliation = true;
       resource.livenessSummary = livenessSummary;
       current.state = 'quarantined';
       current.fenceEpoch = resource.fenceEpoch;
-      current.leaseBindingDigest = computeLeaseBindingDigest({ claimDigest: current.runnerClaimDigest, bindingDigest: current.bindingDigest, physicalResourceId: current.physicalResourceId, fenceEpoch: current.fenceEpoch });
+      current.leaseBindingDigest = computeLeaseBindingDigest({ claimDigest: current.runnerClaimDigest, bindingDigest: current.bindingDigest, physicalResourceId: current.physicalResourceId, fenceEpoch: current.fenceEpoch, profileAlias: current.profileAlias });
       current.fences = {};
       current.recoveryPlanDigest = computeRecoveryPlanDigest({ leaseId: current.leaseId, bindingDigest: current.bindingDigest, fenceEpoch: current.fenceEpoch, reasonCode });
       resource.recoveryPlanDigest = current.recoveryPlanDigest;
-      appendEvent(state, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: 'quarantined', stateReasonCode: reasonCode, fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: nowIso(now), leaseBindingDigest: current.leaseBindingDigest, livenessSummary, grantRevokeStatus: revoked ? 'revoked' : 'failed' });
+      appendEvent(state, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: 'quarantined', stateReasonCode: eventReason(reasonCode), fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: mutationNowIso, leaseBindingDigest: current.leaseBindingDigest, livenessSummary, grantRevokeStatus: revoked ? 'revoked' : 'failed' });
     });
     return revoked;
   }
@@ -161,6 +208,61 @@ export class ProfileGovernor {
 
   _findResource(state, physicalResourceId) { return state.resources[physicalResourceId]; }
 
+  _prepareExternalRecovery(resource, resolved, state) {
+    if (!resource || resource.state !== 'external_use') return;
+    const currentLease = resource.currentLeaseId && state ? state.leases[resource.currentLeaseId] : null;
+
+    if (currentLease && currentLease.ownerType === 'automation') {
+      resource.recoveryPlanDigest = computeRecoveryPlanDigest({ leaseId: currentLease.leaseId, bindingDigest: currentLease.bindingDigest, fenceEpoch: resource.fenceEpoch, reasonCode: 'PROFILE_EXTERNAL_USE' });
+      currentLease.recoveryPlanDigest = resource.recoveryPlanDigest;
+      return;
+    }
+
+    if (!resource.recoverySubjectKind) {
+      resource.recoverySubjectKind = currentLease?.ownerType === 'external' ? 'registered-external' : 'unregistered-external';
+    }
+    if (resource.recoveryBindingId === undefined) {
+      resource.recoveryBindingId = currentLease ? currentLease.bindingId : resolved.bindingId;
+      resource.recoveryBindingRevision = currentLease ? currentLease.bindingRevision : resolved.bindingRevision;
+      resource.recoveryBindingDigest = currentLease ? currentLease.bindingDigest : resolved.bindingDigest;
+    }
+    if (resolved && (resource.recoveryBindingId !== resolved.bindingId || resource.recoveryBindingRevision !== resolved.bindingRevision || resource.recoveryBindingDigest !== resolved.bindingDigest)) {
+      throw profileError('PROFILE_BINDING_STALE', 'Registry binding does not match durable external recovery tuple');
+    }
+    if (!resource.currentLeaseId && state) {
+      const now = this.clock();
+      const leaseId = opaqueId('lease');
+      const epoch = resource.fenceEpoch === 0 ? 1 : resource.fenceEpoch;
+      resource.fenceEpoch = epoch;
+      const claimDigest = digestLf('webmcp-digest-v1:claim', { ownerType: 'external', physicalResourceId: resolved.physicalResourceId, profileAlias: resource.profileAlias });
+      const leaseBindingDigest = computeLeaseBindingDigest({ claimDigest, bindingDigest: resource.recoveryBindingDigest, physicalResourceId: resolved.physicalResourceId, fenceEpoch: epoch, profileAlias: resource.profileAlias });
+      const lease = {
+        leaseId, physicalResourceId: resolved.physicalResourceId, profileAlias: resource.profileAlias,
+        bindingId: resource.recoveryBindingId, bindingRevision: resource.recoveryBindingRevision, bindingDigest: resource.recoveryBindingDigest,
+        runId: `run_external-${resource.profileAlias}`, runnerClaimDigest: claimDigest, leaseMode: 'single-context',
+        fenceEpoch: epoch, leaseBindingDigest,
+        state: 'external_use', issuedAt: nowIso(now),
+        expiresAt: nowIso(now + 120000), heartbeatIntervalMs: 30000,
+        leaseTtlMs: 120000, nodeId: 'node-external', ownerType: 'external',
+        idempotencyKey: `idemp-ext-${leaseId}`, fingerprint: stableStringify({ ownerType: 'external', physicalResourceId: resolved.physicalResourceId }),
+        requestedActions: [...resolved.allowedActions], allowedActions: [...resolved.allowedActions],
+        tabs: {}, maxTabs: this.maxTabs, actionUses: 0, actionJournal: [], fences: {},
+      };
+      state.leases[leaseId] = lease;
+      resource.currentLeaseId = leaseId;
+      appendEvent(state, {
+        leaseId, profileAlias: resource.profileAlias, state: 'external_use', stateReasonCode: 'PROFILE_EXTERNAL_USE',
+        fenceEpoch: epoch, bindingDigest: resource.recoveryBindingDigest, bindingId: resource.recoveryBindingId, runId: lease.runId,
+        timestamp: lease.issuedAt, leaseBindingDigest, livenessSummary: resource.livenessSummary, grantRevokeStatus: 'none',
+      });
+    }
+    const activeLease = resource.currentLeaseId && state ? state.leases[resource.currentLeaseId] : null;
+    if (activeLease) {
+      resource.recoveryPlanDigest = computeRecoveryPlanDigest({ leaseId: activeLease.leaseId, bindingDigest: activeLease.bindingDigest, fenceEpoch: resource.fenceEpoch, reasonCode: 'PROFILE_EXTERNAL_USE' });
+      activeLease.recoveryPlanDigest = resource.recoveryPlanDigest;
+    }
+  }
+
   async reconcileProfile(profileAlias) {
     const resolved = await this._resolve(profileAlias);
     const liveness = await this._live({ profileAlias, physicalResourceId: resolved.physicalResourceId });
@@ -175,12 +277,56 @@ export class ProfileGovernor {
         state.resources[resolved.physicalResourceId] = resource;
       } else if (!resource.aliases.includes(profileAlias)) resource.aliases.push(profileAlias);
       const lease = resource.currentLeaseId ? state.leases[resource.currentLeaseId] : null;
+      if (isExternalRecoveryResource(resource, lease)) {
+        const expectedBindingId = resource.recoveryBindingId || lease?.bindingId;
+        const expectedBindingRevision = resource.recoveryBindingRevision || lease?.bindingRevision;
+        const expectedBindingDigest = resource.recoveryBindingDigest || lease?.bindingDigest;
+        if (expectedBindingId !== undefined && (resolved.bindingId !== expectedBindingId || resolved.bindingRevision !== expectedBindingRevision || resolved.bindingDigest !== expectedBindingDigest)) {
+          throw profileError('PROFILE_BINDING_STALE', 'Registry binding does not match durable external recovery tuple');
+        }
+      }
       reconcileResource(resource, { liveness, hasCurrentLease: Boolean(lease), now: nowIso(this.clock()) });
-      if (lease && liveness.summary === 'failed' && resource.state !== 'quarantined') {
-        transition(resource, 'quarantined', 'PROFILE_RECLAIM_UNSAFE', nowIso(this.clock()));
+      this._prepareExternalRecovery(resource, resolved, state);
+      if (lease && !isExternalRecoveryResource(resource, lease) && (liveness.summary === 'failed' || liveness.indeterminate) && resource.state !== 'quarantined') {
+        const mutationNow = this.clock();
+        const mutationNowIso = nowIso(mutationNow);
+        const priorState = lease.state;
+        const priorEpoch = resource.fenceEpoch;
+        const newEpoch = priorEpoch + 1;
+        transition(resource, 'quarantined', 'PROFILE_RECLAIM_UNSAFE', mutationNowIso);
+        resource.fenceEpoch = newEpoch;
         resource.needsReconciliation = true;
-        resource.recoveryPlanDigest = computeRecoveryPlanDigest({ leaseId: lease.leaseId, bindingDigest: lease.bindingDigest, fenceEpoch: resource.fenceEpoch, reasonCode: 'PROFILE_RECLAIM_UNSAFE' });
+        resource.livenessSummary = liveness.summary;
+        resource.recoveryPlanDigest = computeRecoveryPlanDigest({ leaseId: lease.leaseId, bindingDigest: lease.bindingDigest, fenceEpoch: newEpoch, reasonCode: 'PROFILE_RECLAIM_UNSAFE' });
+        lease.state = 'quarantined';
+        lease.fenceEpoch = newEpoch;
+        lease.leaseBindingDigest = computeLeaseBindingDigest({ claimDigest: lease.runnerClaimDigest, bindingDigest: lease.bindingDigest, physicalResourceId: lease.physicalResourceId, fenceEpoch: newEpoch, profileAlias: lease.profileAlias });
+        lease.fences = {};
         lease.recoveryPlanDigest = resource.recoveryPlanDigest;
+        const event = appendEvent(state, {
+          leaseId: lease.leaseId, profileAlias: lease.profileAlias, state: 'quarantined', stateReasonCode: 'PROFILE_QUARANTINED',
+          fenceEpoch: newEpoch, bindingDigest: lease.bindingDigest, bindingId: lease.bindingId, runId: lease.runId,
+          timestamp: mutationNowIso, leaseBindingDigest: lease.leaseBindingDigest, livenessSummary: liveness.summary,
+          grantRevokeStatus: 'pending',
+        });
+        const receipt = buildRecoveryReceipt({
+          leaseId: lease.leaseId, profileAlias: lease.profileAlias, bindingId: lease.bindingId, bindingRevision: lease.bindingRevision,
+          bindingDigest: lease.bindingDigest, runId: lease.runId, priorState, newState: 'quarantined', priorFenceEpoch: priorEpoch,
+          newFenceEpoch: newEpoch, reasonCode: 'PROFILE_RECLAIM_UNSAFE', lastActionOutcome: 'none',
+          dependentGrantRevokeStatus: 'pending',
+          probeOutcomes: {
+            governorHealth: liveness.probes?.governor || 'unknown',
+            runnerClaim: ['active', 'terminal', 'revoked'].includes(liveness.probes?.runnerClaim) ? liveness.probes.runnerClaim : 'unknown',
+            browserAlive: liveness.browserAlive === true,
+            extensionConnected: liveness.extensionConnected === true,
+            dependentGrantsRevoked: false,
+            registryCurrent: liveness.probes?.registry === 'healthy',
+          },
+          authorityKind: 'governor-automatic', createdAt: mutationNowIso,
+          eventId: event.eventId,
+        });
+        state.receipts.push(receipt);
+        if (state.receipts.length > 128) state.receipts.splice(0, state.receipts.length - 128);
       }
       return redactResource(resource);
     });
@@ -192,8 +338,10 @@ export class ProfileGovernor {
     return Promise.all(aliases.map((alias) => this.reconcileProfile(alias)));
   }
 
-  async acquire(input, { authenticatedLocalCapability = false } = {}) {
-    const request = validateLeaseRequest(input);
+  async acquire(input, options = {}) {
+    if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some((key) => !['authenticatedLocalCapability', 'capability'].includes(key))) throw profileError('PROFILE_REQUEST_INVALID', 'Acquire options are invalid');
+    const { authenticatedLocalCapability = false } = options;
+    const request = validateLeaseRequest(input, { requireRequestedActions: true });
     if (request.ownerType === 'external' && !authenticatedLocalCapability) throw profileError('PROFILE_IPC_AUTH', 'Authenticated local capability is required for external ownership');
     const resolved = safeBinding(await this._resolve(request.profileAlias), request);
     const { allowedActions: allowed } = await this._authoritativeActions(request, resolved);
@@ -202,15 +350,23 @@ export class ProfileGovernor {
       try { live = await this._live({ profileAlias: request.profileAlias, physicalResourceId: resolved.physicalResourceId }); requireActionLiveness(live); } catch (error) {
         this.repository.transact((state) => {
           const resource = this._findResource(state, resolved.physicalResourceId);
-          if (resource && resource.state !== 'unknown' && resource.state !== 'quarantined') transition(resource, error.code === 'PROFILE_EXTERNAL_USE' ? 'external_use' : 'unknown', error.code, nowIso(this.clock()));
-          if (resource) { resource.needsReconciliation = true; resource.livenessSummary = live?.summary || 'unknown'; }
+          if (resource) {
+            if (resource.state !== 'unknown' && resource.state !== 'quarantined') {
+              transition(resource, error.code === 'PROFILE_EXTERNAL_USE' ? 'external_use' : 'unknown', error.code, nowIso(this.clock()));
+            }
+            resource.needsReconciliation = true;
+            resource.livenessSummary = live?.summary || 'unknown';
+            if (error.code === 'PROFILE_EXTERNAL_USE') {
+              this._prepareExternalRecovery(resource, resolved, state);
+            }
+          }
         });
         throw error;
       }
     }
     const fingerprint = requestFingerprint(request);
-    const now = this.clock();
     return this.repository.transact((state) => {
+      const now = this.clock();
       const resource = this._findResource(state, resolved.physicalResourceId);
       const current = resource?.currentLeaseId ? state.leases[resource.currentLeaseId] : null;
       if (current) {
@@ -226,7 +382,7 @@ export class ProfileGovernor {
         leaseId, physicalResourceId: resolved.physicalResourceId, profileAlias: request.profileAlias,
         bindingId: request.bindingId, bindingRevision: request.bindingRevision, bindingDigest: request.bindingDigest,
         runId: request.runId, runnerClaimDigest: request.runnerClaimDigest, leaseMode: request.leaseMode,
-        fenceEpoch: epoch, leaseBindingDigest: computeLeaseBindingDigest({ claimDigest: request.runnerClaimDigest, bindingDigest: request.bindingDigest, physicalResourceId: resolved.physicalResourceId, fenceEpoch: epoch }),
+        fenceEpoch: epoch, leaseBindingDigest: computeLeaseBindingDigest({ claimDigest: request.runnerClaimDigest, bindingDigest: request.bindingDigest, physicalResourceId: resolved.physicalResourceId, fenceEpoch: epoch, profileAlias: request.profileAlias }),
         state: request.ownerType === 'external' ? 'external_use' : 'leased', issuedAt: nowIso(now),
         expiresAt: nowIso(now + (request.leaseTtlMs || 120000)), heartbeatIntervalMs: request.heartbeatIntervalMs || 30000,
         leaseTtlMs: request.leaseTtlMs || 120000, nodeId: request.nodeId, ownerType: request.ownerType,
@@ -237,24 +393,54 @@ export class ProfileGovernor {
       resource.currentLeaseId = leaseId;
       resource.fenceEpoch = epoch;
       resource.state = lease.state;
-      resource.stateReasonCode = lease.state === 'external_use' ? 'PROFILE_EXTERNAL_USE' : undefined;
+      if (lease.state === 'external_use') {
+        resource.stateReasonCode = 'PROFILE_EXTERNAL_USE';
+        resource.recoverySubjectKind = 'registered-external';
+        resource.recoveryBindingId = request.bindingId;
+        resource.recoveryBindingRevision = request.bindingRevision;
+        resource.recoveryBindingDigest = request.bindingDigest;
+        resource.recoveryPlanDigest = computeRecoveryPlanDigest({ leaseId, bindingDigest: lease.bindingDigest, fenceEpoch: epoch, reasonCode: 'PROFILE_EXTERNAL_USE' });
+        lease.recoveryPlanDigest = resource.recoveryPlanDigest;
+        appendEvent(state, { leaseId, profileAlias: lease.profileAlias, state: lease.state, stateReasonCode: 'PROFILE_EXTERNAL_USE', fenceEpoch: epoch, bindingDigest: lease.bindingDigest, bindingId: lease.bindingId, runId: lease.runId, timestamp: lease.issuedAt, leaseBindingDigest: lease.leaseBindingDigest, livenessSummary: 'unknown', grantRevokeStatus: 'none' });
+      } else {
+        delete resource.stateReasonCode;
+        delete resource.recoverySubjectKind;
+        delete resource.recoveryBindingId;
+        delete resource.recoveryBindingRevision;
+        delete resource.recoveryBindingDigest;
+        delete resource.recoveryPlanDigest;
+      }
       resource.needsReconciliation = false;
-      resource.livenessSummary = 'healthy';
-      appendEvent(state, { leaseId, profileAlias: lease.profileAlias, state: lease.state, stateReasonCode: lease.state === 'external_use' ? 'PROFILE_EXTERNAL_USE' : 'PROFILE_RELEASE', fenceEpoch: epoch, bindingDigest: lease.bindingDigest, bindingId: lease.bindingId, runId: lease.runId, timestamp: lease.issuedAt, leaseBindingDigest: lease.leaseBindingDigest, livenessSummary: 'healthy', grantRevokeStatus: 'none' });
+      const liveSummary = request.ownerType === 'automation' ? 'healthy' : 'unknown';
+      resource.livenessSummary = liveSummary;
       return redactLease(lease);
     });
   }
 
-  async openTab({ leaseId, runId } = {}) {
-    if (typeof leaseId !== 'string' || typeof runId !== 'string') throw profileError('PROFILE_REQUEST_INVALID', 'leaseId and runId are required');
-    return this.repository.transact((state) => {
-      const lease = state.leases[leaseId];
-      if (!lease || state.resources[lease.physicalResourceId]?.currentLeaseId !== leaseId) throw profileError('PROFILE_LEASE_NOT_FOUND', 'Governor lease is not current');
-      if (lease.runId !== runId) throw profileError('PROFILE_TAB_NOT_OWNED', 'Tab belongs to a different run');
-      if (Object.keys(lease.tabs).length >= lease.maxTabs) throw profileError('PROFILE_TAB_LIMIT', 'Lease tab limit is exhausted');
+  async openTab(input = {}) {
+    input = validateOpenTabInput(input);
+    const state = this.repository.read();
+    const lease = state.leases[input.leaseId];
+    const resource = lease && state.resources[lease.physicalResourceId];
+    if (!lease || resource?.currentLeaseId !== lease.leaseId) throw profileError('PROFILE_LEASE_NOT_FOUND', 'Governor lease is not current');
+    if (lease.runId !== input.runId) throw profileError('PROFILE_TAB_NOT_OWNED', 'Tab belongs to a different run');
+    for (const [key, code] of [['fenceEpoch', 'PROFILE_FENCE_STALE'], ['leaseBindingDigest', 'PROFILE_FENCE_STALE'], ['bindingId', 'PROFILE_BINDING_STALE'], ['bindingDigest', 'PROFILE_BINDING_STALE'], ['runnerClaimDigest', 'PROFILE_CLAIM_INVALID']]) if (input[key] !== undefined && input[key] !== lease[key]) throw profileError(code, 'Tab lease facts are stale');
+    if (!['leased', 'active'].includes(lease.state) || !['leased', 'active'].includes(resource.state)) throw profileError('PROFILE_GOVERNOR_NOT_READY', 'Tab operation requires an active lease');
+    if (Date.parse(lease.expiresAt) <= this.clock()) throw profileError('PROFILE_LEASE_EXPIRED', 'Lease TTL expired; reconciliation is required');
+    try { await this._authoritativeLeaseActions(lease); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code }); }
+    let live;
+    try { live = await this._live({ leaseId: lease.leaseId, profileAlias: lease.profileAlias }); requireActionLiveness(live); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code, livenessSummary: live?.summary }); }
+    const expected = { leaseId: lease.leaseId, fenceEpoch: input.fenceEpoch ?? lease.fenceEpoch, leaseBindingDigest: input.leaseBindingDigest ?? lease.leaseBindingDigest, runId: input.runId };
+    return this.repository.transact((next) => {
+      const mutationNow = this.clock();
+      const current = this._assertLeaseFacts(next, expected, { claimRequired: true });
+      const currentResource = next.resources[current.physicalResourceId];
+      if (!['leased', 'active'].includes(current.state) || !['leased', 'active'].includes(currentResource.state)) throw profileError('PROFILE_GOVERNOR_NOT_READY', 'Tab operation requires an active lease');
+      if (Date.parse(current.expiresAt) <= mutationNow) throw profileError('PROFILE_LEASE_EXPIRED', 'Lease TTL expired; reconciliation is required');
+      if (Object.keys(current.tabs).length >= current.maxTabs) throw profileError('PROFILE_TAB_LIMIT', 'Lease tab limit is exhausted');
       const tabHandle = `tab_${randomBytes(10).toString('hex')}`;
-      lease.tabs[tabHandle] = { runId, createdAt: nowIso(this.clock()) };
-      return { tabHandle, leaseId: lease.leaseId, fenceEpoch: lease.fenceEpoch };
+      current.tabs[tabHandle] = { runId: current.runId, createdAt: nowIso(mutationNow) };
+      return { tabHandle, leaseId: current.leaseId, fenceEpoch: current.fenceEpoch };
     });
   }
 
@@ -272,30 +458,44 @@ export class ProfileGovernor {
   }
 
   async heartbeat(input = {}) {
-    const now = input.now ?? this.clock();
+    input = validateLeaseControlInput(input, { allowNow: true });
+    const initialNow = this.clock();
     const state = this.repository.read();
     const lease = this._assertLeaseFacts(state, input, { claimRequired: true });
+    const initialResource = state.resources[lease.physicalResourceId];
+    if (initialNow >= Date.parse(lease.expiresAt)) {
+      if (!isExternalRecoveryResource(initialResource, lease)) {
+        this.repository.transact((next) => {
+          const current = next.leases[lease.leaseId];
+          const resource = current && next.resources[current.physicalResourceId];
+          if (current && resource?.currentLeaseId === current.leaseId && !isExternalRecoveryResource(resource, current)) {
+            transition(resource, 'unknown', 'PROFILE_LEASE_EXPIRED', nowIso(initialNow));
+            resource.needsReconciliation = true;
+            resource.livenessSummary = 'unknown';
+          }
+        });
+      }
+      throw profileError('PROFILE_LEASE_EXPIRED', 'Lease TTL expired; reconciliation is required');
+    }
     try { await this._authoritativeLeaseActions(lease); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code }); }
     let live;
     try { live = await this._live({ leaseId: lease.leaseId, profileAlias: lease.profileAlias }); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code || 'PROFILE_LIVENESS_UNKNOWN' }); }
-    if (now >= Date.parse(lease.expiresAt)) {
-      this.repository.transact((next) => {
-        const current = next.leases[lease.leaseId];
-        if (current && next.resources[current.physicalResourceId]?.currentLeaseId === current.leaseId) {
-          const resource = next.resources[current.physicalResourceId];
-          transition(resource, live.externalUse ? 'external_use' : 'unknown', 'PROFILE_LEASE_EXPIRED', nowIso(now));
+    try { requireActionLiveness(live); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code, livenessSummary: live.summary }); }
+    return this.repository.transact((next) => {
+      const mutationNow = this.clock();
+      const current = this._assertLeaseFacts(next, input, { claimRequired: true });
+      const resource = next.resources[current.physicalResourceId];
+      if (mutationNow >= Date.parse(current.expiresAt)) {
+        if (resource && resource.currentLeaseId === current.leaseId && !isExternalRecoveryResource(resource, current)) {
+          transition(resource, 'unknown', 'PROFILE_LEASE_EXPIRED', nowIso(mutationNow));
           resource.needsReconciliation = true;
           resource.livenessSummary = live.summary;
         }
-      });
-      throw profileError('PROFILE_LEASE_EXPIRED', 'Lease TTL expired; reconciliation is required');
-    }
-    try { requireActionLiveness(live); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code, livenessSummary: live.summary }); }
-    return this.repository.transact((next) => {
-      const current = this._assertLeaseFacts(next, input, { claimRequired: true });
-      current.expiresAt = nowIso(now + current.leaseTtlMs);
+        throw profileError('PROFILE_LEASE_EXPIRED', 'Lease TTL expired; reconciliation is required');
+      }
+      current.expiresAt = nowIso(mutationNow + current.leaseTtlMs);
       current.heartbeatCount = (current.heartbeatCount || 0) + 1;
-      appendEvent(next, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: current.state, stateReasonCode: 'HEARTBEAT_OK', fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: nowIso(now), leaseBindingDigest: current.leaseBindingDigest, counts: { heartbeats: current.heartbeatCount }, livenessSummary: 'healthy', grantRevokeStatus: 'none' });
+      appendEvent(next, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: current.state, stateReasonCode: 'HEARTBEAT_OK', fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: nowIso(mutationNow), leaseBindingDigest: current.leaseBindingDigest, counts: { heartbeats: current.heartbeatCount }, livenessSummary: live.summary, grantRevokeStatus: 'none' });
       return redactLease(current);
     });
   }
@@ -303,9 +503,12 @@ export class ProfileGovernor {
   renew(input) { return this.heartbeat(input); }
 
   async release(input = {}) {
+    input = validateLeaseControlInput(input);
     const state = this.repository.read();
     const lease = state.leases[input.leaseId];
     if (!lease || state.resources[lease.physicalResourceId]?.currentLeaseId !== lease.leaseId) return { released: false };
+    const resource = state.resources[lease.physicalResourceId];
+    assertExternalRecoveryBlocked(resource, lease);
     if (input.fenceEpoch !== lease.fenceEpoch || input.leaseBindingDigest !== lease.leaseBindingDigest) return { released: false };
     const unresolved = lease.actionJournal?.find((entry) => ['prepared', 'dispatched', 'indeterminate'].includes(entry.outcome));
     let bindingError;
@@ -337,18 +540,21 @@ export class ProfileGovernor {
     if (livenessError) { await this._establishRevocationBarrier(lease, { reasonCode: livenessError.code || 'PROFILE_LIVENESS_UNKNOWN', grantRevokeStatus: 'revoked' }); throw livenessError; }
     try { requireActionLiveness(live); } catch (error) { await this._establishRevocationBarrier(lease, { reasonCode: error.code, grantRevokeStatus: 'revoked', livenessSummary: live.summary }); throw error; }
     return this.repository.transact((next) => {
+      const mutationNow = this.clock();
+      const mutationNowIso = nowIso(mutationNow);
       const current = next.leases[lease.leaseId];
       if (!current) return { released: false };
       const resource = next.resources[current.physicalResourceId];
       if (!resource || resource.currentLeaseId !== current.leaseId || current.fenceEpoch !== input.fenceEpoch || current.leaseBindingDigest !== input.leaseBindingDigest) return { released: false };
       current.state = 'cooldown';
-      current.releasedAt = nowIso(this.clock());
+      current.releasedAt = mutationNowIso;
       resource.currentLeaseId = null;
       resource.state = 'cooldown';
       resource.stateReasonCode = 'PROFILE_RELEASE';
-      resource.cooldownUntil = nowIso(this.clock() + this.cooldownMs);
+      resource.cooldownUntil = nowIso(mutationNow + this.cooldownMs);
       resource.needsReconciliation = true;
-      appendEvent(next, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: 'cooldown', stateReasonCode: 'PROFILE_RELEASE', fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: current.releasedAt, leaseBindingDigest: current.leaseBindingDigest, livenessSummary: 'unknown', grantRevokeStatus: 'revoked' });
+      resource.livenessSummary = live?.summary || 'unknown';
+      appendEvent(next, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: 'cooldown', stateReasonCode: 'PROFILE_RELEASE', fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: current.releasedAt, leaseBindingDigest: current.leaseBindingDigest, livenessSummary: live?.summary || 'unknown', grantRevokeStatus: 'revoked' });
       return { released: true, leaseId: current.leaseId, state: 'cooldown' };
     });
   }
@@ -360,8 +566,7 @@ export class ProfileGovernor {
   }
 
   async createFence(input = {}) {
-    if (!input || typeof input !== 'object' || !input.leaseId || !input.action) throw profileError('PROFILE_FENCE_REQUIRED', 'A current action fence is required');
-    if (input.purpose !== undefined && (typeof input.purpose !== 'string' || !/^[a-z0-9-]{2,64}$/.test(input.purpose))) throw profileError('PROFILE_REQUEST_INVALID', 'Fence purpose is invalid');
+    input = validateCreateFenceInput(input);
     const state = this.repository.read();
     const lease = this._assertLeaseFacts(state, input, { claimRequired: true });
     let allowedActions;
@@ -374,35 +579,35 @@ export class ProfileGovernor {
     if (input.tabHandle !== undefined && (!lease.tabs[input.tabHandle] || lease.tabs[input.tabHandle].runId !== lease.runId)) throw profileError('PROFILE_TAB_NOT_OWNED', 'Tab is not owned by the lease');
     let live;
     try { live = await this._live({ leaseId: lease.leaseId, profileAlias: lease.profileAlias }); requireActionLiveness(live); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code, livenessSummary: live?.summary }); }
-    const now = this.clock();
     return this.repository.transact((next) => {
+      const mutationNow = this.clock();
+      const mutationNowIso = nowIso(mutationNow);
       const current = this._assertLeaseFacts(next, input, { claimRequired: true });
       const currentResource = next.resources[current.physicalResourceId];
       if (!['leased', 'active'].includes(currentResource.state)) throw profileError('PROFILE_GOVERNOR_NOT_READY', 'Profile resource requires reconciliation');
-      if (Date.parse(current.expiresAt) <= now) throw profileError('PROFILE_LEASE_EXPIRED', 'Lease TTL expired; reconciliation is required');
+      if (Date.parse(current.expiresAt) <= mutationNow) throw profileError('PROFILE_LEASE_EXPIRED', 'Lease TTL expired; reconciliation is required');
       if (current.actionUses >= this.maxFenceUses) throw profileError('PROFILE_FENCE_STALE', 'Fence use limit is exhausted');
       if (current.state === 'leased') {
-        transition(current, 'active', 'PROFILE_RELEASE', nowIso(now));
-        transition(currentResource, 'active', 'PROFILE_RELEASE', nowIso(now));
+        transition(current, 'active', undefined, mutationNowIso);
+        transition(currentResource, 'active', undefined, mutationNowIso);
       }
       current.actionUses += 1;
       const scope = this._fenceScope(input, input.tabHandle, current.profileAlias);
-      const issuedAt = nowIso(now);
+      const issuedAt = mutationNowIso;
       const ttlMs = Math.min(current.leaseTtlMs, 300000);
-      const expiresAt = nowIso(now + ttlMs);
+      const expiresAt = nowIso(mutationNow + ttlMs);
       const proof = { schema: SCHEMAS.fence, fenceId: opaqueId('fence'), leaseId: current.leaseId, fenceEpoch: current.fenceEpoch, leaseBindingDigest: current.leaseBindingDigest, runId: current.runId, bindingId: current.bindingId, purpose: input.purpose || 'browser-action', scope, ttlMs, maxUses: this.maxFenceUses, issuedAt, expiresAt };
       proof.fenceDigest = computeFenceDigest({ ...proof });
       if (ACTION_KIND.has(input.actionKind)) proof.actionKind = input.actionKind;
       current.fences = current.fences || {};
       current.fences[proof.fenceId] = { proof: { ...proof }, uses: 0 };
-      appendEvent(next, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: 'active', stateReasonCode: 'HEARTBEAT_OK', fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: issuedAt, leaseBindingDigest: current.leaseBindingDigest, counts: { actions: current.actionUses }, livenessSummary: 'healthy', grantRevokeStatus: 'none' });
       return proof;
     });
   }
 
   async authorizeFence(proof) {
     if (!proof) throw profileError('PROFILE_FENCE_REQUIRED', 'A current action fence is required');
-    validateActionFence(proof);
+    proof = validateActionFence(proof);
     const state = this.repository.read();
     const lease = this._assertLeaseFacts(state, proof);
     let allowedActions;
@@ -420,12 +625,13 @@ export class ProfileGovernor {
     let live;
     try { live = await this._live({ leaseId: lease.leaseId, profileAlias: lease.profileAlias }); requireActionLiveness(live); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code, livenessSummary: live?.summary }); }
     return this.repository.transact((next) => {
+      const mutationNow = this.clock();
       const current = this._assertLeaseFacts(next, proof);
       const currentResource = next.resources[current.physicalResourceId];
       if (!['leased', 'active'].includes(currentResource.state)) throw profileError('PROFILE_GOVERNOR_NOT_READY', 'Profile resource requires reconciliation');
       const authoritative = current.fences?.[proof.fenceId];
       if (!authoritative || stableStringify(authoritative.proof) !== stableStringify(proof)) throw profileError('PROFILE_FENCE_STALE', 'Fence facts are not the issued authoritative proof');
-      if (Date.parse(current.expiresAt) <= this.clock() || Date.parse(proof.expiresAt) <= this.clock()) throw profileError('PROFILE_FENCE_STALE', 'Fence or lease has expired');
+      if (Date.parse(current.expiresAt) <= mutationNow || Date.parse(proof.expiresAt) <= mutationNow) throw profileError('PROFILE_FENCE_STALE', 'Fence or lease has expired');
       if (authoritative.uses >= authoritative.proof.maxUses) throw profileError('PROFILE_FENCE_STALE', 'Fence use limit is exhausted');
       authoritative.uses += 1;
       return { authorized: true, actionDispatch: 'local-authority-approved' };
@@ -433,13 +639,8 @@ export class ProfileGovernor {
   }
 
   async recordAction(input = {}) {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw profileError('PROFILE_REQUEST_INVALID', 'Action journal input is invalid');
-    const allowedFields = new Set(['leaseId', 'actionId', 'outcome', 'fenceId', 'fenceEpoch', 'leaseBindingDigest', 'bindingId', 'bindingDigest', 'runId', 'runnerClaimDigest', 'resolution', 'actionKind']);
-    const unknown = Object.keys(input).find((key) => !allowedFields.has(key));
-    if (unknown) throw profileError('PROFILE_REQUEST_INVALID', `unknown action journal field: ${unknown}`);
+    input = validateActionRecordInput(input);
     const { leaseId, actionId, outcome, fenceId, fenceEpoch, leaseBindingDigest, bindingId, bindingDigest, runId, runnerClaimDigest, resolution, actionKind } = input;
-    const digest = (value) => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
-    if (typeof leaseId !== 'string' || !/^lease_[0-9a-f]{16}$/.test(leaseId) || typeof actionId !== 'string' || !/^[a-z0-9_-]{4,80}$/.test(actionId) || !['prepared', 'dispatched', 'confirmed', 'failed-known', 'indeterminate'].includes(outcome) || typeof fenceId !== 'string' || !/^fence_[0-9a-f]{16}$/.test(fenceId) || !Number.isInteger(fenceEpoch) || fenceEpoch < 1 || fenceEpoch > 2 ** 31 - 1 || !digest(leaseBindingDigest) || typeof bindingId !== 'string' || !/^pb_[a-z0-9-]+$/.test(bindingId) || !digest(bindingDigest) || typeof runId !== 'string' || !/^run_[a-z0-9-]{8,96}$/.test(runId) || !digest(runnerClaimDigest) || (actionKind !== undefined && !ACTION_KIND.has(actionKind)) || (resolution !== undefined && (!resolution || typeof resolution !== 'object' || Array.isArray(resolution) || resolution.kind !== 'trusted-revocation'))) throw profileError('PROFILE_REQUEST_INVALID', 'Action journal input is invalid');
     const before = this.repository.read();
     const lease = this._assertLeaseFacts(before, { leaseId, fenceEpoch, leaseBindingDigest, bindingId, bindingDigest, runId, runnerClaimDigest });
     if (bindingDigest !== lease.bindingDigest) throw profileError('PROFILE_BINDING_STALE', 'Action binding is stale');
@@ -460,64 +661,105 @@ export class ProfileGovernor {
       revokeStatus = (await this._revokeGrants(lease)) ? 'revoked' : 'failed';
     } else if (trustedResolution) {
       if (typeof this.actionResolutionAuthorizer !== 'function') throw profileError('PROFILE_RECLAIM_UNSAFE', 'Unresolved action requires trusted resolution');
-      const trusted = await this.actionResolutionAuthorizer({ leaseId, actionId, outcome, fenceId, fenceEpoch, leaseBindingDigest, bindingId, bindingDigest, runId, runnerClaimDigest, capability: resolution.capability });
-      if (!trusted || trusted.authorized !== true) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Trusted action resolution was not authorized');
+      const rawTrusted = await this.actionResolutionAuthorizer({ leaseId, actionId, outcome, fenceId, fenceEpoch, leaseBindingDigest, bindingId, bindingDigest, runId, runnerClaimDigest, capability: resolution.capability });
+      assertAuthorizerResult(rawTrusted, new Set(['authorized']), 'Trusted action resolution');
       if (!(await this._revokeGrants(lease))) throw profileError('PROFILE_DEPENDENT_GRANT_REVOKE_FAILED', 'Dependent grant revocation did not complete');
       revokeStatus = 'revoked';
     }
     return this.repository.transact((state) => {
+      const mutationNow = this.clock();
+      const mutationNowIso = nowIso(mutationNow);
       const current = this._assertLeaseFacts(state, { leaseId, fenceEpoch, leaseBindingDigest, bindingId, bindingDigest, runId, runnerClaimDigest });
       if (bindingDigest !== current.bindingDigest) throw profileError('PROFILE_BINDING_STALE', 'Action binding is stale');
       const resource = state.resources[current.physicalResourceId];
       const prior = current.actionJournal?.find((entry) => entry.actionId === actionId);
       current.actionJournal = (current.actionJournal || []).filter((entry) => entry.actionId !== actionId);
-      current.actionJournal.push({ actionId, fenceId, outcome, at: nowIso(this.clock()), actionKind: typeof actionKind === 'string' ? actionKind : undefined });
+      current.actionJournal.push({ actionId, fenceId, outcome, at: mutationNowIso, actionKind: typeof actionKind === 'string' ? actionKind : undefined });
       if (current.actionJournal.length > 64) current.actionJournal.shift();
       if (outcome !== 'indeterminate') return { leaseId, actionId, outcome };
-      const priorState = resource.state;
+      const priorState = current.state;
       const priorEpoch = resource.fenceEpoch;
       const newEpoch = priorEpoch + 1;
-      transition(resource, 'quarantined', 'PROFILE_OUTWARD_EFFECT_INDETERMINATE', nowIso(this.clock()));
+      transition(resource, 'quarantined', 'PROFILE_OUTWARD_EFFECT_INDETERMINATE', mutationNowIso);
       resource.fenceEpoch = newEpoch;
       resource.needsReconciliation = true;
       resource.livenessSummary = 'unknown';
       current.state = 'quarantined';
       current.fenceEpoch = newEpoch;
-      current.leaseBindingDigest = computeLeaseBindingDigest({ claimDigest: current.runnerClaimDigest, bindingDigest: current.bindingDigest, physicalResourceId: current.physicalResourceId, fenceEpoch: newEpoch });
+      current.leaseBindingDigest = computeLeaseBindingDigest({ claimDigest: current.runnerClaimDigest, bindingDigest: current.bindingDigest, physicalResourceId: current.physicalResourceId, fenceEpoch: newEpoch, profileAlias: current.profileAlias });
       current.fences = {};
       current.recoveryPlanDigest = computeRecoveryPlanDigest({ leaseId, bindingDigest: current.bindingDigest, fenceEpoch: newEpoch, reasonCode: 'PROFILE_OUTWARD_EFFECT_INDETERMINATE' });
       resource.recoveryPlanDigest = current.recoveryPlanDigest;
+      const event = appendEvent(state, { leaseId, profileAlias: current.profileAlias, state: 'quarantined', stateReasonCode: 'PROFILE_OUTWARD_EFFECT_INDETERMINATE', fenceEpoch: newEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: mutationNowIso, leaseBindingDigest: current.leaseBindingDigest, livenessSummary: 'unknown', grantRevokeStatus: revokeStatus });
       const receipt = buildRecoveryReceipt({
         leaseId, profileAlias: current.profileAlias, bindingId: current.bindingId, bindingRevision: current.bindingRevision,
         bindingDigest: current.bindingDigest, runId: current.runId, priorState, newState: 'quarantined', priorFenceEpoch: priorEpoch,
         newFenceEpoch: newEpoch, reasonCode: 'PROFILE_OUTWARD_EFFECT_INDETERMINATE', lastActionOutcome: 'indeterminate',
-        dependentGrantRevokeStatus: revokeStatus, probeOutcomes: { governorHealth: 'healthy', runnerClaim: 'unknown', browserAlive: true, extensionConnected: true, dependentGrantsRevoked: revokeStatus === 'revoked' },
-        authorityKind: 'governor-automatic', createdAt: nowIso(this.clock()),
+        dependentGrantRevokeStatus: revokeStatus,
+        probeOutcomes: { governorHealth: 'unknown', runnerClaim: 'unknown', browserAlive: false, extensionConnected: false, dependentGrantsRevoked: revokeStatus === 'revoked' },
+        authorityKind: 'governor-automatic', createdAt: mutationNowIso,
+        eventId: event.eventId,
       });
       state.receipts.push(receipt);
       if (state.receipts.length > 128) state.receipts.splice(0, state.receipts.length - 128);
-      appendEvent(state, { leaseId, profileAlias: current.profileAlias, state: 'quarantined', stateReasonCode: 'PROFILE_OUTWARD_EFFECT_INDETERMINATE', fenceEpoch: newEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: nowIso(this.clock()), leaseBindingDigest: current.leaseBindingDigest, livenessSummary: 'unknown', grantRevokeStatus: revokeStatus });
       return receipt;
     });
   }
 
   async recover(profileAlias, options = {}) {
+    validateProfileAlias(profileAlias);
     if (options?.authenticatedLocalCapability !== true || typeof this.recoveryAuthorizer !== 'function') throw profileError('PROFILE_IPC_AUTH', 'Trusted recovery authorization is required');
+    if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some((key) => !['authenticatedLocalCapability', 'capability'].includes(key))) throw profileError('PROFILE_REQUEST_INVALID', 'Recovery options are invalid');
+    const initialState = this.repository.read();
+    const initialResources = Object.values(initialState.resources).filter((candidate) => candidate.profileAlias === profileAlias || candidate.aliases?.includes(profileAlias));
+    if (initialResources.length > 1) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Recovery profile alias is ambiguously bound to multiple durable resources');
+    const initialResource = initialResources[0];
+    if (!initialResource) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Recovery requires a durable resource barrier');
+    const initialLease = initialResource.currentLeaseId ? initialState.leases[initialResource.currentLeaseId] : null;
+    assertExternalRecoveryBlocked(initialResource, initialLease);
     const resolved = await this._resolve(profileAlias);
     const state = this.repository.read();
     const resource = state.resources[resolved.physicalResourceId];
-    const leaseId = resource?.currentLeaseId;
-    if (!leaseId) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Recovery requires a durable current lease');
+    if (!resource) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Recovery requires a durable resource barrier');
+    const leaseId = resource.currentLeaseId;
+    if (!leaseId) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Recovery requires a durable owner barrier');
     const lease = state.leases[leaseId];
+    assertExternalRecoveryBlocked(resource, lease);
     if (lease.actionJournal?.some((entry) => entry.outcome === 'indeterminate')) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Recovery requires durable resolution of indeterminate actions');
     await this._currentBinding(lease);
-    const trusted = await this.recoveryAuthorizer({ profileAlias, physicalResourceId: resolved.physicalResourceId, leaseId, state: resource.state, fenceEpoch: resource.fenceEpoch, bindingDigest: lease.bindingDigest, recoveryPlanDigest: resource.recoveryPlanDigest, indeterminateResolved: !lease.actionJournal?.some((entry) => entry.outcome === 'indeterminate'), capability: options.capability });
-    if (!trusted || trusted.authorized !== true || !trusted.evidence) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Trusted recovery evidence is insufficient');
+    const rawTrusted = await this.recoveryAuthorizer({ profileAlias, physicalResourceId: resolved.physicalResourceId, leaseId, state: resource.state, fenceEpoch: resource.fenceEpoch, bindingDigest: lease.bindingDigest, recoveryPlanDigest: resource.recoveryPlanDigest, indeterminateResolved: !lease.actionJournal?.some((entry) => entry.outcome === 'indeterminate'), capability: options.capability });
+    const trusted = assertAuthorizerResult(rawTrusted, new Set(['authorized', 'evidence']), 'Trusted recovery authorization');
+    if (!isPlainObject(trusted.evidence)) throw profileError('PROFILE_RECLAIM_UNSAFE', 'Recovery evidence is invalid');
+    if (resource.state === 'external_use' || trusted.evidence?.expectedState === 'external_use') {
+      if (resource.state === 'external_use') {
+        assertSafeExternalRecoveryEvidence(trusted.evidence);
+      }
+      throw profileError('PROFILE_RECLAIM_UNSAFE', 'External-use recovery is contract-blocked until receipt contract binds evidence digest');
+    }
+    assertSafeRecoveryEvidence(trusted.evidence);
     if (!(await this._revokeGrants(lease))) throw profileError('PROFILE_DEPENDENT_GRANT_REVOKE_FAILED', 'Dependent grant revocation did not complete');
-    return applyEvidenceRecovery(this.repository, { physicalResourceId: resolved.physicalResourceId, leaseId, evidence: trusted.evidence, trustedAuthorization: true, reasonCode: 'RECOVERY_OPERATOR_RECONCILE', now: nowIso(this.clock()) });
+    let live;
+    try { live = await this._live({ profileAlias, physicalResourceId: resolved.physicalResourceId }); } catch { live = null; }
+    const safeRunnerClaim = (claim) => (['active', 'terminal', 'revoked'].includes(claim) ? claim : 'unknown');
+    const probeOutcomes = {
+      governorHealth: live?.probes?.governor || 'unknown',
+      runnerClaim: safeRunnerClaim(trusted.evidence.runnerClaim),
+      browserAlive: trusted.evidence.browserAlive === true || live?.browserAlive === true,
+      extensionConnected: trusted.evidence.extensionConnected === true || live?.extensionConnected === true,
+      dependentGrantsRevoked: trusted.evidence.dependentGrantsRevoked ?? true,
+      registryCurrent: trusted.evidence.registryCurrent ?? (live?.probes?.registry === 'healthy'),
+    };
+    const livenessSummary = live?.summary || 'unknown';
+    const reasonCode = 'RECOVERY_OPERATOR_RECONCILE';
+    const result = applyEvidenceRecovery(this.repository, { physicalResourceId: resolved.physicalResourceId, leaseId, evidence: trusted.evidence, probeOutcomes, livenessSummary, trustedAuthorization: true, reasonCode, now: nowIso(this.clock()) });
+    return {
+      ...result,
+      recovered: true,
+    };
   }
 
   async detectExternalUse(profileAlias) {
+    validateProfileAlias(profileAlias);
     const resolved = await this._resolve(profileAlias);
     const live = await this._live({ profileAlias, physicalResourceId: resolved.physicalResourceId });
     return this.repository.transact((state) => {
@@ -526,17 +768,15 @@ export class ProfileGovernor {
       if (live.externalUse && !resource.currentLeaseId) {
         transition(resource, 'external_use', 'PROFILE_EXTERNAL_USE', nowIso(this.clock()));
         resource.needsReconciliation = true;
+        resource.livenessSummary = live.summary;
+        this._prepareExternalRecovery(resource, resolved, state);
       }
       return redactResource(resource);
     });
   }
 
   async transition(input = {}) {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw profileError('PROFILE_REQUEST_INVALID', 'Governor transition input is invalid');
-    const allowedFields = new Set(['leaseId', 'fenceEpoch', 'leaseBindingDigest', 'bindingId', 'bindingDigest', 'runId', 'runnerClaimDigest', 'to', 'reasonCode']);
-    if (Object.keys(input).some((key) => !allowedFields.has(key))) throw profileError('PROFILE_REQUEST_INVALID', 'Governor transition input contains an unknown field');
-    const reasons = { auth_required: 'PROFILE_AUTH_REQUIRED', challenge: 'PROFILE_CHALLENGE_REQUIRED', rate_limited: 'PROFILE_RATE_LIMITED' };
-    if (!reasons[input.to] || input.reasonCode !== reasons[input.to]) throw profileError('PROFILE_REQUEST_INVALID', 'Governor transition target is invalid');
+    input = validateTransitionInput(input);
     const state = this.repository.read();
     const lease = this._assertLeaseFacts(state, input, { claimRequired: true });
     try { await this._authoritativeLeaseActions(lease); } catch (error) { await this._barrierOnFailure(lease, error, { reasonCode: error.code }); }
@@ -552,9 +792,17 @@ export class ProfileGovernor {
     });
   }
 
-  async externalRelease(input) { return this.release(input); }
+  async externalRelease(input = {}) {
+    const control = validateLeaseControlInput(input);
+    const state = this.repository.read();
+    const lease = state.leases[control.leaseId];
+    const resource = lease && state.resources[lease.physicalResourceId];
+    assertExternalRecoveryBlocked(resource, lease);
+    return this.release(control);
+  }
 
   async getResourceProjection(profileAlias) {
+    validateProfileAlias(profileAlias);
     const resolved = await this._resolve(profileAlias);
     const resource = this.repository.read().resources[resolved.physicalResourceId];
     if (!resource) throw profileError('PROFILE_GOVERNOR_NOT_READY', 'Profile resource has not been reconciled');

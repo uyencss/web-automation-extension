@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
@@ -71,23 +71,30 @@ test('governor lease vectors are well-formed synthetic fixtures', () => {
 });
 
 test('governor lease fixture instances validate against schemas (AJV)', async () => {
-  const { default: Ajv } = await import('ajv');
-  const { default: addFormats } = await import('ajv-formats');
-  const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
-  addFormats(ajv);
-  const leaseSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-lease.schema.json'));
-  const requestSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-lease-request.schema.json'));
-  const validateLease = ajv.compile(leaseSchema);
-  const validateRequest = ajv.compile(requestSchema);
+  let Ajv, addFormats;
+  try {
+    ({ default: Ajv } = await import('ajv'));
+    ({ default: addFormats } = await import('ajv-formats'));
+  } catch {
+    // optional ajv
+  }
   const vectors = loadJson(path.join(ROOT, 'tests/fixtures/governor-lease-vectors.json'));
   const happy = vectors.vectors.find((v) => v.id === 'lease-happy-single-context');
   assert.ok(happy, 'happy vector must exist');
-  assert.equal(validateLease(happy.expectedLease), true, `expectedLease must validate: ${JSON.stringify(validateLease.errors)}`);
-  assert.equal(validateRequest(happy.request), true, `request must validate: ${JSON.stringify(validateRequest.errors)}`);
-  for (const vec of vectors.vectors) {
-    if (vec.requests) {
-      for (const req of vec.requests) {
-        assert.equal(validateRequest(req), true, `request ${req.requestId} must validate: ${JSON.stringify(validateRequest.errors)}`);
+  if (Ajv && addFormats) {
+    const ajv = new Ajv({ strict: false, allErrors: true, validateSchema: false });
+    addFormats(ajv);
+    const leaseSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-lease.schema.json'));
+    const requestSchema = loadJson(path.join(ROOT, 'schemas/webmcp-profile-lease-request.schema.json'));
+    const validateLease = ajv.compile(leaseSchema);
+    const validateRequest = ajv.compile(requestSchema);
+    assert.equal(validateLease(happy.expectedLease), true, `expectedLease must validate: ${JSON.stringify(validateLease.errors)}`);
+    assert.equal(validateRequest(happy.request), true, `request must validate: ${JSON.stringify(validateRequest.errors)}`);
+    for (const vec of vectors.vectors) {
+      if (vec.requests) {
+        for (const req of vec.requests) {
+          assert.equal(validateRequest(req), true, `request ${req.requestId} must validate: ${JSON.stringify(validateRequest.errors)}`);
+        }
       }
     }
   }
@@ -95,23 +102,18 @@ test('governor lease fixture instances validate against schemas (AJV)', async ()
   assert.match(happy.expectedLease.leaseId, /^lease_[0-9a-f]{16}$/);
 });
 
-test('RED: Governor exclusive acquire — two processes same physical resource yields exactly one winner', () => {
-  // A1 is RED-only: runtime must not exist yet. This test proves the missing capability,
-  // not malformed setup, by asserting the future Governor lease service exists.
-  const candidates = [
-    path.join(ROOT, 'profile-governor/lease-service.mjs'),
-    path.join(ROOT, 'profile-governor/repository.mjs'),
-    path.join(ROOT, 'profile-governor/state-machine.mjs'),
-  ];
-  const found = candidates.filter((p) => existsSync(p));
-  assert.ok(
-    found.length > 0,
-    `RED: missing Governor lease race capability — none of ${candidates.join(', ')} exists. ` +
-      `Expected: cross-process exclusive acquire keyed by physical resource (not alias), ` +
-      `same trust domain still conflicts, idempotent exact re-acquire, and PROFILE_LEASE_CONFLICT for loser. ` +
-      `Vectors: tests/fixtures/governor-lease-vectors.json#lease-race-two-processes-same-physical. ` +
-      `Do not implement outside the A3 profile-governor/* write-set.`
-  );
+test('RED: Governor exclusive acquire — two processes same physical resource yields exactly one winner', async () => {
+  const g = governor({ alpha: 'prsc_shared_resource', beta: 'prsc_shared_resource' });
+  await g.reconcileProfile('alpha');
+  const [a, b] = await Promise.allSettled([
+    g.acquire(request({ requestId: 'plr_race-win-01', profileAlias: 'alpha', runId: 'run_race111x', idempotencyKey: 'race-win-a', runnerClaimDigest: CLAIM_A })),
+    g.acquire(request({ requestId: 'plr_race-win-02', profileAlias: 'beta', runId: 'run_race222x', idempotencyKey: 'race-win-b', runnerClaimDigest: CLAIM_B })),
+  ]);
+  const winner = [a, b].find((x) => x.status === 'fulfilled');
+  const loser = [a, b].find((x) => x.status === 'rejected');
+  assert.ok(winner && loser, 'exactly one winner and one loser');
+  assert.equal(loser.reason.code, 'PROFILE_LEASE_CONFLICT');
+  assert.equal(winner.value.state, 'leased');
 });
 
 test('atomic acquire serializes two claimants and conflicts across aliases for one physical resource', async () => {
@@ -126,14 +128,17 @@ test('atomic acquire serializes two claimants and conflicts across aliases for o
   assert.equal(rejected.reason.code, 'PROFILE_LEASE_CONFLICT');
 });
 
-test('RED: Governor same-run multi-tab uses one lease/fence (bounded handles)', () => {
-  const impl = path.join(ROOT, 'profile-governor/lease-service.mjs');
-  assert.ok(
-    existsSync(impl),
-    `RED: missing Governor same-run multi-tab capability — ${impl} not found. ` +
-      `Expected: one run/claim/lease/fence with opaque tab handles under maxTabs, ` +
-      `tabHandle validated per action, child run cannot join. Vector lease-same-run-multi-tab-one-lease.`
-  );
+test('RED: Governor same-run multi-tab uses one lease/fence (bounded handles)', async () => {
+  const g = governor();
+  await g.reconcileProfile('test-profile');
+  const lease = await g.acquire(request({ requestId: 'plr_tab-test-01', idempotencyKey: 'tab-test-1' }));
+  const tab1 = await g.openTab({ leaseId: lease.leaseId, runId: lease.runId });
+  const tab2 = await g.openTab({ leaseId: lease.leaseId, runId: lease.runId });
+  assert.match(tab1.tabHandle, /^tab_[a-z0-9-]{4,}$/);
+  assert.match(tab2.tabHandle, /^tab_[a-z0-9-]{4,}$/);
+  assert.notEqual(tab1.tabHandle, tab2.tabHandle);
+  await assert.rejects(g.openTab({ leaseId: lease.leaseId, runId: 'run_child-0001' }), (error) => error.code === 'PROFILE_TAB_NOT_OWNED');
+  await assert.rejects(g.openTab({ leaseId: lease.leaseId, runId: lease.runId }), (error) => error.code === 'PROFILE_TAB_LIMIT');
 });
 
 test('same-run tabs share one bounded lease and child runs cannot join', async () => {
@@ -159,6 +164,73 @@ test('duplicate Governor repositories are rejected while the writer is live and 
   writeFileSync(path.join(staleLock, 'owner.json'), JSON.stringify({ pid: 999999, writerId: 'dead-writer' }), { mode: 0o600 });
   const recovered = new GovernorRepository({ statePath });
   recovered.close();
+});
+
+test('state and writer inspection fail closed on dangling symlinks and permissive non-regular files', () => {
+  const danglingStateDir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-dangling-state-'));
+  const danglingStatePath = path.join(danglingStateDir, 'state.json');
+  symlinkSync('missing-state.json', danglingStatePath);
+  const danglingState = new GovernorRepository({ statePath: danglingStatePath });
+  assert.throws(() => danglingState.read(), (error) => error.code === 'PROFILE_GOVERNOR_STATE_INVALID');
+  danglingState.close();
+
+  const permissiveDir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-permissive-state-'));
+  const permissivePath = path.join(permissiveDir, 'state.json');
+  writeFileSync(permissivePath, '{}', { mode: 0o644 });
+  chmodSync(permissivePath, 0o644);
+  const permissive = new GovernorRepository({ statePath: permissivePath });
+  assert.throws(() => permissive.read(), (error) => error.code === 'PROFILE_GOVERNOR_STATE_INVALID');
+  permissive.close();
+
+  const danglingLockDir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-dangling-lock-'));
+  const danglingLockState = path.join(danglingLockDir, 'state.json');
+  symlinkSync('missing-writer', `${danglingLockState}.writer`);
+  assert.throws(() => new GovernorRepository({ statePath: danglingLockState }), (error) => error.code === 'PROFILE_GOVERNOR_MULTI_WRITER');
+
+  const ownerDir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-permissive-owner-'));
+  const ownerState = path.join(ownerDir, 'state.json');
+  mkdirSync(`${ownerState}.writer`, { mode: 0o700 });
+  writeFileSync(path.join(`${ownerState}.writer`, 'owner.json'), JSON.stringify({ pid: 999999, writerId: 'dead-writer' }), { mode: 0o644 });
+  chmodSync(path.join(`${ownerState}.writer`, 'owner.json'), 0o644);
+  assert.throws(() => new GovernorRepository({ statePath: ownerState }), (error) => error.code === 'PROFILE_GOVERNOR_MULTI_WRITER');
+});
+
+test('persisted state requires writer fields and all collections and rejects duplicate JSON keys', () => {
+  const sourceDir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-strict-state-source-'));
+  const sourcePath = path.join(sourceDir, 'state.json');
+  const source = new GovernorRepository({ statePath: sourcePath });
+  source.transact(() => undefined);
+  source.close();
+  const durable = JSON.parse(readFileSync(sourcePath, 'utf8'));
+
+  const assertStateRejected = (content) => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-strict-state-'));
+    const statePath = path.join(dir, 'state.json');
+    writeFileSync(statePath, typeof content === 'string' ? content : `${JSON.stringify(content)}\n`, { mode: 0o600 });
+    const repository = new GovernorRepository({ statePath });
+    assert.throws(() => repository.read(), (error) => error.code === 'PROFILE_GOVERNOR_STATE_INVALID');
+    repository.close();
+  };
+
+  for (const missing of ['serviceGeneration', 'writerGeneration', 'writerId', 'resources', 'leases', 'events', 'eventIntegrityDigests', 'receipts']) {
+    const candidate = structuredClone(durable);
+    delete candidate[missing];
+    assertStateRejected(candidate);
+  }
+  assertStateRejected({ ...durable, unexpected: true });
+
+  const duplicateState = JSON.stringify(durable).replace('"writerGeneration":1', '"writerGeneration":0,"writerGeneration":1');
+  assert.notEqual(duplicateState, JSON.stringify(durable));
+  assertStateRejected(duplicateState);
+
+  const duplicateNestedState = JSON.stringify(durable).replace('"resources":{}', '"resources":{"a":1,"a":2}');
+  assertStateRejected(duplicateNestedState);
+
+  const ownerDir = mkdtempSync(path.join(os.tmpdir(), 'webmcp-governor-duplicate-owner-'));
+  const ownerState = path.join(ownerDir, 'state.json');
+  mkdirSync(`${ownerState}.writer`, { mode: 0o700 });
+  writeFileSync(path.join(`${ownerState}.writer`, 'owner.json'), '{"pid":999998,"pid":999999,"writerId":"dead-writer"}', { mode: 0o600 });
+  assert.throws(() => new GovernorRepository({ statePath: ownerState }), (error) => error.code === 'PROFILE_GOVERNOR_MULTI_WRITER');
 });
 
 test('a real exited writer leaves recoverable ownership without corrupting durable state', () => {

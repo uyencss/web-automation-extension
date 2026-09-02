@@ -9,6 +9,10 @@ function status(value) {
 
 export function evaluateLiveness(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { summary: 'unknown', externalUse: false, probes: {} };
+  const allowed = new Set(['governor', 'governorHealth', 'registry', 'registryCurrent', 'runnerClaim', 'browserAlive', 'extensionConnected', 'indeterminate']);
+  if (Object.keys(input).some((key) => !allowed.has(key)) || (Object.hasOwn(input, 'governor') && Object.hasOwn(input, 'governorHealth')) || (Object.hasOwn(input, 'registry') && Object.hasOwn(input, 'registryCurrent'))) {
+    throw profileError('PROFILE_LIVENESS_UNKNOWN', 'Governor liveness response is not a closed authoritative record');
+  }
   const probes = {
     governor: status(input.governor ?? input.governorHealth),
     registry: status(input.registry ?? input.registryCurrent),

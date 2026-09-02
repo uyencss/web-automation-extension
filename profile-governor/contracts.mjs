@@ -25,6 +25,13 @@ const RUN_ID = /^run_[a-z0-9-]{8,}$/;
 const BINDING_ID = /^pb_[a-z0-9-]+$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const ID_KEY = /^[\x21-\x7e]{4,128}$/;
+const LEASE_ID = /^lease_[0-9a-f]{16}$/;
+const FENCE_ID = /^fence_[0-9a-f]{16}$/;
+const TAB_ID = /^tab_[a-z0-9-]{4,128}$/;
+const ACTION_ID = /^[a-z0-9_-]{4,80}$/;
+const ACTION_KINDS = new Set(['click', 'type', 'scroll', 'waitForStable', 'batch', 'read', 'queryIndexedDB']);
+const ACTION_OUTCOMES = new Set(['prepared', 'dispatched', 'confirmed', 'failed-known', 'indeterminate']);
+const RFC3339_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})[Tt](?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 
 function invalid(message, details) {
   return profileError('PROFILE_REQUEST_INVALID', message, details);
@@ -32,6 +39,13 @@ function invalid(message, details) {
 
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid(`${label} must be an object`);
+  return value;
+}
+
+function closed(value, label, allowed) {
+  object(value, label);
+  const unknown = Object.keys(value).find((key) => !allowed.has(key));
+  if (unknown) throw invalid(`${label} contains an unknown field`);
   return value;
 }
 
@@ -47,16 +61,27 @@ function integer(value, label, min, max) {
   return value;
 }
 
-export function validateLeaseRequest(input, { allowExternal = true } = {}) {
-  const value = object(input, 'lease request');
+export function isRfc3339DateTime(value) {
+  if (typeof value !== 'string') return false;
+  const match = RFC3339_DATE_TIME.exec(value);
+  if (!match || Number.isNaN(Date.parse(value))) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const calendarDate = new Date(0);
+  calendarDate.setUTCHours(0, 0, 0, 0);
+  calendarDate.setUTCFullYear(year, month - 1, day);
+  return calendarDate.getUTCFullYear() === year && calendarDate.getUTCMonth() === month - 1 && calendarDate.getUTCDate() === day;
+}
+
+export function validateLeaseRequest(input, { allowExternal = true, requireRequestedActions = false } = {}) {
   const allowed = new Set([
     'schema', 'requestId', 'ownerType', 'nodeId', 'runId', 'runnerClaimDigest',
     'bindingId', 'bindingRevision', 'bindingDigest', 'profileAlias', 'leaseMode',
     'requestedActions', 'heartbeatIntervalMs', 'leaseTtlMs', 'idempotencyKey',
     'profileResourceIdHint',
   ]);
-  const unknown = Object.keys(value).find((key) => !allowed.has(key));
-  if (unknown) throw invalid(`unknown lease request field: ${unknown}`, { field: unknown });
+  const value = closed(input, 'lease request', allowed);
   if (value.schema !== SCHEMAS.request) throw profileError('PROFILE_SCHEMA_UNSUPPORTED', 'unsupported profile lease request schema');
   string(value.requestId, 'requestId', REQUEST_ID, 12, 80);
   if (!['automation', 'external'].includes(value.ownerType) || (!allowExternal && value.ownerType === 'external')) throw invalid('ownerType is invalid');
@@ -68,19 +93,91 @@ export function validateLeaseRequest(input, { allowExternal = true } = {}) {
   string(value.bindingDigest, 'bindingDigest', DIGEST, 71, 71);
   string(value.profileAlias, 'profileAlias', ALIAS, 2, 64);
   if (!['single-context', 'shared-trust-domain'].includes(value.leaseMode)) throw invalid('leaseMode is invalid');
-  if (!Array.isArray(value.requestedActions) || value.requestedActions.length < 1 || value.requestedActions.length > 8 || new Set(value.requestedActions).size !== value.requestedActions.length || value.requestedActions.some((action) => !ACTIONS.includes(action))) throw invalid('requestedActions is invalid');
+  if (value.requestedActions !== undefined && (!Array.isArray(value.requestedActions) || value.requestedActions.length < 1 || value.requestedActions.length > 8 || new Set(value.requestedActions).size !== value.requestedActions.length || value.requestedActions.some((action) => !ACTIONS.includes(action)))) throw invalid('requestedActions is invalid');
+  if (requireRequestedActions && value.requestedActions === undefined) throw invalid('requestedActions is required for acquire');
   if (value.heartbeatIntervalMs !== undefined) integer(value.heartbeatIntervalMs, 'heartbeatIntervalMs', 1000, 120000);
   if (value.leaseTtlMs !== undefined) integer(value.leaseTtlMs, 'leaseTtlMs', 5000, 600000);
   string(value.idempotencyKey, 'idempotencyKey', ID_KEY, 4, 128);
   if (value.profileResourceIdHint !== undefined) string(value.profileResourceIdHint, 'profileResourceIdHint', /^prsc_[a-z0-9-]{4,}$/, 9, 160);
+  const validated = { ...value };
+  if (value.requestedActions === undefined) delete validated.requestedActions;
+  else validated.requestedActions = Object.freeze([...value.requestedActions]);
+  return Object.freeze(validated);
+}
+
+function validateLeaseFacts(value, { requireRun = false, requireBinding = false, requireClaim = false } = {}) {
+  string(value.leaseId, 'leaseId', LEASE_ID, 22, 22);
+  integer(value.fenceEpoch, 'fenceEpoch', 1, 2 ** 31 - 1);
+  string(value.leaseBindingDigest, 'leaseBindingDigest', DIGEST, 71, 71);
+  if (requireRun || value.runId !== undefined) string(value.runId, 'runId', RUN_ID, 12, 96);
+  if (requireBinding || value.bindingId !== undefined) string(value.bindingId, 'bindingId', BINDING_ID, 4, 96);
+  if (value.bindingDigest !== undefined) string(value.bindingDigest, 'bindingDigest', DIGEST, 71, 71);
+  if (requireClaim || value.runnerClaimDigest !== undefined) string(value.runnerClaimDigest, 'runnerClaimDigest', DIGEST, 71, 71);
+  return value;
+}
+
+const LEASE_CONTROL_FIELDS = new Set(['leaseId', 'fenceEpoch', 'leaseBindingDigest', 'bindingId', 'bindingDigest', 'runId', 'runnerClaimDigest', 'now']);
+
+export function validateLeaseControlInput(input, { allowNow = false } = {}) {
+  const value = closed(input, 'lease control', LEASE_CONTROL_FIELDS);
+  validateLeaseFacts(value);
+  if (value.now !== undefined) {
+    if (!allowNow) throw invalid('lease control contains an unknown field');
+    integer(value.now, 'now', 0, Number.MAX_SAFE_INTEGER);
+  }
+  return Object.freeze({ ...value });
+}
+
+export function validateOpenTabInput(input) {
+  const value = closed(input, 'tab operation', new Set(['leaseId', 'runId', 'fenceEpoch', 'leaseBindingDigest', 'bindingId', 'bindingDigest', 'runnerClaimDigest']));
+  string(value.leaseId, 'leaseId', LEASE_ID, 22, 22);
+  string(value.runId, 'runId', RUN_ID, 12, 96);
+  if (value.fenceEpoch !== undefined) integer(value.fenceEpoch, 'fenceEpoch', 1, 2 ** 31 - 1);
+  if (value.leaseBindingDigest !== undefined) string(value.leaseBindingDigest, 'leaseBindingDigest', DIGEST, 71, 71);
+  if (value.bindingId !== undefined) string(value.bindingId, 'bindingId', BINDING_ID, 4, 96);
+  if (value.bindingDigest !== undefined) string(value.bindingDigest, 'bindingDigest', DIGEST, 71, 71);
+  if (value.runnerClaimDigest !== undefined) string(value.runnerClaimDigest, 'runnerClaimDigest', DIGEST, 71, 71);
+  return Object.freeze({ ...value });
+}
+
+export function validateCreateFenceInput(input) {
+  const value = closed(input, 'fence request', new Set(['leaseId', 'fenceEpoch', 'leaseBindingDigest', 'bindingId', 'bindingDigest', 'runId', 'runnerClaimDigest', 'action', 'tabHandle', 'purpose', 'actionKind']));
+  validateLeaseFacts(value, { requireRun: true, requireBinding: true });
+  if (!ACTIONS.includes(value.action)) throw invalid('action is invalid');
+  if (value.tabHandle !== undefined) string(value.tabHandle, 'tabHandle', TAB_ID, 8, 128);
+  if (value.purpose !== undefined) string(value.purpose, 'purpose', /^[a-z0-9-]+$/, 2, 64);
+  if (value.actionKind !== undefined && !ACTION_KINDS.has(value.actionKind)) throw invalid('actionKind is invalid');
+  return Object.freeze({ ...value });
+}
+
+export function validateActionRecordInput(input) {
+  const value = closed(input, 'action journal', new Set(['leaseId', 'actionId', 'outcome', 'fenceId', 'fenceEpoch', 'leaseBindingDigest', 'bindingId', 'bindingDigest', 'runId', 'runnerClaimDigest', 'resolution', 'actionKind']));
+  validateLeaseFacts(value, { requireRun: true, requireBinding: true, requireClaim: true });
+  string(value.bindingDigest, 'bindingDigest', DIGEST, 71, 71);
+  string(value.actionId, 'actionId', ACTION_ID, 4, 80);
+  string(value.fenceId, 'fenceId', FENCE_ID, 22, 22);
+  if (!ACTION_OUTCOMES.has(value.outcome)) throw invalid('outcome is invalid');
+  if (value.actionKind !== undefined && !ACTION_KINDS.has(value.actionKind)) throw invalid('actionKind is invalid');
+  if (value.resolution !== undefined) {
+    closed(value.resolution, 'action resolution', new Set(['kind', 'capability']));
+    if (value.resolution.kind !== 'trusted-revocation') throw invalid('action resolution is invalid');
+    if (value.resolution.capability !== undefined) object(value.resolution.capability, 'action resolution capability');
+  }
+  return Object.freeze({ ...value });
+}
+
+export function validateTransitionInput(input) {
+  const value = closed(input, 'Governor transition', new Set(['leaseId', 'fenceEpoch', 'leaseBindingDigest', 'bindingId', 'bindingDigest', 'runId', 'runnerClaimDigest', 'to', 'reasonCode']));
+  validateLeaseFacts(value, { requireRun: true, requireBinding: true, requireClaim: true });
+  string(value.bindingDigest, 'bindingDigest', DIGEST, 71, 71);
+  const reasons = { auth_required: 'PROFILE_AUTH_REQUIRED', challenge: 'PROFILE_CHALLENGE_REQUIRED', rate_limited: 'PROFILE_RATE_LIMITED' };
+  if (!reasons[value.to] || value.reasonCode !== reasons[value.to]) throw invalid('Governor transition target is invalid');
   return Object.freeze({ ...value });
 }
 
 export function validateActionFence(input) {
-  const value = object(input, 'action fence');
   const allowed = new Set(['schema', 'fenceId', 'leaseId', 'fenceEpoch', 'leaseBindingDigest', 'runId', 'bindingId', 'purpose', 'scope', 'fenceDigest', 'ttlMs', 'maxUses', 'approvalDigest', 'issuedAt', 'expiresAt', 'actionKind']);
-  const unknown = Object.keys(value).find((key) => !allowed.has(key));
-  if (unknown) throw invalid(`unknown action fence field: ${unknown}`, { field: unknown });
+  const value = closed(input, 'action fence', allowed);
   if (value.schema !== SCHEMAS.fence) throw profileError('PROFILE_SCHEMA_UNSUPPORTED', 'unsupported profile action fence schema');
   string(value.fenceId, 'fenceId', /^fence_[0-9a-f]{16}$/, 22, 22);
   string(value.leaseId, 'leaseId', /^lease_[0-9a-f]{16}$/, 22, 22);
@@ -92,7 +189,7 @@ export function validateActionFence(input) {
   object(value.scope, 'scope');
   const scopeKeys = new Set(['profileAlias', 'actions', 'tabHandle', 'originAllowlist']);
   const scopeUnknown = Object.keys(value.scope).find((key) => !scopeKeys.has(key));
-  if (scopeUnknown) throw invalid(`unknown action fence scope field: ${scopeUnknown}`, { field: scopeUnknown });
+  if (scopeUnknown) throw invalid('action fence scope contains an unknown field');
   string(value.scope.profileAlias, 'scope.profileAlias', ALIAS, 2, 64);
   if (!Array.isArray(value.scope.actions) || value.scope.actions.length < 1 || value.scope.actions.length > 8 || new Set(value.scope.actions).size !== value.scope.actions.length || value.scope.actions.some((action) => !ACTIONS.includes(action))) throw invalid('scope.actions is invalid');
   if (value.scope.tabHandle !== undefined) string(value.scope.tabHandle, 'scope.tabHandle', /^tab_[a-z0-9-]{4,}$/, 8, 128);
@@ -101,9 +198,10 @@ export function validateActionFence(input) {
   if (value.ttlMs !== undefined) integer(value.ttlMs, 'ttlMs', 1000, 300000);
   if (value.maxUses !== undefined) integer(value.maxUses, 'maxUses', 1, 1000);
   if (value.approvalDigest !== undefined) string(value.approvalDigest, 'approvalDigest', DIGEST, 71, 71);
-  for (const key of ['issuedAt', 'expiresAt']) if (typeof value[key] !== 'string' || Number.isNaN(Date.parse(value[key]))) throw invalid(`${key} is invalid`);
-  if (value.actionKind !== undefined && !['click', 'type', 'scroll', 'waitForStable', 'batch', 'read', 'queryIndexedDB'].includes(value.actionKind)) throw invalid('actionKind is invalid');
-  return Object.freeze({ ...value });
+  for (const key of ['issuedAt', 'expiresAt']) if (!isRfc3339DateTime(value[key])) throw invalid(`${key} is invalid`);
+  if (Date.parse(value.expiresAt) <= Date.parse(value.issuedAt)) throw invalid('action fence timestamps are invalid');
+  if (value.actionKind !== undefined && !ACTION_KINDS.has(value.actionKind)) throw invalid('actionKind is invalid');
+  return Object.freeze({ ...value, scope: Object.freeze({ ...value.scope, actions: Object.freeze([...value.scope.actions]), ...(value.scope.originAllowlist === undefined ? {} : { originAllowlist: Object.freeze([...value.scope.originAllowlist]) }) }) });
 }
 
 export function stableStringify(value) {
@@ -118,8 +216,15 @@ export function digestLf(domainLabel, value) {
   return `sha256:${createHash('sha256').update(`${domainLabel}\n${canonical}`, 'utf8').digest('hex')}`;
 }
 
-export function computeLeaseBindingDigest({ claimDigest, bindingDigest, physicalResourceId, fenceEpoch }) {
-  return digestLf('webmcp-digest-v1:lease', { claimDigest, bindingDigest, fenceEpoch, profileResourceId: physicalResourceId });
+export function computeLeaseBindingDigest({ claimDigest, bindingDigest, physicalResourceId, fenceEpoch, profileAlias }) {
+  // Hardened projection includes profileAlias (finding 1). For synthetic frozen vectors that predate
+  // the hardening (no alias), fall back to legacy projection without alias to keep vector
+  // validation stable; all durable lease validation paths supply profileAlias and thus enforce binding.
+  if (profileAlias === undefined) {
+    return digestLf('webmcp-digest-v1:lease', { bindingDigest, claimDigest, fenceEpoch, profileResourceId: physicalResourceId });
+  }
+  if (typeof profileAlias !== 'string' || !ALIAS.test(profileAlias)) throw invalid('profileAlias is invalid for lease binding digest');
+  return digestLf('webmcp-digest-v1:lease', { bindingDigest, claimDigest, fenceEpoch, profileAlias, profileResourceId: physicalResourceId });
 }
 
 export function computeFenceDigest({ leaseBindingDigest, bindingId, runId, fenceEpoch, scope }) {

@@ -1,7 +1,15 @@
 import { profileError } from './errors.mjs';
 
 const METHODS = new Set(['acquire', 'heartbeat', 'renew', 'release', 'externalRelease', 'openTab', 'createFence', 'authorizeFence', 'recordAction', 'transition', 'reconcileProfile', 'recover', 'detectExternalUse', 'getResourceProjection', 'listEvents', 'listRecoveryReceipts']);
-const MUTATIONS = new Set(['acquire', 'heartbeat', 'renew', 'release', 'externalRelease', 'openTab', 'createFence', 'authorizeFence', 'recordAction', 'transition', 'reconcileProfile', 'recover', 'detectExternalUse']);
+const EMPTY_ARGS = new Set(['listEvents', 'listRecoveryReceipts']);
+const PROFILE_ARGS = new Set(['reconcileProfile', 'recover', 'detectExternalUse', 'getResourceProjection']);
+
+function validateArgs(method, args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) throw profileError('PROFILE_REQUEST_INVALID', 'Governor local arguments are invalid');
+  if (EMPTY_ARGS.has(method) && Object.keys(args).length !== 0) throw profileError('PROFILE_REQUEST_INVALID', 'Governor local method takes no arguments');
+  if (PROFILE_ARGS.has(method) && (Object.keys(args).length !== 1 || !Object.hasOwn(args, 'profileAlias'))) throw profileError('PROFILE_REQUEST_INVALID', 'Governor local profile arguments are invalid');
+  return args;
+}
 
 export function createLocalGovernorServer({ service, authenticate } = {}) {
   if (!service) throw new TypeError('service is required');
@@ -12,13 +20,16 @@ export function createLocalGovernorServer({ service, authenticate } = {}) {
     async close() { return { closed: true, networkListener: false }; },
     async call(method, args = {}, { capability } = {}) {
       if (!METHODS.has(method) || typeof service[method] !== 'function') throw profileError('PROFILE_REQUEST_INVALID', 'Unknown Governor local method');
-      if (args === null || (typeof args !== 'object' && typeof args !== 'string') || Array.isArray(args)) throw profileError('PROFILE_REQUEST_INVALID', 'Governor local arguments are invalid');
-      const external = method.startsWith('external') || args.ownerType === 'external';
-      const protectedMethod = MUTATIONS.has(method) || external;
-      if (protectedMethod && (!capability || typeof capability !== 'object' || typeof capability.kind !== 'string' || !(await auth(capability)))) throw profileError('PROFILE_IPC_AUTH', 'Authenticated local capability is required');
+      let authenticated = false;
+      if (capability && typeof capability === 'object' && !Array.isArray(capability) && typeof capability.kind === 'string') {
+        try { authenticated = (await auth(capability)) === true; } catch { authenticated = false; }
+      }
+      if (!authenticated) throw profileError('PROFILE_IPC_AUTH', 'Authenticated local capability is required');
+      validateArgs(method, args);
       if (method === 'recover') return service.recover(args.profileAlias, { authenticatedLocalCapability: true, capability });
       if (method === 'acquire') return service.acquire(args, { authenticatedLocalCapability: true, capability });
-      if (method === 'reconcileProfile' || method === 'detectExternalUse' || method === 'getResourceProjection') return service[method](typeof args === 'string' ? args : args.profileAlias);
+      if (method === 'reconcileProfile' || method === 'detectExternalUse' || method === 'getResourceProjection') return service[method](args.profileAlias);
+      if (EMPTY_ARGS.has(method)) return service[method]();
       return service[method](args);
     },
   };

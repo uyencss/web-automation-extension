@@ -1,4 +1,5 @@
 import { profileError } from './errors.mjs';
+import { isRfc3339DateTime } from './contracts.mjs';
 
 const transitions = new Map([
   ['unknown', new Set(['ready', 'external_use', 'quarantined'])],
@@ -18,13 +19,16 @@ export function canTransition(from, to) {
 }
 
 export function assertTransition(from, to) {
+  if (typeof from !== 'string' || typeof to !== 'string' || !transitions.has(from) || (!transitions.has(to) && from !== to)) throw profileError('PROFILE_TRANSITION_INVALID', 'Governor transition state is invalid');
   if (!canTransition(from, to)) throw profileError('PROFILE_TRANSITION_INVALID', `Governor transition ${from} -> ${to} is not allowed`);
 }
 
 export function transition(record, to, reasonCode, now = new Date().toISOString()) {
+  if (!record || typeof record !== 'object' || Array.isArray(record) || (reasonCode !== undefined && (typeof reasonCode !== 'string' || !/^[A-Z][A-Z0-9_]{2,63}$/.test(reasonCode))) || !isRfc3339DateTime(now)) throw profileError('PROFILE_TRANSITION_INVALID', 'Governor transition record is invalid');
   assertTransition(record.state, to);
   record.state = to;
-  record.stateReasonCode = reasonCode;
+  if (reasonCode !== undefined) record.stateReasonCode = reasonCode;
+  else delete record.stateReasonCode;
   record.stateChangedAt = now;
   return record;
 }
