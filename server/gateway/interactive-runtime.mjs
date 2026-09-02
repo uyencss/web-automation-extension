@@ -1,6 +1,7 @@
 import { PermitStore } from './permit-store.mjs';
 import { GatewayVerifier } from './verifier.mjs';
 import { TrustedContextChannel } from './trusted-context-channel.mjs';
+import { loadDispatcherRouteMap } from './dispatcher-route-resolver.mjs';
 import {
   createSafeReceipt,
   redactContext,
@@ -53,6 +54,9 @@ export class InteractiveRuntime {
     socketPath = null,
     allowTestSeams = false,
     _testSeam = false,
+    physicalRouteMap = null,
+    routeMap = null,
+    aliasToPhysicalMap = null,
   } = {}) {
     const isProduction = process.env.NODE_ENV === 'production';
     const isTestEnv = process.env.NODE_ENV === 'test';
@@ -91,11 +95,34 @@ export class InteractiveRuntime {
       }
     }
 
+    // Physical route map injection is gated to explicit test seams; production loads local registry itself
+    const injectedMap = physicalRouteMap || routeMap || aliasToPhysicalMap || null;
+    if (injectedMap !== null && injectedMap !== undefined && !isTestSeamAllowed) {
+      throw new Error('Passing custom physicalRouteMap is not permitted in production construction');
+    }
+
     this.permitStore = (isTestSeamAllowed && permitStore) || new PermitStore();
     this.publicKey = !isTestSeamAllowed ? pinnedPublicKey : publicKey;
     this.keyId = !isTestSeamAllowed ? pinnedKeyId : (keyId || null);
     this.expectedPhase = expectedPhase || null;
     this.mode = mode; // off | observe | enforce
+
+    // Private in-memory alias-to-physical route map (read-only local registry)
+    if (isTestSeamAllowed && injectedMap !== null && injectedMap !== undefined) {
+      if (injectedMap instanceof Map) {
+        this.physicalRouteMap = new Map(injectedMap);
+      } else if (injectedMap && typeof injectedMap === 'object') {
+        this.physicalRouteMap = new Map(Object.entries(injectedMap));
+      } else {
+        this.physicalRouteMap = new Map();
+      }
+    } else {
+      try {
+        this.physicalRouteMap = loadDispatcherRouteMap();
+      } catch {
+        this.physicalRouteMap = new Map();
+      }
+    }
 
     this.verifier = new GatewayVerifier({
       publicKey: this.publicKey,
@@ -103,6 +130,7 @@ export class InteractiveRuntime {
       expectedPhase: this.expectedPhase,
       permitStore: this.permitStore,
       mode: this.mode === 'observe' ? 'observe' : 'enforce',
+      physicalRouteMap: this.physicalRouteMap,
     });
 
     this.trustedContextChannel =

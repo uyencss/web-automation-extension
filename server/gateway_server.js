@@ -156,6 +156,9 @@ function createGatewayServer({
   interactiveMode = null,
   allowTestSeams = false,
   _testSeam = false,
+  physicalRouteMap = null,
+  routeMap = null,
+  aliasToPhysicalMap = null,
 } = {}) {
   const extensions = new Map();
   const pendingConnections = new Set();
@@ -170,6 +173,11 @@ function createGatewayServer({
 
   if (interactiveRuntime && !isTestSeamAllowed) {
     throw new Error('Passing custom interactiveRuntime is not permitted in production construction');
+  }
+
+  const injectedRouteMap = physicalRouteMap || routeMap || aliasToPhysicalMap || null;
+  if (injectedRouteMap !== null && injectedRouteMap !== undefined && !isTestSeamAllowed) {
+    throw new Error('Passing custom physicalRouteMap is not permitted in production construction');
   }
 
   const pinnedPublicKey = process.env.WEBMCP_RUNNER_PUBLIC_KEY || process.env.WEBMCP_GATEWAY_PUBLIC_KEY || null;
@@ -223,6 +231,7 @@ function createGatewayServer({
       mode: effectiveMode,
       allowTestSeams: isTestSeamAllowed,
       _testSeam: isTestSeamAllowed,
+      physicalRouteMap: isTestSeamAllowed && injectedRouteMap ? injectedRouteMap : null,
     });
 
   function connectedProfileIds() {
@@ -249,17 +258,59 @@ function createGatewayServer({
     return details;
   }
 
-  function resolveTarget(profileId) {
+  function resolveTarget(profileId, logicalHints = null) {
     const ids = connectedProfileIds();
     if (ids.length === 0) {
       return { error: 'Chrome extension is not connected to the gateway', status: 503 };
     }
     if (profileId) {
-      const ws = extensions.get(profileId);
-      if (!ws || ws.readyState !== 1) {
+      // Interactive physical-routing gate: a request-level physical ID is valid only when the
+      // in-memory route map contains that exact physical value for an explicit logical identity
+      // hint derived from the trusted context/permit. Do not accept merely because
+      // extensions.get(profileId) exists. Missing/invalid map fails closed for interactive.
+      const isInteractive = runtime.mode !== 'off' || (logicalHints && logicalHints.size > 0);
+      if (isInteractive && logicalHints && logicalHints.size > 0) {
+        const isLogicalHint = logicalHints.has(profileId);
+        if (!isLogicalHint) {
+          let allowed = false;
+          if (runtime && runtime.physicalRouteMap) {
+            for (const hint of logicalHints) {
+              const mapped = runtime.physicalRouteMap.get(hint);
+              if (mapped && mapped === profileId) { allowed = true; break; }
+            }
+          }
+          if (!allowed) {
+            return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
+          }
+          const wsPhys = extensions.get(profileId);
+          if (wsPhys && wsPhys.readyState === 1) return { ws: wsPhys, profileId };
+          return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
+        }
+        // Logical alias hint: resolve via physical map first
+        if (runtime && runtime.physicalRouteMap) {
+          const mappedPhysical = runtime.physicalRouteMap.get(profileId);
+          if (mappedPhysical) {
+            const wsMapped = extensions.get(mappedPhysical);
+            if (wsMapped && wsMapped.readyState === 1) return { ws: wsMapped, profileId: mappedPhysical };
+          }
+        }
+        const wsDirect = extensions.get(profileId);
+        if (wsDirect && wsDirect.readyState === 1) return { ws: wsDirect, profileId };
         return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
       }
-      return { ws, profileId };
+      // Non-interactive / legacy path: preserve direct lookup + logical->physical fallback
+      let ws = extensions.get(profileId);
+      if (ws && ws.readyState === 1) {
+        return { ws, profileId };
+      }
+      if (runtime && runtime.physicalRouteMap) {
+        const mappedPhysical = runtime.physicalRouteMap.get(profileId);
+        if (mappedPhysical) {
+          ws = extensions.get(mappedPhysical);
+          if (ws && ws.readyState === 1) return { ws, profileId: mappedPhysical };
+        }
+      }
+      return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
     }
     if (ids.length === 1) {
       const singleId = ids[0];
@@ -269,6 +320,19 @@ function createGatewayServer({
       error: `Multiple Chrome profiles are connected (${ids.join(', ')}). Specify "profileId" in the request body.`,
       status: 400,
     };
+  }
+
+  function resolveEffectiveTargetForTrusted(logicalAlias) {
+    if (!logicalAlias) return resolveTarget(logicalAlias);
+    // Prefer physical mapping for trusted routing when multiple profiles
+    if (runtime && runtime.physicalRouteMap) {
+      const physical = runtime.physicalRouteMap.get(logicalAlias);
+      if (physical) {
+        const direct = extensions.get(physical);
+        if (direct && direct.readyState === 1) return { ws: direct, profileId: physical };
+      }
+    }
+    return resolveTarget(logicalAlias);
   }
 
   function recordDownloadEvent(profileId, type, params = {}) {
@@ -408,8 +472,16 @@ function createGatewayServer({
         let effectiveProfileId = profileId || params?.profileId || null;
         if (hasTrusted && connectedProfileIds().length > 1) effectiveProfileId = trustedProfileId;
 
+        // Derive explicit logical identity hints from trusted context/permit for physical routing gate
+        const ctxForHints = runtime.getCurrentContext();
+        const logicalHints = new Set();
+        if (ctxForHints?.profileAlias && typeof ctxForHints.profileAlias === 'string') logicalHints.add(ctxForHints.profileAlias);
+        if (ctxForHints?.profileId && typeof ctxForHints.profileId === 'string') logicalHints.add(ctxForHints.profileId);
+        if (permit?.profileAlias && typeof permit.profileAlias === 'string') logicalHints.add(permit.profileAlias);
+        if (permit?.profileId && typeof permit.profileId === 'string') logicalHints.add(permit.profileId);
+
         if (!isDownloadMethod) {
-          const target = resolveTarget(profileForResolve);
+          const target = resolveTarget(profileForResolve, logicalHints);
           if (target.error) {
             // Create blocked receipt for no-target case
             let blockedReceipt = null;
@@ -430,6 +502,26 @@ function createGatewayServer({
               } catch {
                 blockedReceipt = null;
               }
+              // For interactive physical routing mismatch, fail closed with typed deny rather than 404
+              try {
+                const check = runtime.enforceRequest({
+                  method,
+                  params: params || {},
+                  profileId: effectiveProfileId,
+                  permit,
+                  targetOrigin,
+                  now: new Date(),
+                });
+                if (check.decision === 'deny' && check.reason === 'EXECUTION_PROFILE_MISMATCH') {
+                  return writeJson(res, 403, {
+                    error: check.reason,
+                    decision: check.decision,
+                    reason: check.reason,
+                    actionClass: check.actionClass,
+                    receipt: check.receipt,
+                  });
+                }
+              } catch {}
             }
             return writeJson(res, target.status, { error: target.error, receipt: blockedReceipt });
           }
@@ -539,7 +631,7 @@ function createGatewayServer({
 
         // Hardening: enforce trusted routing for actual forwarding when multiple profiles (single-profile compatibility preserved)
         if (hasTrusted && connectedProfileIds().length > 1) {
-          const trustedTarget = resolveTarget(trustedProfileId);
+          const trustedTarget = resolveEffectiveTargetForTrusted(trustedProfileId);
           if (!trustedTarget.error) {
             ws = trustedTarget.ws;
             effectiveProfileId = trustedProfileId;
@@ -659,7 +751,7 @@ function createGatewayServer({
         });
 
         ws.send(JSON.stringify(extensionPayload));
-        console.log(`[Gateway] Forwarded command: ID=${rpcId} | Method=${method} | profile=${effectiveProfileId || '(single)'}`);
+        console.log(`[Gateway] Forwarded command: ID=${rpcId} | Method=${method}`);
       });
     } else if (req.method === 'POST' && req.url === '/interactive/receipts/verify') {
       if (!tokenMatches(extractToken(req), token)) {
@@ -918,7 +1010,13 @@ function createGatewayServer({
             try { existing.close(); } catch { /* already closed */ }
           }
           extensions.set(profId, ws);
-          console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${profId} | email=${ws._profileEmail} | name=${ws._profileName}`);
+          let logProfile = '[redacted]';
+          if (runtime && runtime.physicalRouteMap) {
+            for (const [alias, phys] of runtime.physicalRouteMap.entries()) {
+              if (phys === profId) { logProfile = alias; break; }
+            }
+          }
+          console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${logProfile} | email=${ws._profileEmail} | name=${ws._profileName}`);
         } else if (method === 'heartbeat' || method === 'pong') {
           // Silent keep-alive traffic
         } else if (method === 'downloadStarted' || method === 'downloadChanged') {
@@ -936,7 +1034,13 @@ function createGatewayServer({
       if (ws._profileId && extensions.get(ws._profileId) === ws) {
         extensions.delete(ws._profileId);
       }
-      console.log(`[Gateway] Chrome Extension disconnected | profile=${ws._profileId || '(unidentified)'}`);
+      let logProfile = '[redacted]';
+      if (runtime && runtime.physicalRouteMap && ws._profileId) {
+        for (const [alias, phys] of runtime.physicalRouteMap.entries()) {
+          if (phys === ws._profileId) { logProfile = alias; break; }
+        }
+      }
+      console.log(`[Gateway] Chrome Extension disconnected | profile=${logProfile}`);
 
       for (const [rpcId, pending] of pendingHttpRequests) {
         if (pending.ws === ws) {

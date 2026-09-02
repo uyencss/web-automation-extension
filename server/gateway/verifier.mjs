@@ -124,12 +124,36 @@ export function extractExecutedOrigin(params) {
 }
 
 export class GatewayVerifier {
-  constructor({ publicKey = null, keyId = null, expectedPhase = null, permitStore = new PermitStore(), mode = 'enforce' } = {}) {
+  constructor({ publicKey = null, keyId = null, expectedPhase = null, permitStore = new PermitStore(), mode = 'enforce', physicalRouteMap = null, routeMap = null, aliasToPhysicalMap = null } = {}) {
     this.publicKey = publicKey;
     this.keyId = keyId || null;
     this.expectedPhase = expectedPhase || null;
     this.permitStore = permitStore;
     this.mode = mode; // off | observe | enforce
+    const rawMap = physicalRouteMap || routeMap || aliasToPhysicalMap || null;
+    if (rawMap instanceof Map) {
+      this.physicalRouteMap = rawMap;
+    } else if (rawMap && typeof rawMap === 'object') {
+      this.physicalRouteMap = new Map(Object.entries(rawMap));
+    } else {
+      this.physicalRouteMap = new Map();
+    }
+  }
+
+  _isPhysicalRouteAllowed(profileId, context, permit) {
+    if (!profileId || typeof profileId !== 'string') return false;
+    if (!this.physicalRouteMap || this.physicalRouteMap.size === 0) return false;
+    // Exact match only, no pattern
+    const logicals = new Set();
+    if (context?.profileAlias && typeof context.profileAlias === 'string') logicals.add(context.profileAlias);
+    if (context?.profileId && typeof context.profileId === 'string') logicals.add(context.profileId);
+    if (permit?.profileAlias && typeof permit.profileAlias === 'string') logicals.add(permit.profileAlias);
+    if (permit?.profileId && typeof permit.profileId === 'string') logicals.add(permit.profileId);
+    for (const logical of logicals) {
+      const phys = this.physicalRouteMap.get(logical);
+      if (phys && phys === profileId) return true;
+    }
+    return false;
   }
 
   classifyTool(tool, params) {
@@ -281,19 +305,17 @@ export class GatewayVerifier {
         return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
       }
 
-      // Profile binding checks with effective profileId
+      // Profile binding checks with effective profileId (logical or physical via local route map)
       if (profileId) {
-        if (context.profileId && profileId !== context.profileId && profileId !== context.profileAlias) {
-          return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
-        }
-        if (context.profileAlias && profileId !== context.profileAlias && profileId !== context.profileId) {
-          return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
-        }
-        if (permit.profileAlias && profileId !== permit.profileAlias && profileId !== permit.profileId) {
-          return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
-        }
-        if (permit.profileId && profileId !== permit.profileId && profileId !== permit.profileAlias) {
-          return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
+        let logicalOk = true;
+        if (context.profileId && profileId !== context.profileId && profileId !== context.profileAlias) logicalOk = false;
+        if (logicalOk && context.profileAlias && profileId !== context.profileAlias && profileId !== context.profileId) logicalOk = false;
+        if (logicalOk && permit.profileAlias && profileId !== permit.profileAlias && profileId !== permit.profileId) logicalOk = false;
+        if (logicalOk && permit.profileId && profileId !== permit.profileId && profileId !== permit.profileAlias) logicalOk = false;
+        if (!logicalOk) {
+          if (!this._isPhysicalRouteAllowed(profileId, context, permit)) {
+            return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
+          }
         }
       }
 
@@ -357,11 +379,13 @@ export class GatewayVerifier {
         return this.deny('EXECUTION_KEY_MISMATCH', actionClass);
       }
     } else if (profileId) {
-      if (permit.profileAlias && profileId !== permit.profileAlias && profileId !== permit.profileId) {
-        return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
-      }
-      if (permit.profileId && profileId !== permit.profileId && profileId !== permit.profileAlias) {
-        return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
+      let logicalOk = true;
+      if (permit.profileAlias && profileId !== permit.profileAlias && profileId !== permit.profileId) logicalOk = false;
+      if (logicalOk && permit.profileId && profileId !== permit.profileId && profileId !== permit.profileAlias) logicalOk = false;
+      if (!logicalOk) {
+        if (!this._isPhysicalRouteAllowed(profileId, null, permit)) {
+          return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
+        }
       }
     }
 
