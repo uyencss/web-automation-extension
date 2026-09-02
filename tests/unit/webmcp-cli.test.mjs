@@ -1955,7 +1955,7 @@ test('webmcp project reports a clear install hint when the runner CLI is unavail
   assert.match(result.stderr, /WEBMCP_RUNNER_BIN/);
 });
 
-test('webmcp project new --template creates a template-backed v2 project', () => {
+test('webmcp project new --template creates a template-backed v3 project', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-new-'));
   const webmcpHome = path.join(home, '.webmcp');
   const env = {
@@ -1977,7 +1977,7 @@ test('webmcp project new --template creates a template-backed v2 project', () =>
   assert.equal(payload.data.workspace.root, at);
   assert.equal(existsSync(path.join(at, 'PROJECT.md')), true);
   const manifest = JSON.parse(readFileSync(path.join(at, 'webmcp.project.json'), 'utf8'));
-  assert.equal(manifest.schema, 'webmcp-project/2');
+  assert.equal(manifest.schema, 'webmcp-project/3');
   assert.equal(manifest.template.id, 'test-music');
   assert.deepEqual(manifest.agent, {
     skill: 'webmcp',
