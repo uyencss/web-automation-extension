@@ -15,7 +15,10 @@ const __dirname = path.dirname(__filename);
 
 const { getCommandGroups, listCommands } = require('../catalog/command-catalog.js');
 
-const PORT = Number(process.env.WEBMCP_GATEWAY_PORT || process.env.PORT || 7865);
+// Preserve an explicit port of 0 so callers/tests can request an ephemeral
+// listener. `||` would treat 0 as absent and silently fall back to 7865.
+const configuredPort = process.env.WEBMCP_GATEWAY_PORT ?? process.env.PORT;
+const PORT = Number(configuredPort == null || configuredPort === '' ? 7865 : configuredPort);
 const HOST = process.env.WEBMCP_GATEWAY_HOST || '127.0.0.1';
 const TOKEN = process.env.WEBMCP_GATEWAY_TOKEN || '';
 const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
@@ -813,6 +816,11 @@ function createGatewayServer({
       writeJson(res, 404, { error: 'Not Found. Exposes GET /health and POST /api for automation.' });
     }
   });
+  const activeHttpSockets = new Set();
+  server.on('connection', (socket) => {
+    activeHttpSockets.add(socket);
+    socket.once('close', () => activeHttpSockets.delete(socket));
+  });
 
   // ── WebSocket Server ─────────────────────────────────────────
   const wss = new WebSocketServer({ server });
@@ -1125,6 +1133,17 @@ function createGatewayServer({
 
     await new Promise((resolve) => {
       wss.close(() => {
+        // `server.close()` stops accepting new connections but can wait for
+        // HTTP keep-alive sockets indefinitely. A foreground CLI must be able
+        // to finish SIGTERM shutdown even when a health/API client kept its
+        // socket open.
+        if (typeof server.closeAllConnections === 'function') {
+          server.closeAllConnections();
+        } else if (typeof server.closeIdleConnections === 'function') {
+          server.closeIdleConnections();
+        } else {
+          for (const socket of activeHttpSockets) socket.destroy();
+        }
         server.close(() => {
           resolve();
         });

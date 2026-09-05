@@ -44,11 +44,21 @@ function waitForListening(child, timeoutMs = 8000) {
 }
 
 async function stopChild(child) {
-  if (child.exitCode !== null) return;
-  const exited = new Promise((resolve) => child.once('exit', resolve));
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const waitForExit = (timeoutMs) => Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    sleep(timeoutMs),
+  ]);
   child.kill('SIGTERM');
-  await Promise.race([exited, sleep(3000)]);
-  if (child.exitCode === null) child.kill('SIGKILL');
+  await waitForExit(3000);
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL');
+    await waitForExit(1000);
+  }
+  assert.ok(
+    child.exitCode !== null || child.signalCode !== null,
+    'gateway child must exit during test teardown',
+  );
 }
 
 test('webmcp gateway start owns a foreground server and exposes health', async (t) => {
@@ -59,13 +69,18 @@ test('webmcp gateway start owns a foreground server and exposes health', async (
       NODE_ENV: 'test',
       WEBMCP_GATEWAY_HOST: '127.0.0.1',
       WEBMCP_GATEWAY_PORT: '0',
+      PORT: '7999',
       WEBMCP_GATEWAY_TOKEN: 'cli-start-test-token',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  t.after(() => stopChild(child));
+  t.after(async () => {
+    await stopChild(child);
+  });
 
   const { port } = await waitForListening(child);
+  assert.ok(port > 0, 'gateway must report the bound port');
+  assert.notEqual(port, 7999, 'explicit port 0 must not fall back to PORT');
   const response = await fetch(`http://127.0.0.1:${port}/health`, {
     headers: { Authorization: 'Bearer cli-start-test-token' },
   });
