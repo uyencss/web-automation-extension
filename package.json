@@ -21,6 +21,7 @@
     "./chrome-launcher": "./chrome-launcher/index.js",
     "./package.json": "./package.json",
     "./server/gateway_server.js": "./server/gateway_server.js",
+    "./server/gateway/coordinator-dispatcher.mjs": "./server/gateway/coordinator-dispatcher.mjs",
     "./server/mcp_server.mjs": "./server/mcp_server.mjs",
     "./server/mcp-tool-catalog.mjs": "./server/mcp-tool-catalog.mjs"
   },
