@@ -53,7 +53,7 @@ const KNOWN_RAW_METHODS = new Set([
   'waitForStable', 'startConsoleCapture', 'stopConsoleCapture', 'readConsoleMessages',
   'clearConsoleMessages', 'listDownloadEvents', 'clearDownloadEvents', 'dispatchClick',
   'moveMouse', 'pressKey', 'typeText', 'scroll', 'hover', 'selectOption', 'getCookies',
-  'setCookie', 'deleteCookie', 'getLocalStorage', 'setLocalStorage', 'listWindows',
+  'setCookie', 'deleteCookie', 'deleteCookies', 'getLocalStorage', 'setLocalStorage', 'listWindows',
   'createWindow', 'setViewport', 'resetViewport', 'ping', 'getExtensionInfo',
   'list_profiles', 'set_profile_name',
 ]);

@@ -858,7 +858,7 @@ test('gateway HTTP: valid trusted forwarding vs tampered deny-before-forward, no
   assert.equal(rValid.status, 200);
   assert.equal(fakeExt.forwarded.length, 1);
   const forwarded = fakeExt.forwarded[0];
-  assert.equal(forwarded.method, 'browser_navigate');
+  assert.equal(forwarded.method, 'navigate');
   assert.equal(JSON.stringify(forwarded).includes('leak'), false, 'forwarded payload must not leak permit/token material');
   assert.equal(forwarded.params.permit, undefined);
   assert.equal(forwarded.params.signature, undefined);

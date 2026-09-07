@@ -226,6 +226,21 @@ function makeFakeExtension(port, profileId, { behavior = 'success' } = {}) {
       ws.send(JSON.stringify({ jsonrpc:'2.0', id: msg.id, result: { result: { content:[{text: JSON.stringify({error:true, message:'page tool failed'}) }]} }}));
       return;
     }
+    if (msg.method === 'batch') {
+      const actions = Array.isArray(msg.params?.actions) ? msg.params.actions : [];
+      ws.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: msg.id,
+        result: {
+          total: actions.length,
+          executed: actions.length,
+          success: true,
+          errors: 0,
+          results: actions.map((action, index) => ({ index, method: action.method, ok: true, result: { success: true } })),
+        },
+      }));
+      return;
+    }
     ws.send(JSON.stringify({ jsonrpc:'2.0', id: msg.id, result: { success:true, echoedMethod: msg.method, echoedParams: msg.params }}));
   });
   return { ws, forwarded };

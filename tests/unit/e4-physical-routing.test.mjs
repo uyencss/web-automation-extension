@@ -192,6 +192,21 @@ function makeFakeExtension(port, profileId) {
     const msg = JSON.parse(raw.toString());
     if (!('id' in msg)) return;
     forwarded.push(msg);
+    if (msg.method === 'batch') {
+      const actions = Array.isArray(msg.params?.actions) ? msg.params.actions : [];
+      ws.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: msg.id,
+        result: {
+          total: actions.length,
+          executed: actions.length,
+          success: actions.length,
+          errors: 0,
+          results: actions.map((action, index) => ({ index, method: action.method, ok: true, result: { success: true } })),
+        },
+      }));
+      return;
+    }
     ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { success: true, echoedMethod: msg.method, echoedParams: msg.params } }));
   });
   return { ws, forwarded };
@@ -694,7 +709,7 @@ test('e2e: no physical/secret leakage in batch forwarded child params', async (t
   assert.equal(fwdStr.includes('secretToken'), false);
   assert.equal(fwdStr.includes('apiKey'), false);
   // Ensure forwarded actions are canonical {method, params}
-  assert.deepEqual(fwd.actions[0], { method: 'browser_navigate', params: { url: 'https://example.test' } });
+  assert.deepEqual(fwd.actions[0], { method: 'navigate', params: { url: 'https://example.test' } });
 });
 
 test('resolver: env priority WEBMCP_DISPATCHER_CONFIG > WEBMCP_CONFIG > WEBMCP_HOME', () => {

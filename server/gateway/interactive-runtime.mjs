@@ -174,7 +174,7 @@ export class InteractiveRuntime {
     return receipt;
   }
 
-  _buildReceiptBase({ permit, context, actionClass, attempt, outcome, sequence, method, params, targetOrigin, result, children = null }) {
+  _buildReceiptBase({ permit, context, actionClass, attempt, outcome, sequence, method, params, targetOrigin, result, children = null, decision = null }) {
     const normalizedTarget = normalizeTargetOriginForReceipt(targetOrigin) || deriveTargetOrigin({ targetOrigin, params });
     const safeTarget = normalizedTarget || null;
     // Use digestAction helper indirectly via createSafeReceipt, but compute here for explicit control
@@ -211,6 +211,7 @@ export class InteractiveRuntime {
       targetOrigin: safeTarget,
       resultDigest,
       evidence,
+      decision,
       reason: null,
       children,
     });
@@ -234,7 +235,7 @@ export class InteractiveRuntime {
     });
   }
 
-  createFailedReceipt({ permit, context, method, params, targetOrigin, result, sequence = 1, reason = null, children = null }) {
+  createFailedReceipt({ permit, context, method, params, targetOrigin, result, sequence = 1, reason = null, children = null, decision = 'deny' }) {
     const actionClass = this.verifier.classifyTool(method, params);
     const receipt = this._buildReceiptBase({
       permit,
@@ -248,6 +249,7 @@ export class InteractiveRuntime {
       targetOrigin,
       result,
       children,
+      decision: 'deny',
     });
     // Attach reason without affecting digest? Create new receipt with reason via createSafeReceipt then re-store
     // Since _buildReceiptBase already stored, we need to patch reason safely by creating a new receipt with reason
@@ -283,6 +285,7 @@ export class InteractiveRuntime {
         targetOrigin: receipt.targetOrigin,
         resultDigest: receipt.resultDigest,
         evidence: receipt.evidence,
+        decision,
         reason,
         children: receipt.children,
       });
@@ -293,7 +296,7 @@ export class InteractiveRuntime {
     return receipt;
   }
 
-  createIndeterminateReceipt({ permit, context, method, params, targetOrigin, sequence = 1, reason = null, children = null }) {
+  createIndeterminateReceipt({ permit, context, method, params, targetOrigin, sequence = 1, reason = null, children = null, decision = 'deny' }) {
     const actionClass = this.verifier.classifyTool(method, params);
     const receipt = this._buildReceiptBase({
       permit,
@@ -307,6 +310,7 @@ export class InteractiveRuntime {
       targetOrigin,
       result: null,
       children,
+      decision: 'deny',
     });
     if (reason) {
       const withReason = createSafeReceipt({
@@ -340,6 +344,7 @@ export class InteractiveRuntime {
         targetOrigin: receipt.targetOrigin,
         resultDigest: receipt.resultDigest,
         evidence: receipt.evidence,
+        decision,
         reason,
         children: receipt.children,
       });
@@ -435,7 +440,7 @@ export class InteractiveRuntime {
     // Aggregate browser.batch receipt - non-counted, sequence null (using max sequence +1 but flagged)
     // Spec says non-counted aggregate; we assign sequence = children.length + 1 but mark as aggregate
     const aggregate = createSafeReceipt({
-      permitId: permit?.permitId || context?.runId || null,
+      permitId: permit?.permitId || null,
       runId: permit?.runId || context?.runId || null,
       projectId: permit?.projectId || context?.projectId || null,
       profileAlias: permit?.profileAlias || context?.profileAlias || null,
@@ -465,6 +470,87 @@ export class InteractiveRuntime {
       targetOrigin: children[0]?.targetOrigin || null,
       resultDigest: digestResult({ receipts: children.length }),
       evidence: buildEvidence({ count: children.length }),
+      children,
+    });
+    this._storeReceipt(aggregate);
+    return { aggregate, children };
+  }
+
+  createBatchResultReceipts({ permit, context, actions, results }) {
+    const children = [];
+    const resultArray = Array.isArray(results) ? results : [];
+    for (let i = 0; i < actions.length; i++) {
+      const act = actions[i];
+      const method = act.method || act.tool || 'unknown';
+      const expectedMethod = act.forwardedMethod || method;
+      const params = act.params || {};
+      const targetOrigin = act.targetOrigin || deriveTargetOrigin({ params }) || null;
+      const childResult = resultArray[i] ?? null;
+      if (
+        childResult &&
+        childResult.ok === true &&
+        childResult.index === i &&
+        childResult.method === expectedMethod
+      ) {
+        children.push(this._buildReceiptBase({
+          permit,
+          context,
+          actionClass: this.verifier.classifyTool(method, params),
+          attempt: 'attempted',
+          outcome: 'applied',
+          sequence: i + 1,
+          method,
+          params,
+          targetOrigin,
+          result: childResult,
+        }));
+        continue;
+      }
+      children.push(this.createFailedReceipt({
+        permit,
+        context,
+        method,
+        params,
+        targetOrigin,
+        result: childResult,
+        sequence: i + 1,
+        reason: 'BATCH_CHILD_FAILED',
+      }));
+    }
+
+    const aggregate = createSafeReceipt({
+      permitId: permit?.permitId || null,
+      runId: permit?.runId || context?.runId || null,
+      projectId: permit?.projectId || context?.projectId || null,
+      profileAlias: permit?.profileAlias || context?.profileAlias || null,
+      profileId: permit?.profileId || context?.profileId || null,
+      claimGeneration: permit?.claimGeneration ?? context?.claimGeneration ?? null,
+      claimDigest: permit?.claimDigest || context?.claimDigest || null,
+      fenceEpoch: context?.fenceEpoch ?? null,
+      phaseId: permit?.phaseId || context?.phaseId || null,
+      bindingId: permit?.bindingId || context?.bindingId || null,
+      bindingRevision: permit?.bindingRevision ?? context?.bindingRevision ?? null,
+      bindingDigest: permit?.bindingDigest || context?.bindingDigest || null,
+      policyRevision: permit?.policyRevision || context?.policyRevision || null,
+      automationStoreRevision: permit?.automationStoreRevision ?? context?.automationStoreRevision ?? null,
+      automationStoreDigest: permit?.automationStoreDigest || context?.automationStoreDigest || null,
+      siteStoreRevision: permit?.siteStoreRevision ?? context?.siteStoreRevision ?? null,
+      siteStoreDigest: permit?.siteStoreDigest || context?.siteStoreDigest || null,
+      stateVersion: permit?.stateVersion ?? context?.stateVersion ?? null,
+      planRevision: permit?.planRevision ?? context?.planRevision ?? null,
+      planDigest: permit?.planDigest || context?.planDigest || null,
+      instructionDigest: permit?.instructionDigest || context?.instructionDigest || null,
+      actionClass: 'browser.batch',
+      attempt: 'attempted',
+      outcome: 'failed',
+      sequence: 1,
+      method: 'batch',
+      params: { count: actions.length },
+      targetOrigin: children[0]?.targetOrigin || null,
+      resultDigest: digestResult({ results: resultArray.length }),
+      evidence: buildEvidence({ count: children.length, failed: children.filter((child) => child.outcome === 'failed').length }),
+      decision: 'deny',
+      reason: 'BATCH_CHILD_FAILED',
       children,
     });
     this._storeReceipt(aggregate);
@@ -615,25 +701,27 @@ export class InteractiveRuntime {
   enforceRequest({
     method,
     params = {},
+    verificationParams = params,
     profileId = null,
     permit = null,
     targetOrigin = null,
     now = new Date(),
   } = {}) {
     const context = this.getCurrentContext();
+    const authParams = verificationParams || params || {};
 
     let verifierResult;
 
     // Fail-closed check when in enforce or observe mode: require active context and valid permit
     if (this.mode !== 'off' && !context) {
-      const actionClass = this.verifier.classifyTool(method, params);
+      const actionClass = this.verifier.classifyTool(method, authParams);
       const reason = !permit ? 'EXECUTION_PERMIT_REQUIRED' : 'EXECUTION_CONTEXT_REQUIRED';
       const decision = this.mode === 'observe' ? 'would-deny' : 'deny';
       verifierResult = { decision, reason, actionClass };
     } else if (method === 'batch' || method === 'browser_batch') {
       verifierResult = this.verifier.verifyBatch({
         tool: method,
-        params,
+        params: authParams,
         permit,
         targetOrigin,
         profileId,
@@ -643,9 +731,9 @@ export class InteractiveRuntime {
     } else {
       verifierResult = this.verifier.verifyRequest({
         tool: method,
-        params,
+        params: authParams,
         permit,
-        targetOrigin: targetOrigin || params?.targetOrigin || params?.url || params?.sourceOrigin,
+        targetOrigin: targetOrigin || authParams?.targetOrigin || authParams?.url || authParams?.sourceOrigin,
         profileId,
         context,
         now,

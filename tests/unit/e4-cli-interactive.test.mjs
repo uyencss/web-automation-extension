@@ -252,6 +252,21 @@ function makeFakeExtension(port, profileId) {
     const msg = JSON.parse(raw.toString());
     if (!('id' in msg)) return;
     forwarded.push(msg);
+    if (msg.method === 'batch') {
+      const actions = Array.isArray(msg.params?.actions) ? msg.params.actions : [];
+      ws.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: msg.id,
+        result: {
+          total: actions.length,
+          executed: actions.length,
+          success: actions.length,
+          errors: 0,
+          results: actions.map((action, index) => ({ index, method: action.method, ok: true, result: { success: true } })),
+        },
+      }));
+      return;
+    }
     ws.send(
       JSON.stringify({
         jsonrpc: '2.0',
@@ -916,7 +931,7 @@ test('e2e: real gateway server with real unix socket trusted context and real HT
   });
   assert.equal(validRes.status, 200);
   const validBody = await validRes.json();
-  assert.equal(validBody.result.echoedMethod, 'browser_navigate');
+  assert.equal(validBody.result.echoedMethod, 'navigate');
   assert.ok(validBody.receipt);
   assert.equal(validBody.receipt.decision, 'allow');
   assert.equal(fakeExt.forwarded.length, 1, 'Extension received forwarded command');
@@ -2436,11 +2451,11 @@ test('P0-2 regression: batch rejects conflicting tool vs method and forwards can
   assert.equal(forwardedPayload.method, 'batch');
   assert.equal(forwardedPayload.params.actions.length, 2);
   assert.deepEqual(forwardedPayload.params.actions[0], {
-    method: 'browser_navigate',
+    method: 'navigate',
     params: { url: 'https://example.test' },
   });
   assert.deepEqual(forwardedPayload.params.actions[1], {
-    method: 'browser_click',
+    method: 'click',
     params: { url: 'https://example.test', selector: '#btn' },
   });
 });
