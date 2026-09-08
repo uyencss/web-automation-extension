@@ -746,8 +746,8 @@ function createGatewayServer({
           }
         }
 
-        if (durablePermit?.profileIdDigest && resolvedPhysicalProfileId
-          && profileIdBindingDigest(resolvedPhysicalProfileId) !== durablePermit.profileIdDigest) {
+        if (durablePermit && permit?.profileIdDigest && resolvedPhysicalProfileId
+          && profileIdBindingDigest(resolvedPhysicalProfileId) !== permit.profileIdDigest) {
           return writeJson(res, 403, {
             error: 'EXECUTION_PROFILE_BINDING_MISMATCH',
             decision: 'deny',
