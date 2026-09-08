@@ -259,6 +259,17 @@ function sanitizeResult(result) {
   return cloneJson(result ?? null);
 }
 
+function projectListToolsResult(result) {
+  if (!isPlainObject(result) || !Array.isArray(result.tools)) return result;
+  const tools = result.tools
+    .filter((entry) => isPlainObject(entry) && typeof entry.name === 'string' && PAGE_TOOL_NAME.test(entry.name))
+    .map((entry) => ({ name: entry.name }));
+  return Object.freeze({
+    ...(Number.isInteger(result.tabId) ? { tabId: result.tabId } : {}),
+    tools,
+  });
+}
+
 function brandCoordinatorDispatcher(dispatch) {
   const marker = Object.freeze({
     owner: 'coordinator',
@@ -359,7 +370,11 @@ export function createCoordinatorDispatcher({
       fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_UNAVAILABLE, 'coordinator gateway request failed');
     }
     const gatewayPayload = await readGatewayPayload(response);
-    const safeResult = gatewayPayload.ok ? sanitizeResult(gatewayPayload.result) : null;
+    const safeResult = gatewayPayload.ok
+      ? sanitizeResult(request.tool === 'webmcp.listTools'
+        ? projectListToolsResult(gatewayPayload.result)
+        : gatewayPayload.result)
+      : null;
     if (receiptHandler) {
       if (gatewayPayload.ok && !gatewayPayload.receipt) {
         fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator gateway returned no execution receipt');

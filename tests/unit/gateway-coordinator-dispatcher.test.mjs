@@ -104,6 +104,25 @@ test('coordinator dispatcher forwards the Gateway receipt only to the constructi
   assert.equal(Object.hasOwn(result, 'receipt'), false);
 });
 
+test('coordinator dispatcher projects WebMCP listTools to names before worker delivery', async () => {
+  const dispatcher = createCoordinatorDispatcher({
+    gatewayUrl: 'http://127.0.0.1:7865',
+    permitProvider: () => permit(),
+    targetOrigin: 'https://example.test',
+    fetchImpl: async () => new Response(JSON.stringify({
+      result: {
+        tabId: 4,
+        tools: [{ name: 'read_summary', description: 'safe', inputSchema: { properties: { url: { type: 'string' } } } }],
+      },
+      receipt: { receiptId: 'receipt_gateway_02', outcome: 'applied' },
+    }), { status: 200 }),
+  });
+
+  const result = await dispatcher.dispatch(request('webmcp.listTools', {}));
+
+  assert.deepEqual(result, { tabId: 4, tools: [{ name: 'read_summary' }] });
+});
+
 test('coordinator dispatcher rejects direct browser selectors, authority in worker input, and unlisted tools', async () => {
   const dispatcher = createCoordinatorDispatcher({
     permitProvider: () => permit(),
