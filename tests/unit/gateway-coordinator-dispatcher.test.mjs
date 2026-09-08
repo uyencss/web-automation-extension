@@ -123,6 +123,22 @@ test('coordinator dispatcher projects WebMCP listTools to names before worker de
   assert.deepEqual(result, { tabId: 4, tools: [{ name: 'read_summary' }] });
 });
 
+test('coordinator dispatcher projects page metadata without returning the page URL', async () => {
+  const dispatcher = createCoordinatorDispatcher({
+    gatewayUrl: 'http://127.0.0.1:7865',
+    permitProvider: () => permit(),
+    targetOrigin: 'https://example.test',
+    fetchImpl: async () => new Response(JSON.stringify({
+      result: { tabId: 4, result: { title: 'Flow', url: 'https://example.test/private' } },
+      receipt: { receiptId: 'receipt_gateway_03', outcome: 'applied' },
+    }), { status: 200 }),
+  });
+
+  const result = await dispatcher.dispatch(request('webmcp.invokeTool', { toolName: 'get_page_metadata' }));
+
+  assert.deepEqual(result, { tabId: 4, result: { title: 'Flow' } });
+});
+
 test('coordinator dispatcher rejects direct browser selectors, authority in worker input, and unlisted tools', async () => {
   const dispatcher = createCoordinatorDispatcher({
     permitProvider: () => permit(),

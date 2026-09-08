@@ -270,6 +270,19 @@ function projectListToolsResult(result) {
   });
 }
 
+function projectMetadataResult(result) {
+  if (!isPlainObject(result)) return result;
+  const nested = isPlainObject(result.result) ? result.result : null;
+  return Object.freeze({
+    ...(Number.isInteger(result.tabId) ? { tabId: result.tabId } : {}),
+    ...(nested ? {
+      result: {
+        ...(typeof nested.title === 'string' ? { title: nested.title } : {}),
+      },
+    } : {}),
+  });
+}
+
 function brandCoordinatorDispatcher(dispatch) {
   const marker = Object.freeze({
     owner: 'coordinator',
@@ -373,7 +386,9 @@ export function createCoordinatorDispatcher({
     const safeResult = gatewayPayload.ok
       ? sanitizeResult(request.tool === 'webmcp.listTools'
         ? projectListToolsResult(gatewayPayload.result)
-        : gatewayPayload.result)
+        : request.tool === 'webmcp.invokeTool' && request.input?.toolName === 'get_page_metadata'
+          ? projectMetadataResult(gatewayPayload.result)
+          : gatewayPayload.result)
       : null;
     if (receiptHandler) {
       if (gatewayPayload.ok && !gatewayPayload.receipt) {
