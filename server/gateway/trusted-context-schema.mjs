@@ -3,9 +3,16 @@ import { createHash, createPublicKey, randomBytes } from 'node:crypto';
 export const SCHEMAS = Object.freeze({
   TRUSTED_CONTEXT: 'webmcp-trusted-context/1',
   PERMIT: 'webmcp-execution-permit/1',
+  DURABLE_PERMIT: 'webmcp-durable-execution-permit/1',
   RECEIPT: 'webmcp-execution-receipt/1',
   ACK: 'webmcp-trusted-context-ack/1',
 });
+
+export function permitDigestDomain(permit) {
+  return permit?.schema === SCHEMAS.DURABLE_PERMIT
+    ? 'webmcp-digest-v1:durable-permit'
+    : 'webmcp-digest-v1:permit';
+}
 
 export const RECEIPT_DIGEST_DOMAIN = 'webmcp-digest-v1:tool-receipt';
 export const ACTION_DIGEST_DOMAIN = 'webmcp-digest-v1:interactive-action';
@@ -373,7 +380,8 @@ export function validatePermitStructure(permit) {
     return { ok: false, reason: 'EXECUTION_PERMIT_REQUIRED', error: 'Permit must be an object' };
   }
 
-  if (permit.schema !== SCHEMAS.PERMIT) {
+  const durablePermit = permit.schema === SCHEMAS.DURABLE_PERMIT;
+  if (permit.schema !== SCHEMAS.PERMIT && !durablePermit) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: `Expected schema ${SCHEMAS.PERMIT}` };
   }
 
@@ -401,7 +409,7 @@ export function validatePermitStructure(permit) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'profileAlias is required' };
   }
 
-  if (typeof permit.profileId !== 'string' || !permit.profileId.trim()) {
+  if (!durablePermit && (typeof permit.profileId !== 'string' || !permit.profileId.trim())) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'profileId is required' };
   }
 
@@ -417,19 +425,19 @@ export function validatePermitStructure(permit) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'bindingDigest must be a valid sha256 digest' };
   }
 
-  if (typeof permit.automationStoreRevision !== 'number' || !Number.isInteger(permit.automationStoreRevision) || permit.automationStoreRevision < 0) {
+  if (!durablePermit && (typeof permit.automationStoreRevision !== 'number' || !Number.isInteger(permit.automationStoreRevision) || permit.automationStoreRevision < 0)) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'automationStoreRevision must be non-negative integer' };
   }
 
-  if (typeof permit.automationStoreDigest !== 'string' || !SHA256_PATTERN.test(permit.automationStoreDigest)) {
+  if (!durablePermit && (typeof permit.automationStoreDigest !== 'string' || !SHA256_PATTERN.test(permit.automationStoreDigest))) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'automationStoreDigest must be a valid sha256 digest' };
   }
 
-  if (typeof permit.siteStoreRevision !== 'number' || !Number.isInteger(permit.siteStoreRevision) || permit.siteStoreRevision < 0) {
+  if (!durablePermit && (typeof permit.siteStoreRevision !== 'number' || !Number.isInteger(permit.siteStoreRevision) || permit.siteStoreRevision < 0)) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'siteStoreRevision must be non-negative integer' };
   }
 
-  if (typeof permit.siteStoreDigest !== 'string' || !SHA256_PATTERN.test(permit.siteStoreDigest)) {
+  if (!durablePermit && (typeof permit.siteStoreDigest !== 'string' || !SHA256_PATTERN.test(permit.siteStoreDigest))) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'siteStoreDigest must be a valid sha256 digest' };
   }
 

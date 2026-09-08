@@ -6,6 +6,7 @@ import {
   toKeyObject,
   keysMatch,
   validatePermitStructure,
+  permitDigestDomain,
   isNormalizedHttpOrigin,
 } from './trusted-context-schema.mjs';
 
@@ -191,7 +192,7 @@ export class GatewayVerifier {
     if (!keyObj) return false;
 
     const { permitDigest, signature: _sig, ...projection } = permit;
-    const expectedDigest = digestCanonical('webmcp-digest-v1:permit', projection);
+    const expectedDigest = digestCanonical(permitDigestDomain(permit), projection);
 
     // Reject missing or altered permitDigest
     if (!permitDigest || permitDigest !== expectedDigest) {
@@ -203,7 +204,7 @@ export class GatewayVerifier {
 
     // Strict single frozen canonical/domain contract: 'webmcp-digest-v1:permit\n' + canonicalJson
     try {
-      const data = Buffer.from(`webmcp-digest-v1:permit\n${canonical}`, 'utf8');
+      const data = Buffer.from(`${permitDigestDomain(permit)}\n${canonical}`, 'utf8');
       return verify(null, data, keyObj, sig);
     } catch {
       return false;
@@ -240,7 +241,7 @@ export class GatewayVerifier {
 
     // Check altered permitDigest explicitly
     const { permitDigest, signature: _sig, ...projection } = permit;
-    const expectedDigest = digestCanonical('webmcp-digest-v1:permit', projection);
+      const expectedDigest = digestCanonical(permitDigestDomain(permit), projection);
     if (!permitDigest || permitDigest !== expectedDigest) {
       return this.deny('EXECUTION_PERMIT_FORGED', actionClass);
     }

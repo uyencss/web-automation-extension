@@ -179,6 +179,51 @@ function buildSignedPermit({
   return { ...base, signature, permitDigest };
 }
 
+function buildSignedDurableRunnerPermit({ keys = makeKeyPair(), ...overrides } = {}) {
+  const wire = buildSignedPermit({
+    keys,
+    actionClasses: ['browser.invokeTool'],
+    ...overrides,
+  });
+  const {
+    profileId: _profileId,
+    automationStoreRevision: _automationStoreRevision,
+    automationStoreDigest: _automationStoreDigest,
+    siteStoreRevision: _siteStoreRevision,
+    siteStoreDigest: _siteStoreDigest,
+    signature: _signature,
+    permitDigest: _permitDigest,
+    ...base
+  } = wire;
+  const durable = { ...base, schema: SCHEMAS.DURABLE_PERMIT };
+  const canonical = canonicalJson(durable);
+  durable.signature = sign(
+    null,
+    Buffer.from(`webmcp-digest-v1:durable-permit\n${canonical}`, 'utf8'),
+    keys.privateKey,
+  ).toString('hex');
+  const { signature: _durableSignature, ...durableProjection } = durable;
+  durable.permitDigest = digestCanonical('webmcp-digest-v1:durable-permit', durableProjection);
+  return { permit: durable, keys };
+}
+
+test('Gateway accepts a construction-owned durable Runner permit at the coordinator wire seam', () => {
+  const { permit, keys } = buildSignedDurableRunnerPermit();
+  const verifier = new GatewayVerifier({
+    publicKey: keys.rawPublicKeyHex,
+    keyId: keys.keyId,
+    mode: 'enforce',
+  });
+  const result = verifier.verifyRequest({
+    tool: 'webmcp.invokeTool',
+    params: { targetOrigin: 'https://example.test' },
+    permit,
+    profileId: 'interactive-profile',
+  });
+  assert.equal(result.decision, 'allow');
+  assert.equal(result.actionClass, 'browser.invokeTool');
+});
+
 function sendSocketMessage(socketPath, messageObj) {
   return new Promise((resolve, reject) => {
     const client = net.createConnection(socketPath, () => {
