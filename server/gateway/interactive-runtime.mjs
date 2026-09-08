@@ -8,6 +8,7 @@ import {
   digestAction,
   digestResult,
   buildEvidence,
+  buildCoordinatorEvidence,
   digestCanonical,
   canonicalJson,
   RECEIPT_DIGEST_DOMAIN,
@@ -179,7 +180,9 @@ export class InteractiveRuntime {
     const safeTarget = normalizedTarget || null;
     // Use digestAction helper indirectly via createSafeReceipt, but compute here for explicit control
     const resultDigest = result !== undefined && result !== null ? digestResult(result) : null;
-    const evidence = buildEvidence(result !== undefined ? result : null);
+    const evidence = permit?.schema === 'webmcp-durable-execution-permit/1'
+      ? buildCoordinatorEvidence(result !== undefined ? result : null)
+      : buildEvidence(result !== undefined ? result : null);
     const receipt = createSafeReceipt({
       permitId: permit?.permitId || null,
       runId: permit?.runId || context?.runId || null,

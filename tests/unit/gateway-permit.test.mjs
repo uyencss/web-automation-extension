@@ -810,6 +810,14 @@ test('InteractiveRuntime admits a durable Runner permit without the legacy conte
   assert.equal(r.decision, 'allow');
   assert.equal(r.actionClass, 'browser.invokeTool');
   assert.equal(r.receipt.fenceEpoch, permit.claimGeneration);
+  const applied = runtime.createAppliedReceipt({
+    permit,
+    method: 'webmcp.invokeTool',
+    params: { toolName: 'get_page_metadata' },
+    targetOrigin: 'https://example.test',
+    result: { result: { title: 'Flow' } },
+  });
+  assert.deepEqual(applied.evidence.types, ['json-rpc', 'interactive.evidence']);
 });
 
 test('durable receipt fence ignores a stale legacy context fence', () => {

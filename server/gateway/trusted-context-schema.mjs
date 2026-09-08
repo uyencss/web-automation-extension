@@ -90,6 +90,19 @@ export function buildEvidence(result) {
 }
 
 /**
+ * Evidence projection for the durable coordinator bridge. It retains the
+ * concrete result class (`result` or `json-rpc`) and adds the explicit
+ * coordinator observation marker only when a result was actually observed.
+ * The Runner may require this marker, but it never gets to invent it.
+ */
+export function buildCoordinatorEvidence(result) {
+  const observed = buildEvidence(result);
+  if (observed.types.length === 0) return observed;
+  const types = [...observed.types, 'interactive.evidence'];
+  return Object.freeze({ types, count: types.length, bytes: observed.bytes });
+}
+
+/**
  * Receipt-order digest for cross-package closure.
  */
 export function digestReceiptOrder(receipts) {
