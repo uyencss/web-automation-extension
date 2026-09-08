@@ -282,6 +282,24 @@ function writeJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+const EXTENSION_ERROR_MESSAGE_MAX = 512;
+const EXTENSION_ERROR_SECRET_PATTERN = /(?:bearer\s+|token[=:]\s*|secret[=:]\s*|password[=:]\s*|authorization[=:]\s*)[^\s,;]+/giu;
+
+function sanitizeExtensionError(error) {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return null;
+  const safe = {};
+  if (Number.isSafeInteger(error.code)) safe.code = error.code;
+  if (typeof error.message === 'string') {
+    const message = error.message
+      .replace(/[\u0000-\u001f\u007f]/gu, ' ')
+      .replace(EXTENSION_ERROR_SECRET_PATTERN, '[redacted]')
+      .slice(0, EXTENSION_ERROR_MESSAGE_MAX)
+      .trim();
+    if (message) safe.message = message;
+  }
+  return Object.keys(safe).length > 0 ? safe : null;
+}
+
 function listGatewayCommands() {
   return listCommands().filter((command) => command.group !== 'runner');
 }
@@ -1169,7 +1187,12 @@ function createGatewayServer({
           const batchActions = isBatch ? getBatchActions(pending.params) : null;
 
           if ('error' in msg) {
-            console.log(`[Gateway] Error response received for ID=${msg.id}`);
+            const extensionError = sanitizeExtensionError(msg.error);
+            console.log(
+              `[Gateway] Error response received for ID=${msg.id}`
+              + (extensionError?.code !== undefined ? ` code=${extensionError.code}` : '')
+              + (extensionError?.message ? ` message=${extensionError.message}` : ''),
+            );
             let finalReceipt = null;
             let receipts = null;
             if (isBatch && Array.isArray(batchActions)) {
@@ -1201,6 +1224,7 @@ function createGatewayServer({
               });
               writeJson(pending.res, 500, {
                 error: 'EXECUTION_FAILED',
+                ...(extensionError ? { extensionError } : {}),
                 receipt: agg,
                 receipts,
               });
@@ -1218,6 +1242,7 @@ function createGatewayServer({
             });
             writeJson(pending.res, 500, {
               error: 'EXECUTION_FAILED',
+              ...(extensionError ? { extensionError } : {}),
               receipt: finalReceipt,
             });
           } else {

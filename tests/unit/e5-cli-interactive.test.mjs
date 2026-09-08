@@ -320,6 +320,10 @@ test('live receipt failed for explicit JSON-RPC and page-tool failure', async (t
   assert.equal(body.receipt.attempt, 'attempted');
   assert.equal(body.receipt.outcome, 'failed');
   assert.equal(body.receipt.sequence, 1);
+  assert.deepEqual(body.extensionError, {
+    code: -32603,
+    message: 'simulated extension error',
+  });
   assert.ok(body.receipt.actionDigest.startsWith('sha256:'));
   assert.ok(body.receipt.resultDigest === null || body.receipt.resultDigest.startsWith('sha256:'));
   fakeErr.ws.close();
