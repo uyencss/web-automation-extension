@@ -283,7 +283,7 @@ function writeJson(res, statusCode, payload) {
 }
 
 const EXTENSION_ERROR_MESSAGE_MAX = 512;
-const EXTENSION_ERROR_SECRET_PATTERN = /(?:bearer\s+|token[=:]\s*|secret[=:]\s*|password[=:]\s*|authorization[=:]\s*)[^\s,;]+/giu;
+const EXTENSION_ERROR_SECRET_PATTERN = /(?:authorization[=:]\s*(?:bearer\s+)?|bearer\s+|token[=:]\s*|secret[=:]\s*|password[=:]\s*)[^\s,;]+/giu;
 
 function sanitizeExtensionError(error) {
   if (!error || typeof error !== 'object' || Array.isArray(error)) return null;

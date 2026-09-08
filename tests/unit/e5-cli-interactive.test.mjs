@@ -222,6 +222,10 @@ function makeFakeExtension(port, profileId, { behavior = 'success' } = {}) {
       ws.send(JSON.stringify({ jsonrpc:'2.0', id: msg.id, error: { code:-32603, message:'simulated extension error' }}));
       return;
     }
+    if (behavior === 'jsonrpc-secret-error') {
+      ws.send(JSON.stringify({ jsonrpc:'2.0', id: msg.id, error: { code:-32603, message:'Authorization: Bearer fixtureValue' }}));
+      return;
+    }
     if (behavior === 'page-tool-error') {
       ws.send(JSON.stringify({ jsonrpc:'2.0', id: msg.id, result: { result: { content:[{text: JSON.stringify({error:true, message:'page tool failed'}) }]} }}));
       return;
@@ -341,6 +345,35 @@ test('live receipt failed for explicit JSON-RPC and page-tool failure', async (t
   const body2 = await res2.json();
   assert.equal(body2.receipt.attempt, 'attempted');
   assert.equal(body2.receipt.outcome, 'failed');
+});
+
+test('Gateway redacts compound Authorization Bearer extension errors', async (t) => {
+  const keys = makeKeyPair();
+  const socketPath = path.join(os.tmpdir(), `e5-error-redaction-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.sock`);
+  const app = createGatewayServer({ port: 0, socketPath, publicKey: keys.publicKey, keyId: keys.keyId, interactiveMode: 'enforce', token: 'test-token', allowTestSeams: true });
+  const { port: actualPort } = await app.start();
+  t.after(async () => { await app.close(); });
+  const fakeExt = makeFakeExtension(actualPort, 'interactive-profile', { behavior: 'jsonrpc-secret-error' });
+  t.after(() => { try { fakeExt.ws.terminate(); } catch {} });
+  await waitFor(async () => app.connectedProfileIds().includes('interactive-profile'));
+  const { message: context } = buildSignedContext({ keys, fenceEpoch: 1 });
+  await sendSocketMessage(socketPath, context);
+  const permit = buildSignedPermit({ keys, claimGeneration: 1, nonce: 'nonce_redaction' });
+  const response = await fetch(`http://127.0.0.1:${actualPort}/api`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-token' },
+    body: JSON.stringify({
+      method: 'browser_navigate',
+      params: { url: 'https://example.test' },
+      profileId: 'interactive-profile',
+      permit,
+      targetOrigin: 'https://example.test',
+    }),
+  });
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.deepEqual(body.extensionError, { code: -32603, message: '[redacted]' });
+  assert.equal(JSON.stringify(body).includes('fixtureValue'), false);
 });
 
 test('live receipt indeterminate for timeout and disconnect', async (t)=>{
