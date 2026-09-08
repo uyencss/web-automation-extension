@@ -438,6 +438,11 @@ export function validatePermitStructure(permit) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'bindingDigest must be a valid sha256 digest' };
   }
 
+  if (durablePermit && permit.profileIdDigest !== undefined
+    && (typeof permit.profileIdDigest !== 'string' || !SHA256_PATTERN.test(permit.profileIdDigest))) {
+    return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'profileIdDigest must be a valid sha256 digest' };
+  }
+
   if (!durablePermit && (typeof permit.automationStoreRevision !== 'number' || !Number.isInteger(permit.automationStoreRevision) || permit.automationStoreRevision < 0)) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'automationStoreRevision must be non-negative integer' };
   }

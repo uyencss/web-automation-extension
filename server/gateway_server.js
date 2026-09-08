@@ -9,6 +9,7 @@ import { InteractiveRuntime } from './gateway/interactive-runtime.mjs';
 import { PermitStore } from './gateway/permit-store.mjs';
 import { TrustedContextChannel } from './gateway/trusted-context-channel.mjs';
 import { classifyTool } from './gateway/verifier.mjs';
+import { digestCanonical } from './gateway/trusted-context-schema.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -35,6 +36,11 @@ const TOKEN = process.env.WEBMCP_GATEWAY_TOKEN || '';
 const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
 const KEEPALIVE_PING_MS = Number(process.env.WEBMCP_GATEWAY_PING_MS || 15000);
 const MAX_DOWNLOAD_EVENTS_PER_PROFILE = Number(process.env.WEBMCP_DOWNLOAD_EVENT_LIMIT || 200);
+const PROFILE_ID_BINDING_DOMAIN = 'webmcp-digest-v1:profile-id-binding';
+
+function profileIdBindingDigest(profileId) {
+  return digestCanonical(PROFILE_ID_BINDING_DOMAIN, profileId);
+}
 
 // The verifier accepts stable MCP/wire aliases, while the extension dispatches
 // its concrete command names. Keep this translation at the post-verification
@@ -439,7 +445,7 @@ function createGatewayServer({
     return details;
   }
 
-  function resolveTarget(profileId, logicalHints = null) {
+  function resolveTarget(profileId, logicalHints = null, trustedPhysicalIds = null) {
     const ids = connectedProfileIds();
     if (ids.length === 0) {
       return { error: 'Chrome extension is not connected to the gateway', status: 503 };
@@ -451,6 +457,14 @@ function createGatewayServer({
       // extensions.get(profileId) exists. Missing/invalid map fails closed for interactive.
       const isInteractive = runtime.mode !== 'off' || (logicalHints && logicalHints.size > 0);
       if (isInteractive && logicalHints && logicalHints.size > 0) {
+        // Legacy signed contexts may bind a physical profile directly. That
+        // identity is trusted only when it came from the context itself; it
+        // must never be inferred from a request or treated as a logical alias.
+        if (trustedPhysicalIds?.has(profileId)) {
+          const wsTrusted = extensions.get(profileId);
+          if (wsTrusted && wsTrusted.readyState === 1) return { ws: wsTrusted, profileId };
+          return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
+        }
         const isLogicalHint = logicalHints.has(profileId);
         if (!isLogicalHint) {
           let allowed = false;
@@ -653,6 +667,7 @@ function createGatewayServer({
 
         // First resolve target to obtain effective profile ID
         let ws = null;
+        let resolvedPhysicalProfileId = null;
         let effectiveProfileId = profileId || params?.profileId || null;
         if (hasTrusted && connectedProfileIds().length > 1) effectiveProfileId = trustedProfileId;
 
@@ -661,11 +676,13 @@ function createGatewayServer({
         // a direct extension lookup authoritative.
         const ctxForHints = runtime.getCurrentContext();
         const logicalHints = new Set();
+        const trustedPhysicalIds = new Set();
         if (ctxForHints?.profileAlias && typeof ctxForHints.profileAlias === 'string') logicalHints.add(ctxForHints.profileAlias);
+        if (!durablePermit && ctxForHints?.profileId && typeof ctxForHints.profileId === 'string') trustedPhysicalIds.add(ctxForHints.profileId);
         if (permit?.profileAlias && typeof permit.profileAlias === 'string') logicalHints.add(permit.profileAlias);
 
         if (!isDownloadMethod) {
-          const target = resolveTarget(profileForResolve, logicalHints);
+          const target = resolveTarget(profileForResolve, logicalHints, trustedPhysicalIds);
           if (target.error) {
             // Create blocked receipt for no-target case
             let blockedReceipt = null;
@@ -710,6 +727,7 @@ function createGatewayServer({
             return writeJson(res, target.status, { error: target.error, receipt: blockedReceipt });
           }
           ws = target.ws;
+          resolvedPhysicalProfileId = target.profileId;
           if (hasTrusted && connectedProfileIds().length > 1) {
             effectiveProfileId = trustedProfileId;
           } else {
@@ -726,6 +744,15 @@ function createGatewayServer({
           if (hasTrusted && ids.length > 1) {
             effectiveProfileId = trustedProfileId;
           }
+        }
+
+        if (durablePermit?.profileIdDigest && resolvedPhysicalProfileId
+          && profileIdBindingDigest(resolvedPhysicalProfileId) !== durablePermit.profileIdDigest) {
+          return writeJson(res, 403, {
+            error: 'EXECUTION_PROFILE_BINDING_MISMATCH',
+            decision: 'deny',
+            reason: 'EXECUTION_PROFILE_BINDING_MISMATCH',
+          });
         }
 
         // Interactive Server-side Verification
