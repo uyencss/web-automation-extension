@@ -222,6 +222,7 @@ export class GatewayVerifier {
     dryRun = false,
   } = {}) {
     const actionClass = this.classifyTool(tool, params);
+    const durablePermit = permit?.schema === 'webmcp-durable-execution-permit/1';
 
     // Unknown raw action in enforce or observe mode
     if (actionClass === 'browser.raw.unknown') {
@@ -261,7 +262,7 @@ export class GatewayVerifier {
     }
 
     // Context binding checks (if active context provided)
-    if (context) {
+    if (context && !durablePermit) {
       const ctxExpiresAt = Date.parse(context.expiresAt);
       if (!Number.isNaN(ctxExpiresAt) && nowMs > ctxExpiresAt) {
         return this.deny('EXECUTION_CONTEXT_EXPIRED', actionClass);
@@ -394,7 +395,7 @@ export class GatewayVerifier {
       if (!permit.phaseId || permit.phaseId !== this.expectedPhase) {
         return this.deny('EXECUTION_PHASE_MISMATCH', actionClass);
       }
-      if (context && (!context.phaseId || context.phaseId !== this.expectedPhase)) {
+      if (context && !durablePermit && (!context.phaseId || context.phaseId !== this.expectedPhase)) {
         return this.deny('EXECUTION_PHASE_MISMATCH', actionClass);
       }
     }
@@ -420,7 +421,8 @@ export class GatewayVerifier {
     }
 
     // Revocation check
-    if (this.permitStore.isRevoked(permit.revocationId, permit.permitId) || context?.revocations?.includes(permit.permitId) || context?.revocations?.includes(permit.revocationId)) {
+    if (this.permitStore.isRevoked(permit.revocationId, permit.permitId)
+      || (!durablePermit && (context?.revocations?.includes(permit.permitId) || context?.revocations?.includes(permit.revocationId)))) {
       return this.deny('EXECUTION_PERMIT_REVOKED', actionClass);
     }
 

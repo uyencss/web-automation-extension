@@ -708,12 +708,14 @@ export class InteractiveRuntime {
     now = new Date(),
   } = {}) {
     const context = this.getCurrentContext();
+    const durablePermit = permit?.schema === 'webmcp-durable-execution-permit/1';
+    const verificationContext = durablePermit ? null : context;
     const authParams = verificationParams || params || {};
 
     let verifierResult;
 
     // Fail-closed check when in enforce or observe mode: require active context and valid permit
-    if (this.mode !== 'off' && !context) {
+    if (this.mode !== 'off' && !context && !durablePermit) {
       const actionClass = this.verifier.classifyTool(method, authParams);
       const reason = !permit ? 'EXECUTION_PERMIT_REQUIRED' : 'EXECUTION_CONTEXT_REQUIRED';
       const decision = this.mode === 'observe' ? 'would-deny' : 'deny';
@@ -725,7 +727,7 @@ export class InteractiveRuntime {
         permit,
         targetOrigin,
         profileId,
-        context,
+        context: verificationContext,
         now,
       });
     } else {
@@ -735,7 +737,7 @@ export class InteractiveRuntime {
         permit,
         targetOrigin: targetOrigin || authParams?.targetOrigin || authParams?.url || authParams?.sourceOrigin,
         profileId,
-        context,
+        context: verificationContext,
         now,
       });
     }

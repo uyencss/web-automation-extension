@@ -224,6 +224,34 @@ test('Gateway accepts a construction-owned durable Runner permit at the coordina
   assert.equal(result.actionClass, 'browser.invokeTool');
 });
 
+test('durable Runner permit is authoritative without trusted context and ignores stale legacy context', () => {
+  const { permit, keys } = buildSignedDurableRunnerPermit();
+  const { permit: stalePermit } = buildSignedDurableRunnerPermit({ keys, permitId: 'permit_stale_context', nonce: 'nonce_stale_context' });
+  const verifier = new GatewayVerifier({
+    publicKey: keys.rawPublicKeyHex,
+    keyId: keys.keyId,
+    mode: 'enforce',
+  });
+  const { message: staleContext } = buildSignedContext({ keys, runId: 'legacy-run', phaseId: 'legacy-phase' });
+
+  const withoutContext = verifier.verifyRequest({
+    tool: 'webmcp.invokeTool',
+    params: { targetOrigin: 'https://example.test' },
+    permit: stalePermit,
+    profileId: 'interactive-profile',
+  });
+  const withStaleContext = verifier.verifyRequest({
+    tool: 'webmcp.invokeTool',
+    params: { targetOrigin: 'https://example.test' },
+    permit,
+    profileId: 'interactive-profile',
+    context: staleContext,
+  });
+
+  assert.equal(withoutContext.decision, 'allow');
+  assert.equal(withStaleContext.decision, 'allow');
+});
+
 function sendSocketMessage(socketPath, messageObj) {
   return new Promise((resolve, reject) => {
     const client = net.createConnection(socketPath, () => {
@@ -761,6 +789,26 @@ test('missing trusted context denied at the gateway seam (EXECUTION_CONTEXT_REQU
   assert.equal(r.decision, 'deny');
   assert.equal(r.reason, 'EXECUTION_CONTEXT_REQUIRED');
   assert.ok(r.receipt, 'deny carries a blocked receipt');
+});
+
+test('InteractiveRuntime admits a durable Runner permit without the legacy context socket', () => {
+  const { permit, keys } = buildSignedDurableRunnerPermit();
+  const runtime = new InteractiveRuntime({
+    publicKey: keys.publicKey,
+    keyId: keys.keyId,
+    permitStore: new PermitStore(),
+    mode: 'enforce',
+    allowTestSeams: true,
+  });
+  const r = runtime.enforceRequest({
+    method: 'webmcp.invokeTool',
+    params: { targetOrigin: 'https://example.test' },
+    permit,
+    profileId: 'interactive-profile',
+    targetOrigin: 'https://example.test',
+  });
+  assert.equal(r.decision, 'allow');
+  assert.equal(r.actionClass, 'browser.invokeTool');
 });
 
 // ---------------------------------------------------------------------------

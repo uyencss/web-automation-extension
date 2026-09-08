@@ -228,12 +228,22 @@ async function readGatewayPayload(response) {
     fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_UNAVAILABLE, 'coordinator gateway response was not JSON');
   }
   if (!response.ok || payload?.error) {
-    fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_DENIED, 'coordinator gateway denied the mediated request');
+    return {
+      ok: false,
+      error: payload?.error || 'coordinator gateway denied the mediated request',
+      receipt: payload?.receipt ?? null,
+      receipts: Array.isArray(payload?.receipts) ? payload.receipts : null,
+    };
   }
   if (!Object.hasOwn(payload, 'result')) {
     fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator gateway returned no result');
   }
-  return payload.result;
+  return {
+    ok: true,
+    result: payload.result,
+    receipt: payload.receipt ?? null,
+    receipts: Array.isArray(payload.receipts) ? payload.receipts : null,
+  };
 }
 
 function sanitizeResult(result) {
@@ -280,6 +290,7 @@ export function createCoordinatorDispatcher({
   targetOriginProvider = null,
   gatewayToken = process.env.WEBMCP_GATEWAY_TOKEN || '',
   gatewayTokenProvider = null,
+  receiptHandler = null,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const normalizedGatewayUrl = normalizeGatewayUrl(gatewayUrl);
@@ -297,6 +308,9 @@ export function createCoordinatorDispatcher({
   }
   if (gatewayTokenProvider !== null && typeof gatewayTokenProvider !== 'function') {
     fail(COORDINATOR_DISPATCHER_ERROR_CODES.AUTHORITY_MISSING, 'gatewayTokenProvider must be a function');
+  }
+  if (receiptHandler !== null && typeof receiptHandler !== 'function') {
+    fail(COORDINATOR_DISPATCHER_ERROR_CODES.AUTHORITY_MISSING, 'receiptHandler must be a function');
   }
   const staticProfileAlias = normalizeProfileAlias(profileAlias);
   const staticTargetOrigin = targetOrigin === null || targetOrigin === undefined
@@ -344,7 +358,31 @@ export function createCoordinatorDispatcher({
     } catch {
       fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_UNAVAILABLE, 'coordinator gateway request failed');
     }
-    return sanitizeResult(await readGatewayPayload(response));
+    const gatewayPayload = await readGatewayPayload(response);
+    const safeResult = gatewayPayload.ok ? sanitizeResult(gatewayPayload.result) : null;
+    if (receiptHandler) {
+      if (gatewayPayload.ok && !gatewayPayload.receipt) {
+        fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator gateway returned no execution receipt');
+      }
+      try {
+        await receiptHandler({
+          request,
+          permit,
+          result: safeResult,
+          receipt: gatewayPayload.receipt,
+          receipts: gatewayPayload.receipts,
+          ok: gatewayPayload.ok,
+          error: gatewayPayload.error || null,
+        });
+      } catch (error) {
+        if (error instanceof CoordinatorDispatcherError) throw error;
+        fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator receipt handler rejected the Gateway receipt');
+      }
+    }
+    if (!gatewayPayload.ok) {
+      fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_DENIED, 'coordinator gateway denied the mediated request');
+    }
+    return safeResult;
   };
   const brandedDispatch = brandCoordinatorDispatcher(dispatch);
 

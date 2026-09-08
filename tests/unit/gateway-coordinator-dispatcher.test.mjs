@@ -75,6 +75,35 @@ test('coordinator dispatcher posts only the typed WebMCP surface with authority 
   assert.equal(calls[1].body.method, 'webmcp.listTools');
 });
 
+test('coordinator dispatcher forwards the Gateway receipt only to the construction-owned receipt handler', async () => {
+  const receipt = {
+    schema: 'webmcp-execution-receipt/1',
+    receiptId: 'receipt_gateway_01',
+    permitId: 'permit_not_worker_data',
+    outcome: 'applied',
+    actionClass: 'browser.invokeTool',
+  };
+  let handled = null;
+  const dispatcher = createCoordinatorDispatcher({
+    gatewayUrl: 'http://127.0.0.1:7865',
+    permitProvider: () => permit(),
+    targetOrigin: 'https://example.test',
+    receiptHandler: (value) => { handled = value; },
+    fetchImpl: async () => new Response(JSON.stringify({
+      result: { ok: true },
+      receipt,
+    }), { status: 200 }),
+  });
+
+  const result = await dispatcher.dispatch(request('webmcp.invokeTool', { toolName: 'read_summary' }));
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(handled.receipt, receipt);
+  assert.deepEqual(handled.result, { ok: true });
+  assert.equal(handled.request.tool, 'webmcp.invokeTool');
+  assert.equal(Object.hasOwn(result, 'receipt'), false);
+});
+
 test('coordinator dispatcher rejects direct browser selectors, authority in worker input, and unlisted tools', async () => {
   const dispatcher = createCoordinatorDispatcher({
     permitProvider: () => permit(),

@@ -632,6 +632,7 @@ function createGatewayServer({
         }
 
         const { method, params, profileId, permit, targetOrigin } = requestPayload;
+        const durablePermit = permit?.schema === 'webmcp-durable-execution-permit/1';
         if (!method) {
           return writeJson(res, 400, { error: 'Missing "method" in request' });
         }
@@ -642,7 +643,7 @@ function createGatewayServer({
         // Trusted signed context controls physical routing when multiple profiles are connected.
         // Request-supplied profile must not select an attacker profile. Single-profile case remains
         // compatible but fail-closed via verification (403) rather than routing 404, as covered by tests.
-        const trustedProfileId = runtime.getCurrentContext()?.profileId || null;
+        const trustedProfileId = durablePermit ? null : (runtime.getCurrentContext()?.profileId || null);
         const hasTrusted = Boolean(trustedProfileId && runtime.mode !== 'off');
         let profileForResolve = profileId;
         if (hasTrusted && connectedProfileIds().length > 1) {
