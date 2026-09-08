@@ -214,3 +214,21 @@ test('coordinator dispatcher fails closed without permit, target origin, or boun
       && !error.message.includes('bearer'),
   );
 });
+
+test('coordinator dispatcher notifies the owner on transport failure so an executing phase can revoke', async () => {
+  let failure = null;
+  const dispatcher = createCoordinatorDispatcher({
+    permitProvider: () => permit(),
+    targetOrigin: 'https://example.test',
+    receiptHandler: (input) => { failure = input; },
+    fetchImpl: async () => { throw new Error('transport down'); },
+  });
+
+  await assert.rejects(
+    () => dispatcher.dispatch(request('webmcp.invokeTool', { toolName: 'read_summary' })),
+    (error) => error.code === COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_UNAVAILABLE,
+  );
+  assert.equal(failure.ok, false);
+  assert.equal(failure.receipt, null);
+  assert.equal(failure.result, null);
+});

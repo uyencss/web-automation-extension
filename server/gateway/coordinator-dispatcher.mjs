@@ -347,72 +347,96 @@ export function createCoordinatorDispatcher({
   const dispatch = async (request) => {
     validateRequest(request);
     const permit = validatePermit(await permitProvider(request));
-    const resolvedProfileAlias = normalizeProfileAlias(
-      profileAliasProvider ? await profileAliasProvider({ request, permit }) : staticProfileAlias || permit.profileAlias || null,
-    );
-    const resolvedTargetOrigin = normalizeOrigin(
-      targetOriginProvider
-        ? await targetOriginProvider({ request, permit })
-        : staticTargetOrigin,
-      'targetOrigin',
-    );
-    const forwardedParams = {
-      ...cloneJson(request.input),
-      targetOrigin: resolvedTargetOrigin,
-    };
-    const token = gatewayTokenProvider
-      ? await gatewayTokenProvider({ request })
-      : gatewayToken;
-    if (token !== undefined && token !== null && token !== '') boundedString(String(token), 'gatewayToken', 4096);
-    const headers = { 'Content-Type': 'application/json' };
-    if (token) headers.Authorization = `Bearer ${String(token)}`;
-    let response;
-    try {
-      response = await fetchImpl(`${normalizedGatewayUrl}/api`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          method: request.tool,
-          params: forwardedParams,
-          ...(resolvedProfileAlias ? { profileId: resolvedProfileAlias } : {}),
-          permit,
-          targetOrigin: resolvedTargetOrigin,
-        }),
-      });
-    } catch {
-      fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_UNAVAILABLE, 'coordinator gateway request failed');
-    }
-    const gatewayPayload = await readGatewayPayload(response);
-    const safeResult = gatewayPayload.ok
-      ? sanitizeResult(request.tool === 'webmcp.listTools'
-        ? projectListToolsResult(gatewayPayload.result)
-        : request.tool === 'webmcp.invokeTool' && request.input?.toolName === 'get_page_metadata'
-          ? projectMetadataResult(gatewayPayload.result)
-          : gatewayPayload.result)
-      : null;
-    if (receiptHandler) {
-      if (gatewayPayload.ok && !gatewayPayload.receipt) {
-        fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator gateway returned no execution receipt');
-      }
+    let receiptHandled = false;
+    const notifyFailure = async (error) => {
+      if (!receiptHandler || receiptHandled) return;
+      receiptHandled = true;
       try {
         await receiptHandler({
           request,
           permit,
-          result: safeResult,
-          receipt: gatewayPayload.receipt,
-          receipts: gatewayPayload.receipts,
-          ok: gatewayPayload.ok,
-          error: gatewayPayload.error || null,
+          result: null,
+          receipt: null,
+          receipts: null,
+          ok: false,
+          error: error?.code || 'COORDINATOR_DISPATCH_FAILED',
         });
-      } catch (error) {
-        if (error instanceof CoordinatorDispatcherError) throw error;
-        fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator receipt handler rejected the Gateway receipt');
+      } catch {
+        // Preserve the original dispatch failure; the owner remains fail-closed.
       }
+    };
+    try {
+      const resolvedProfileAlias = normalizeProfileAlias(
+        profileAliasProvider ? await profileAliasProvider({ request, permit }) : staticProfileAlias || permit.profileAlias || null,
+      );
+      const resolvedTargetOrigin = normalizeOrigin(
+        targetOriginProvider
+          ? await targetOriginProvider({ request, permit })
+          : staticTargetOrigin,
+        'targetOrigin',
+      );
+      const forwardedParams = {
+        ...cloneJson(request.input),
+        targetOrigin: resolvedTargetOrigin,
+      };
+      const token = gatewayTokenProvider
+        ? await gatewayTokenProvider({ request })
+        : gatewayToken;
+      if (token !== undefined && token !== null && token !== '') boundedString(String(token), 'gatewayToken', 4096);
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${String(token)}`;
+      let response;
+      try {
+        response = await fetchImpl(`${normalizedGatewayUrl}/api`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            method: request.tool,
+            params: forwardedParams,
+            ...(resolvedProfileAlias ? { profileId: resolvedProfileAlias } : {}),
+            permit,
+            targetOrigin: resolvedTargetOrigin,
+          }),
+        });
+      } catch {
+        fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_UNAVAILABLE, 'coordinator gateway request failed');
+      }
+      const gatewayPayload = await readGatewayPayload(response);
+      const safeResult = gatewayPayload.ok
+        ? sanitizeResult(request.tool === 'webmcp.listTools'
+          ? projectListToolsResult(gatewayPayload.result)
+          : request.tool === 'webmcp.invokeTool' && request.input?.toolName === 'get_page_metadata'
+            ? projectMetadataResult(gatewayPayload.result)
+            : gatewayPayload.result)
+        : null;
+      if (receiptHandler) {
+        if (gatewayPayload.ok && !gatewayPayload.receipt) {
+          fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator gateway returned no execution receipt');
+        }
+        receiptHandled = true;
+        try {
+          await receiptHandler({
+            request,
+            permit,
+            result: safeResult,
+            receipt: gatewayPayload.receipt,
+            receipts: gatewayPayload.receipts,
+            ok: gatewayPayload.ok,
+            error: gatewayPayload.error || null,
+          });
+        } catch (error) {
+          if (error instanceof CoordinatorDispatcherError) throw error;
+          fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator receipt handler rejected the Gateway receipt');
+        }
+      }
+      if (!gatewayPayload.ok) {
+        fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_DENIED, 'coordinator gateway denied the mediated request');
+      }
+      return safeResult;
+    } catch (error) {
+      await notifyFailure(error);
+      throw error;
     }
-    if (!gatewayPayload.ok) {
-      fail(COORDINATOR_DISPATCHER_ERROR_CODES.GATEWAY_DENIED, 'coordinator gateway denied the mediated request');
-    }
-    return safeResult;
   };
   const brandedDispatch = brandCoordinatorDispatcher(dispatch);
 
