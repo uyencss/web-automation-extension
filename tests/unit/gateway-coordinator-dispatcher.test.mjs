@@ -142,6 +142,22 @@ test('coordinator dispatcher projects page metadata without returning the page U
   assert.deepEqual(result, { tabId: 4, result: { title: 'Flow' } });
 });
 
+test('coordinator dispatcher rejects non-object page metadata results instead of returning them unchanged', async () => {
+  const dispatcher = createCoordinatorDispatcher({
+    permitProvider: () => permit(),
+    targetOrigin: 'https://example.test',
+    fetchImpl: async () => new Response(JSON.stringify({
+      result: 'https://example.test/private',
+      receipt: { receiptId: 'receipt_gateway_malformed_metadata', outcome: 'applied' },
+    }), { status: 200 }),
+  });
+
+  await assert.rejects(
+    () => dispatcher.dispatch(request('webmcp.invokeTool', { toolName: 'get_page_metadata' })),
+    (error) => error.code === COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID,
+  );
+});
+
 test('coordinator dispatcher rejects malformed listTools results instead of returning them unchanged', async () => {
   const dispatcher = createCoordinatorDispatcher({
     permitProvider: () => permit(),

@@ -285,15 +285,18 @@ function projectListToolsResult(result) {
 }
 
 function projectMetadataResult(result) {
-  if (!isPlainObject(result)) return result;
-  const nested = isPlainObject(result.result) ? result.result : null;
+  if (!isPlainObject(result) || !isPlainObject(result.result)) {
+    fail(
+      COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID,
+      'coordinator page metadata result must contain an object result',
+    );
+  }
+  const nested = result.result;
   return Object.freeze({
     ...(Number.isInteger(result.tabId) ? { tabId: result.tabId } : {}),
-    ...(nested ? {
-      result: {
-        ...(typeof nested.title === 'string' ? { title: nested.title } : {}),
-      },
-    } : {}),
+    result: {
+      ...(typeof nested.title === 'string' ? { title: nested.title } : {}),
+    },
   });
 }
 
