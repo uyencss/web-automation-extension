@@ -812,6 +812,28 @@ test('InteractiveRuntime admits a durable Runner permit without the legacy conte
   assert.equal(r.receipt.fenceEpoch, permit.claimGeneration);
 });
 
+test('durable receipt fence ignores a stale legacy context fence', () => {
+  const { permit, keys } = buildSignedDurableRunnerPermit({ stateVersion: 7 });
+  const runtime = new InteractiveRuntime({
+    publicKey: keys.publicKey,
+    keyId: keys.keyId,
+    permitStore: new PermitStore(),
+    mode: 'enforce',
+    allowTestSeams: true,
+  });
+  const { message: staleContext } = buildSignedContext({ keys, fenceEpoch: 99 });
+  const r = runtime.enforceRequest({
+    method: 'webmcp.invokeTool',
+    params: { targetOrigin: 'https://example.test' },
+    permit,
+    context: staleContext,
+    profileId: 'interactive-profile',
+    targetOrigin: 'https://example.test',
+  });
+  assert.equal(r.decision, 'allow');
+  assert.equal(r.receipt.fenceEpoch, 8);
+});
+
 // ---------------------------------------------------------------------------
 // Physical-profile routing through the local route map
 // ---------------------------------------------------------------------------
@@ -913,6 +935,7 @@ test('gateway HTTP: valid trusted forwarding vs tampered deny-before-forward, no
     interactiveMode: 'enforce',
     token: 'test-secret-token',
     allowTestSeams: true,
+    physicalRouteMap: new Map([['interactive-profile', 'interactive-profile']]),
   });
   const { port: actualPort } = await app.start();
   t.after(async () => {

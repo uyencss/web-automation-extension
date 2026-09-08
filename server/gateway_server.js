@@ -475,8 +475,9 @@ function createGatewayServer({
             if (wsMapped && wsMapped.readyState === 1) return { ws: wsMapped, profileId: mappedPhysical };
           }
         }
-        const wsDirect = extensions.get(profileId);
-        if (wsDirect && wsDirect.readyState === 1) return { ws: wsDirect, profileId };
+        // A logical alias is usable only when the construction-owned route
+        // map resolves it to a connected physical profile. Direct lookup of a
+        // same-named extension is not an authority proof.
         return { error: `No connected Chrome profile with profileId='${profileId}'`, status: 404 };
       }
       // Non-interactive / legacy path: preserve direct lookup + logical->physical fallback
@@ -655,13 +656,13 @@ function createGatewayServer({
         let effectiveProfileId = profileId || params?.profileId || null;
         if (hasTrusted && connectedProfileIds().length > 1) effectiveProfileId = trustedProfileId;
 
-        // Derive explicit logical identity hints from trusted context/permit for physical routing gate
+        // Derive only logical identity hints from trusted context/permit. A
+        // physical profile ID is never a logical-route hint and must not make
+        // a direct extension lookup authoritative.
         const ctxForHints = runtime.getCurrentContext();
         const logicalHints = new Set();
         if (ctxForHints?.profileAlias && typeof ctxForHints.profileAlias === 'string') logicalHints.add(ctxForHints.profileAlias);
-        if (ctxForHints?.profileId && typeof ctxForHints.profileId === 'string') logicalHints.add(ctxForHints.profileId);
         if (permit?.profileAlias && typeof permit.profileAlias === 'string') logicalHints.add(permit.profileAlias);
-        if (permit?.profileId && typeof permit.profileId === 'string') logicalHints.add(permit.profileId);
 
         if (!isDownloadMethod) {
           const target = resolveTarget(profileForResolve, logicalHints);

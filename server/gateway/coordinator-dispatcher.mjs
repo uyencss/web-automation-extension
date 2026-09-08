@@ -18,6 +18,15 @@ export const COORDINATOR_DISPATCHER_TOOLS = Object.freeze([
   'webmcp.invokeTool',
   'webmcp.listTools',
 ]);
+// The coordinator surface is intentionally read-only. Site-specific tools may
+// be added by the construction root through `allowedPageToolNames`, but an
+// arbitrary syntactically-valid page tool is never enough to acquire a
+// side-effect capability.
+export const COORDINATOR_DEFAULT_PAGE_TOOL_NAMES = Object.freeze([
+  'get_page_metadata',
+  'read_summary',
+]);
+const COORDINATOR_READ_ONLY_PAGE_TOOL_NAMES = new Set(COORDINATOR_DEFAULT_PAGE_TOOL_NAMES);
 
 const REQUEST_FIELDS = new Set(['schema', 'tool', 'input', 'dispatchId', 'taskId', 'fenceEpoch']);
 const TOOL_FIELDS = Object.freeze({
@@ -154,7 +163,7 @@ function cloneJson(value) {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, cloneJson(entry)]));
 }
 
-function validateToolInput(tool, input) {
+function validateToolInput(tool, input, allowedPageToolNames) {
   const fields = TOOL_FIELDS[tool];
   if (!fields) fail(COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST, `unsupported coordinator tool ${tool}`);
   if (!isPlainObject(input)) fail(COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST, 'coordinator tool input must be an object');
@@ -169,6 +178,9 @@ function validateToolInput(tool, input) {
     if (typeof input.toolName !== 'string' || !PAGE_TOOL_NAME.test(input.toolName)) {
       fail(COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST, 'webmcp.invokeTool requires a bounded page toolName');
     }
+    if (!allowedPageToolNames.has(input.toolName)) {
+      fail(COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST, 'webmcp.invokeTool page tool is outside the construction-owned read-only capability set');
+    }
     if (input.input !== undefined && !isPlainObject(input.input)) {
       fail(COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST, 'webmcp.invokeTool input must be an object');
     }
@@ -179,7 +191,7 @@ function validateToolInput(tool, input) {
   validateSafeJson(input, 'request.input');
 }
 
-function validateRequest(request) {
+function validateRequest(request, allowedPageToolNames) {
   if (!isPlainObject(request) || request.schema !== COORDINATOR_DISPATCH_REQUEST_SCHEMA) {
     fail(COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST, 'coordinator dispatch request schema mismatch');
   }
@@ -195,7 +207,7 @@ function validateRequest(request) {
   if (!Number.isInteger(request.fenceEpoch) || request.fenceEpoch < 0) {
     fail(COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST, 'fenceEpoch must be a non-negative integer');
   }
-  validateToolInput(request.tool, request.input);
+  validateToolInput(request.tool, request.input, allowedPageToolNames);
 }
 
 function validatePermit(permit) {
@@ -260,7 +272,9 @@ function sanitizeResult(result) {
 }
 
 function projectListToolsResult(result) {
-  if (!isPlainObject(result) || !Array.isArray(result.tools)) return result;
+  if (!isPlainObject(result) || !Array.isArray(result.tools)) {
+    fail(COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID, 'coordinator listTools result must contain a bounded tools array');
+  }
   const tools = result.tools
     .filter((entry) => isPlainObject(entry) && typeof entry.name === 'string' && PAGE_TOOL_NAME.test(entry.name))
     .map((entry) => ({ name: entry.name }));
@@ -315,6 +329,7 @@ export function createCoordinatorDispatcher({
   gatewayToken = process.env.WEBMCP_GATEWAY_TOKEN || '',
   gatewayTokenProvider = null,
   receiptHandler = null,
+  allowedPageToolNames = COORDINATOR_DEFAULT_PAGE_TOOL_NAMES,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const normalizedGatewayUrl = normalizeGatewayUrl(gatewayUrl);
@@ -336,6 +351,15 @@ export function createCoordinatorDispatcher({
   if (receiptHandler !== null && typeof receiptHandler !== 'function') {
     fail(COORDINATOR_DISPATCHER_ERROR_CODES.AUTHORITY_MISSING, 'receiptHandler must be a function');
   }
+  if (!Array.isArray(allowedPageToolNames)
+    || allowedPageToolNames.length === 0
+    || allowedPageToolNames.length > 256
+    || allowedPageToolNames.some((name) => typeof name !== 'string'
+      || !PAGE_TOOL_NAME.test(name)
+      || !COORDINATOR_READ_ONLY_PAGE_TOOL_NAMES.has(name))) {
+    fail(COORDINATOR_DISPATCHER_ERROR_CODES.AUTHORITY_MISSING, 'allowedPageToolNames must be a construction-approved read-only page-tool subset');
+  }
+  const pageToolNames = new Set(allowedPageToolNames);
   const staticProfileAlias = normalizeProfileAlias(profileAlias);
   const staticTargetOrigin = targetOrigin === null || targetOrigin === undefined
     ? null
@@ -345,7 +369,7 @@ export function createCoordinatorDispatcher({
   }
 
   const dispatch = async (request) => {
-    validateRequest(request);
+    validateRequest(request, pageToolNames);
     const permit = validatePermit(await permitProvider(request));
     let receiptHandled = false;
     const notifyFailure = async (error) => {

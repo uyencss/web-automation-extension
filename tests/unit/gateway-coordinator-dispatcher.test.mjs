@@ -38,9 +38,12 @@ test('coordinator dispatcher posts only the typed WebMCP surface with authority 
     targetOrigin: 'https://example.test',
     gatewayToken: 'gateway-token-held-by-coordinator',
     fetchImpl: async (url, options) => {
-      calls.push({ url, options, body: JSON.parse(options.body) });
+      const body = JSON.parse(options.body);
+      calls.push({ url, options, body });
       return new Response(JSON.stringify({
-        result: { tabId: 7, parsedContent: { text: 'adaptive result' } },
+        result: body.method === 'webmcp.listTools'
+          ? { tabId: 7, tools: [{ name: 'get_page_metadata' }] }
+          : { tabId: 7, parsedContent: { text: 'adaptive result' } },
         receipt: { permitId: 'receipt-stays-outside-worker' },
       }), { status: 200, headers: { 'content-type': 'application/json' } });
     },
@@ -139,6 +142,22 @@ test('coordinator dispatcher projects page metadata without returning the page U
   assert.deepEqual(result, { tabId: 4, result: { title: 'Flow' } });
 });
 
+test('coordinator dispatcher rejects malformed listTools results instead of returning them unchanged', async () => {
+  const dispatcher = createCoordinatorDispatcher({
+    permitProvider: () => permit(),
+    targetOrigin: 'https://example.test',
+    fetchImpl: async () => new Response(JSON.stringify({
+      result: { privateMetadata: 'must-not-leak' },
+      receipt: { receiptId: 'receipt_gateway_malformed', outcome: 'applied' },
+    }), { status: 200 }),
+  });
+
+  await assert.rejects(
+    () => dispatcher.dispatch(request('webmcp.listTools', {})),
+    (error) => error.code === COORDINATOR_DISPATCHER_ERROR_CODES.RESULT_INVALID,
+  );
+});
+
 test('coordinator dispatcher rejects direct browser selectors, authority in worker input, and unlisted tools', async () => {
   const dispatcher = createCoordinatorDispatcher({
     permitProvider: () => permit(),
@@ -164,6 +183,10 @@ test('coordinator dispatcher rejects direct browser selectors, authority in work
   );
   await assert.rejects(
     () => dispatcher.dispatch(request('webmcp.invokeTool', { toolName: 'read_summary', input: { url: 'https://example.invalid' } })),
+    (error) => error.code === COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST,
+  );
+  await assert.rejects(
+    () => dispatcher.dispatch(request('webmcp.invokeTool', { toolName: 'submit_form' })),
     (error) => error.code === COORDINATOR_DISPATCHER_ERROR_CODES.INVALID_REQUEST,
   );
   await assert.rejects(

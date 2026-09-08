@@ -192,8 +192,11 @@ export class InteractiveRuntime {
       // trusted-context socket. Runner opens the phase fence by incrementing
       // the plan state's frozen stateVersion, so the wire receipt carries
       // that derived fence fact for coordinator reconciliation.
-      fenceEpoch: context?.fenceEpoch
-        ?? (Number.isSafeInteger(permit?.stateVersion) ? permit.stateVersion + 1 : permit?.claimGeneration ?? null),
+      // A durable permit owns the coordinator phase fence. A stale legacy
+      // trusted context must never override that durable binding.
+      fenceEpoch: permit?.schema === 'webmcp-durable-execution-permit/1'
+        ? (Number.isSafeInteger(permit?.stateVersion) ? permit.stateVersion + 1 : null)
+        : context?.fenceEpoch ?? permit?.claimGeneration ?? null,
       phaseId: permit?.phaseId || context?.phaseId || null,
       bindingId: permit?.bindingId || context?.bindingId || null,
       bindingRevision: permit?.bindingRevision ?? context?.bindingRevision ?? null,
