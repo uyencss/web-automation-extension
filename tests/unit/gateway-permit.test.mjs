@@ -809,6 +809,7 @@ test('InteractiveRuntime admits a durable Runner permit without the legacy conte
   });
   assert.equal(r.decision, 'allow');
   assert.equal(r.actionClass, 'browser.invokeTool');
+  assert.equal(r.receipt.fenceEpoch, permit.claimGeneration);
 });
 
 // ---------------------------------------------------------------------------

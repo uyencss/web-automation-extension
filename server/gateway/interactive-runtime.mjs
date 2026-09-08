@@ -188,7 +188,12 @@ export class InteractiveRuntime {
       profileId: permit?.profileId || context?.profileId || null,
       claimGeneration: permit?.claimGeneration ?? context?.claimGeneration ?? null,
       claimDigest: permit?.claimDigest || context?.claimDigest || null,
-      fenceEpoch: context?.fenceEpoch ?? null,
+      // A construction-owned durable Runner permit bypasses the legacy
+      // trusted-context socket. Runner opens the phase fence by incrementing
+      // the plan state's frozen stateVersion, so the wire receipt carries
+      // that derived fence fact for coordinator reconciliation.
+      fenceEpoch: context?.fenceEpoch
+        ?? (Number.isSafeInteger(permit?.stateVersion) ? permit.stateVersion + 1 : permit?.claimGeneration ?? null),
       phaseId: permit?.phaseId || context?.phaseId || null,
       bindingId: permit?.bindingId || context?.bindingId || null,
       bindingRevision: permit?.bindingRevision ?? context?.bindingRevision ?? null,
