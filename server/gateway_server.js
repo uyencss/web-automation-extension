@@ -39,7 +39,10 @@ const MAX_DOWNLOAD_EVENTS_PER_PROFILE = Number(process.env.WEBMCP_DOWNLOAD_EVENT
 const PROFILE_ID_BINDING_DOMAIN = 'webmcp-digest-v1:profile-id-binding';
 
 function profileIdBindingDigest(profileId) {
-  return digestCanonical(PROFILE_ID_BINDING_DOMAIN, profileId);
+  // Runner's canonicalizer JSON-encodes string primitives before applying
+  // the domain label; pass the already-canonical string through the Browser
+  // helper, whose string overload otherwise treats it as raw bytes.
+  return digestCanonical(PROFILE_ID_BINDING_DOMAIN, JSON.stringify(profileId));
 }
 
 // The verifier accepts stable MCP/wire aliases, while the extension dispatches
