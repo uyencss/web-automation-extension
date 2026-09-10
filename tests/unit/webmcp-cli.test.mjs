@@ -114,7 +114,7 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
   const result = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
-    timeout: 10000,
+    timeout: 20000,
     env: {
       ...process.env,
       HOME: home,
@@ -125,6 +125,7 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
       WEBMCP_TAILSCALE_BIN: process.execPath,
       WEBMCP_TAILSCALE_STATUS_FILE: tailnetStatusPath,
       WEBMCP_TEST_CHROME_POLICY_EFFECTIVE: '1',
+      WEBMCP_KIT_MANIFEST: path.join(home, 'no-such-kit.json'),
     },
   });
 
@@ -165,12 +166,14 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
   assert.equal(report.downloadPolicy.current.ok, true);
   assert.equal(report.downloadPolicy.current.source, 'test-override');
   assert.deepEqual(report.downloadPolicy.platforms.map((entry) => entry.platform).sort(), ['linux', 'macos', 'windows']);
-  assert.equal('skills' in report, false);
+  assert.equal(report.skills.schema, 'webmcp-skills-doctor/1');
+  assert.equal(report.skills.ok, false);
+  assert.equal(report.skills.receiptPresent, false);
   assert.equal(report.bootstrap.schema, 'webmcp-machine-bootstrap-readiness/1');
   assert.equal(report.bootstrap.dispatcherConfigured, true);
   assert.equal(report.bootstrap.downloadPolicyReady, true);
-  assert.equal('skillsReady' in report.bootstrap, false);
-  assert.equal('receiptPresent' in report.bootstrap, false);
+  assert.equal(report.bootstrap.skillsReady, false);
+  assert.equal(report.bootstrap.receiptPresent, false);
   assert.equal(report.role.schema, 'webmcp-machine-role-readiness/1');
   assert.equal(report.role.role, 'runner-node');
   assert.equal(report.role.ok, true);
@@ -1500,6 +1503,251 @@ test('webmcp skills never resolves a bare webmcp command from PATH', () => {
   assert.match(result.stderr, /webmcp-cli/);
   assert.equal(existsSync(markerFile), false);
   assert.doesNotMatch(result.stdout, /PATH-FAKE-INVOKED/);
+});
+
+function writeHealthyHome(base) {
+  mkdirSync(path.join(base, '.codex'), { recursive: true });
+  mkdirSync(path.join(base, '.webmcp'), { recursive: true });
+  const serviceDir = path.join(base, 'services');
+  mkdirSync(serviceDir, { recursive: true });
+  writeFileSync(path.join(serviceDir, 'webmcp-gateway.service'), 'redacted fixture service\n');
+  writeFileSync(path.join(serviceDir, 'io.webmcp-gateway.plist'), 'redacted fixture service\n');
+  writeFileSync(path.join(serviceDir, 'webmcp-gateway.xml'), 'redacted fixture service\n');
+  const tailnetStatusPath = path.join(base, 'tailscale-status.json');
+  writeFileSync(tailnetStatusPath, JSON.stringify({
+    Self: { Online: true, HostName: 'secret-hostname', DNSName: 'secret.tailnet.ts.net.', TailscaleIPs: ['100.64.0.1'] },
+  }, null, 2));
+  writeFileSync(path.join(base, '.codex', 'config.toml'), [
+    '[mcp_servers.webmcp]',
+    `command = ${JSON.stringify(process.execPath)}`,
+    `args = ${JSON.stringify([path.join(ROOT, 'server', 'mcp_server.mjs')])}`,
+    '',
+  ].join('\n'));
+  writeFileSync(path.join(base, '.webmcp', 'dispatcher.config.json'), JSON.stringify({
+    schema: 'webmcp-dispatcher-config/2',
+    defaultGateway: 'local',
+    gateways: { local: { baseUrl: 'http://127.0.0.1:7865', profiles: { research: 'Chrome:Secret Research' } } },
+  }, null, 2));
+  return { serviceDir, tailnetStatusPath };
+}
+
+function skillsDoctorEnv(home, serviceDir, tailnetStatusPath, stubBin, skillsReport, exitCode = '0') {
+  return {
+    ...process.env,
+    HOME: home,
+    WEBMCP_HOME: path.join(home, '.webmcp'),
+    WEBMCP_CLI_BIN: stubBin,
+    WEBMCP_TEST_CLI_STDOUT: JSON.stringify(skillsReport),
+    WEBMCP_TEST_CLI_EXIT_CODE: exitCode,
+    WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
+    WEBMCP_NO_AUTOSTART: '1',
+    WEBMCP_NODE_ROLE: 'operator',
+    WEBMCP_BOOTSTRAP_SERVICE_DIR: serviceDir,
+    WEBMCP_TAILSCALE_BIN: process.execPath,
+    WEBMCP_TAILSCALE_STATUS_FILE: tailnetStatusPath,
+    WEBMCP_TEST_CHROME_POLICY_EFFECTIVE: '1',
+  };
+}
+
+const HEALTHY_SKILLS_REPORT = {
+  schema: 'webmcp-skills-doctor/1',
+  ok: true,
+  inventory: '/tmp/fake-inventory',
+  total: 5,
+  available: 5,
+  missing: [],
+  receipt: '/tmp/fake-receipt',
+  receiptPresent: true,
+  orphanCandidates: [],
+};
+
+const FAILING_SKILLS_REPORT = {
+  schema: 'webmcp-skills-doctor/1',
+  ok: false,
+  inventory: '/tmp/fake-inventory',
+  total: 5,
+  available: 2,
+  missing: ['webmcp-a', 'webmcp-b', 'webmcp-c'],
+  receipt: '/tmp/fake-receipt',
+  receiptPresent: false,
+  orphanCandidates: [],
+};
+
+test('webmcp doctor restores bootstrap skills readiness via CLI probe (healthy)', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-skills-healthy-'));
+  const { serviceDir, tailnetStatusPath } = writeHealthyHome(home);
+  const stubDir = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-skills-stub-healthy-'));
+  const stubBin = writeStubCliBin(stubDir);
+  const result = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: skillsDoctorEnv(home, serviceDir, tailnetStatusPath, stubBin, HEALTHY_SKILLS_REPORT, '0'),
+  });
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.schema, 'webmcp-doctor/1');
+  assert.equal(report.skills.ok, true);
+  assert.equal(report.skills.receiptPresent, true);
+  assert.equal(report.skills.available, 5);
+  assert.equal(report.skills.total, 5);
+  assert.deepEqual(report.skills.missing, []);
+  assert.ok('inventory' in report.skills);
+  assert.ok('receipt' in report.skills);
+  assert.equal(report.bootstrap.skillsReady, true);
+  assert.equal(report.bootstrap.receiptPresent, true);
+  assert.equal(report.bootstrap.ok, true);
+});
+
+test('webmcp doctor skills probe failure drags bootstrap ok to false', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-skills-failing-'));
+  const { serviceDir, tailnetStatusPath } = writeHealthyHome(home);
+  const stubDir = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-skills-stub-failing-'));
+  const stubBin = writeStubCliBin(stubDir);
+  const result = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: skillsDoctorEnv(home, serviceDir, tailnetStatusPath, stubBin, FAILING_SKILLS_REPORT, '1'),
+  });
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.skills.ok, false);
+  assert.equal(report.skills.receiptPresent, false);
+  assert.equal(report.bootstrap.skillsReady, false);
+  assert.equal(report.bootstrap.receiptPresent, false);
+  assert.equal(report.bootstrap.ok, false);
+});
+
+test('webmcp doctor handles missing CLI with typed missing skills state', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-skills-missing-'));
+  const { serviceDir, tailnetStatusPath } = writeHealthyHome(home);
+  const result = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_HOME: path.join(home, '.webmcp'),
+      WEBMCP_CLI_BIN: path.join(home, 'missing-webmcp-cli.mjs'),
+      WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
+      WEBMCP_NO_AUTOSTART: '1',
+      WEBMCP_NODE_ROLE: 'operator',
+      WEBMCP_BOOTSTRAP_SERVICE_DIR: serviceDir,
+      WEBMCP_TAILSCALE_BIN: process.execPath,
+      WEBMCP_TAILSCALE_STATUS_FILE: tailnetStatusPath,
+      WEBMCP_TEST_CHROME_POLICY_EFFECTIVE: '1',
+    },
+  });
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.skills.ok, false);
+  assert.equal(report.skills.available, 0);
+  assert.equal(report.skills.total, 0);
+  assert.deepEqual(report.skills.missing, []);
+  assert.equal(report.skills.receiptPresent, false);
+  assert.match(report.skills.error || '', /webmcp-cli not found/);
+  assert.equal(report.bootstrap.skillsReady, false);
+  assert.equal(report.bootstrap.ok, false);
+});
+
+test('webmcp bootstrap plan respects CLI skills probe and receipt counts', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-bootstrap-plan-skills-'));
+  const { serviceDir, tailnetStatusPath } = writeHealthyHome(home);
+  const stubDir = mkdtempSync(path.join(tmpdir(), 'webmcp-plan-skills-stub-'));
+  const stubBin = writeStubCliBin(stubDir);
+
+  let result = spawnSync(process.execPath, [BIN, 'bootstrap', 'plan', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: skillsDoctorEnv(home, serviceDir, tailnetStatusPath, stubBin, HEALTHY_SKILLS_REPORT, '0'),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  let payload = JSON.parse(result.stdout);
+  assert.equal(payload.readiness.skillsReady, true);
+  assert.equal(payload.operatorActions.some((item) => item.code === 'INSTALL_SKILLS'), false);
+
+  result = spawnSync(process.execPath, [BIN, 'bootstrap', 'apply', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: skillsDoctorEnv(home, serviceDir, tailnetStatusPath, stubBin, HEALTHY_SKILLS_REPORT, '0'),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.receipt.counts.skillsAvailable, 5);
+  assert.equal(payload.receipt.counts.skillsTotal, 5);
+
+  result = spawnSync(process.execPath, [BIN, 'bootstrap', 'plan', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: skillsDoctorEnv(home, serviceDir, tailnetStatusPath, stubBin, FAILING_SKILLS_REPORT, '1'),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.operatorActions.some((item) => item.code === 'INSTALL_SKILLS'), true);
+});
+
+test('webmcp bootstrap canary respects CLI skills probe', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-bootstrap-canary-skills-'));
+  mkdirSync(path.join(home, '.codex'), { recursive: true });
+  mkdirSync(path.join(home, '.webmcp', 'vault'), { recursive: true });
+  writeFileSync(path.join(home, '.codex', 'config.toml'), [
+    '[mcp_servers.webmcp]',
+    `command = ${JSON.stringify(process.execPath)}`,
+    `args = ${JSON.stringify([path.join(ROOT, 'server', 'mcp_server.mjs')])}`,
+    '',
+  ].join('\n'));
+  writeFileSync(path.join(home, '.webmcp', 'dispatcher.config.json'), JSON.stringify({
+    schema: 'webmcp-dispatcher-config/2',
+    defaultGateway: 'local',
+    gateways: { local: { baseUrl: 'http://127.0.0.1:7865', profiles: { 'local-auth-fixture': 'Chrome:Secret Fixture' } } },
+    profileBindings: {
+      'local-auth-fixture': {
+        gateway: 'local',
+        profileAlias: 'local-auth-fixture',
+        decision: 'approved',
+        credentialRefs: { login: 'vault-secret-ref' },
+        siteAccountRef: 'account-secret-ref',
+        reauthPolicy: 'bounded-one-attempt',
+      },
+    },
+  }, null, 2));
+  const stubDir = mkdtempSync(path.join(tmpdir(), 'webmcp-canary-skills-stub-'));
+  const stubBin = writeStubCliBin(stubDir);
+  const baseEnv = {
+    ...process.env,
+    HOME: home,
+    WEBMCP_HOME: path.join(home, '.webmcp'),
+    WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
+    WEBMCP_NO_AUTOSTART: '1',
+    WEBMCP_CLI_BIN: stubBin,
+  };
+  const initialized = spawnSync(process.execPath, [BIN, 'vault', 'init', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 10000,
+    env: { ...baseEnv, WEBMCP_VAULT_KEY: 'test-bootstrap-canary-key-32-bytes-minimum' },
+  });
+  assert.equal(initialized.status, 0, initialized.stderr);
+
+  let result = spawnSync(process.execPath, [BIN, 'bootstrap', 'canary', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: { ...baseEnv, WEBMCP_TEST_CLI_STDOUT: JSON.stringify(HEALTHY_SKILLS_REPORT), WEBMCP_TEST_CLI_EXIT_CODE: '0' },
+  });
+  let payload = JSON.parse(result.stdout);
+  assert.equal(payload.blockers.some((item) => item.code === 'INSTALL_SKILLS'), false);
+
+  result = spawnSync(process.execPath, [BIN, 'bootstrap', 'canary', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: { ...baseEnv, WEBMCP_TEST_CLI_STDOUT: JSON.stringify(FAILING_SKILLS_REPORT), WEBMCP_TEST_CLI_EXIT_CODE: '1' },
+  });
+  payload = JSON.parse(result.stdout);
+  assert.equal(payload.blockers.some((item) => item.code === 'INSTALL_SKILLS'), true);
 });
 
 const RUNNER_BIN = path.join(ROOT, '..', 'webmcp-automation-runner', 'bin', 'webmcp-automation-runner.mjs');
