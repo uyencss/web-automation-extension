@@ -12,7 +12,8 @@
   "license": "MIT",
   "author": "uyencss",
   "bin": {
-    "webmcp": "bin/webmcp.mjs"
+    "webmcp": "bin/webmcp.mjs",
+    "webmcp-browser": "bin/webmcp-browser.mjs"
   },
   "exports": {
     ".": "./bin/webmcp.mjs",

@@ -23,6 +23,7 @@ test('npm packed inventory contains every relative module imported by shipped Br
   const inventory = JSON.parse(packed.stdout)[0].files;
   const files = new Set(inventory.map((entry) => entry.path));
   assert.equal(inventory.find((entry) => entry.path === 'bin/webmcp.mjs')?.mode, 0o755);
+  assert.equal(inventory.find((entry) => entry.path === 'bin/webmcp-browser.mjs')?.mode, 0o755);
   assert.equal(inventory.find((entry) => entry.path === 'bin/profile-pool.mjs')?.mode, 0o644);
   assert.ok([...files].some((file) => file.startsWith('lib/cli/')));
   assert.ok([...files].some((file) => file.startsWith('lib/profile-pool/')));
