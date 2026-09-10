@@ -165,14 +165,12 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
   assert.equal(report.downloadPolicy.current.ok, true);
   assert.equal(report.downloadPolicy.current.source, 'test-override');
   assert.deepEqual(report.downloadPolicy.platforms.map((entry) => entry.platform).sort(), ['linux', 'macos', 'windows']);
-  assert.equal(report.skills.schema, 'webmcp-skills-doctor/1');
-  assert.equal(report.skills.ok, true);
-  assert.equal(report.skills.receiptPresent, false);
+  assert.equal('skills' in report, false);
   assert.equal(report.bootstrap.schema, 'webmcp-machine-bootstrap-readiness/1');
   assert.equal(report.bootstrap.dispatcherConfigured, true);
   assert.equal(report.bootstrap.downloadPolicyReady, true);
-  assert.equal(report.bootstrap.skillsReady, true);
-  assert.equal(report.bootstrap.receiptPresent, false);
+  assert.equal('skillsReady' in report.bootstrap, false);
+  assert.equal('receiptPresent' in report.bootstrap, false);
   assert.equal(report.role.schema, 'webmcp-machine-role-readiness/1');
   assert.equal(report.role.role, 'runner-node');
   assert.equal(report.role.ok, true);
@@ -1403,108 +1401,105 @@ test('webmcp mobile reports a clear install hint when ADB Kit is unavailable', (
   assert.match(result.stderr, /WEBMCP_ADB_MCP_BIN/);
 });
 
-test('webmcp skills exposes the Automation-owned 18-skill inventory', () => {
+function writeStubCliBin(dir) {
+  const stubBin = path.join(dir, 'stub-webmcp-cli.mjs');
+  writeFileSync(stubBin, [
+    "import { appendFileSync } from 'node:fs';",
+    'const capture = process.env.WEBMCP_TEST_CLI_CAPTURE_FILE;',
+    "if (capture) appendFileSync(capture, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+    "if (process.env.WEBMCP_TEST_CLI_STDOUT) process.stdout.write(process.env.WEBMCP_TEST_CLI_STDOUT);",
+    "const code = Number.parseInt(process.env.WEBMCP_TEST_CLI_EXIT_CODE ?? '0', 10);",
+    'process.exit(Number.isNaN(code) ? 0 : code);',
+    '',
+  ].join('\n'));
+  return stubBin;
+}
+
+test('webmcp skills delegates argv exactly to the CLI executable', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-skills-delegate-argv-'));
+  const stubBin = writeStubCliBin(home);
+  const captureFile = path.join(home, 'cli-argv.jsonl');
   const result = spawnSync(process.execPath, [BIN, 'skills', 'list', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.schema, 'webmcp-skills/1');
-  assert.equal(payload.skills.length, 18);
-  assert.ok(payload.skills.every((skill) => skill.available));
-});
-
-test('webmcp skills path and doctor resolve canonical local sources', () => {
-  const skillPath = spawnSync(process.execPath, [BIN, 'skills', 'path', 'webmcp-workflow-cli'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-  assert.equal(skillPath.status, 0, skillPath.stderr);
-  assert.match(skillPath.stdout.trim(), /packages\/webmcp-workflow-cli\/skills\/webmcp-workflow-cli$/);
-
-  const doctor = spawnSync(process.execPath, [BIN, 'skills', 'doctor', '--json'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-  assert.equal(doctor.status, 0, doctor.stderr);
-  assert.deepEqual(JSON.parse(doctor.stdout).missing, []);
-});
-
-test('webmcp skills adopt and prune remove an explicitly adopted legacy skill', () => {
-  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-cli-skills-'));
-  const legacy = path.join(home, '.codex/skills/workflow-dispatcher-cli');
-  mkdirSync(legacy, { recursive: true });
-  writeFileSync(path.join(legacy, 'SKILL.md'), '---\nname: workflow-dispatcher-cli\ndescription: legacy\n---\n');
-  const env = {
-    ...process.env,
-    HOME: home,
-    WEBMCP_HOME: path.join(home, '.webmcp'),
-    WEBMCP_KIT_MANIFEST: path.resolve(ROOT, '..', '..', 'webmcp-kit.json'),
-  };
-
-  let result = spawnSync(process.execPath, [BIN, 'skills', 'adopt', '--provider', 'codex', '--yes'], {
-    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
-  });
-  assert.equal(result.status, 0, result.stderr);
-  const receipt = JSON.parse(readFileSync(path.join(home, '.webmcp/skills/install-receipt.json'), 'utf8'));
-  assert.ok(receipt.owners['webmcp-automation-kit'].providers.codex.entries.includes('workflow-dispatcher-cli'));
-
-  result = spawnSync(process.execPath, [BIN, 'skills', 'prune', '--yes'], {
-    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.ok(!existsSync(legacy));
-});
-
-test('webmcp skills doctor unions owners and uninstall removes only the selected kit ownership', () => {
-  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-cli-multi-owner-'));
-  const codexRoot = path.join(home, '.codex/skills');
-  const webmcp = path.join(codexRoot, 'webmcp');
-  const zalo = path.join(codexRoot, 'zalo-bot-messaging');
-  mkdirSync(webmcp, { recursive: true });
-  mkdirSync(zalo, { recursive: true });
-  writeFileSync(path.join(webmcp, 'SKILL.md'), 'automation owned');
-  writeFileSync(path.join(zalo, 'SKILL.md'), 'ops owned');
-  const receiptPath = path.join(home, '.webmcp/skills/install-receipt.json');
-  mkdirSync(path.dirname(receiptPath), { recursive: true });
-  writeFileSync(receiptPath, JSON.stringify({
-    schema: 'webmcp-install-receipt/2',
-    version: 2,
-    owners: {
-      'webmcp-automation-kit': {
-        skillsMode: 'umbrella',
-        providers: { codex: { root: codexRoot, entries: ['webmcp'] } },
-      },
-      'webmcp-ops-kit': {
-        skillsMode: 'separate',
-        providers: { codex: { root: codexRoot, entries: ['zalo-bot-messaging'] } },
-      },
+    env: {
+      ...process.env,
+      WEBMCP_CLI_BIN: stubBin,
+      WEBMCP_TEST_CLI_CAPTURE_FILE: captureFile,
+      WEBMCP_TEST_CLI_STDOUT: '{"stub":"argv"}\n',
+      WEBMCP_TEST_CLI_EXIT_CODE: '0',
     },
-  }));
-  const env = {
-    ...process.env,
-    HOME: home,
-    WEBMCP_HOME: path.join(home, '.webmcp'),
-    WEBMCP_KIT_MANIFEST: path.resolve(ROOT, '..', '..', 'webmcp-kit.json'),
-  };
-
-  let result = spawnSync(process.execPath, [BIN, 'skills', 'doctor', '--json'], {
-    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
   });
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(result.stdout).receiptPresent, true);
 
-  result = spawnSync(process.execPath, [BIN, 'skills', 'uninstall', '--all', '--yes'], {
-    cwd: WORKSPACE_ROOT, encoding: 'utf8', env,
-  });
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(!existsSync(webmcp));
-  assert.ok(existsSync(zalo));
-  const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-  assert.ok(!receipt.owners['webmcp-automation-kit']);
-  assert.deepEqual(receipt.owners['webmcp-ops-kit'].providers.codex.entries, ['zalo-bot-messaging']);
+  assert.match(result.stdout, /"stub":"argv"/);
+  const argvLines = readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(argvLines, [['skills', 'list', '--json']]);
+});
+
+test('webmcp skills passes through stdout and exit code from the CLI', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-skills-delegate-passthrough-'));
+  const stubBin = writeStubCliBin(home);
+  const captureFile = path.join(home, 'cli-argv.jsonl');
+  const result = spawnSync(process.execPath, [BIN, 'skills', 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CLI_BIN: stubBin,
+      WEBMCP_TEST_CLI_CAPTURE_FILE: captureFile,
+      WEBMCP_TEST_CLI_STDOUT: '{"schema":"webmcp-skills-doctor/1","ok":true}\n',
+      WEBMCP_TEST_CLI_EXIT_CODE: '3',
+    },
+  });
+
+  assert.equal(result.status, 3, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { schema: 'webmcp-skills-doctor/1', ok: true });
+  const argvLines = readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(argvLines, [['skills', 'doctor', '--json']]);
+});
+
+test('webmcp skills reports an install hint when the CLI executable is missing', () => {
+  const result = spawnSync(process.execPath, [BIN, 'skills', 'list'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CLI_BIN: './missing-webmcp-cli.mjs',
+    },
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /webmcp-cli/);
+  assert.match(result.stderr, /WEBMCP_CLI_BIN|Install/);
+});
+
+test('webmcp skills never resolves a bare webmcp command from PATH', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-skills-no-path-'));
+  const fakeDir = path.join(home, 'fake-path');
+  mkdirSync(fakeDir, { recursive: true });
+  const markerFile = path.join(home, 'path-invoked.marker');
+  const fakeBin = path.join(fakeDir, 'webmcp');
+  writeFileSync(fakeBin, [
+    '#!/bin/sh',
+    `touch ${JSON.stringify(markerFile)}`,
+    'echo "PATH-FAKE-INVOKED"',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const result = spawnSync(process.execPath, [BIN, 'skills', 'list', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${fakeDir}${path.delimiter}${process.env.PATH ?? ''}`,
+      WEBMCP_CLI_BIN: './missing-webmcp-cli.mjs',
+    },
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /webmcp-cli/);
+  assert.equal(existsSync(markerFile), false);
+  assert.doesNotMatch(result.stdout, /PATH-FAKE-INVOKED/);
 });
 
 const RUNNER_BIN = path.join(ROOT, '..', 'webmcp-automation-runner', 'bin', 'webmcp-automation-runner.mjs');
