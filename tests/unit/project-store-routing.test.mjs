@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const BIN = path.join(ROOT, 'bin', 'webmcp.mjs');
+const BIN = path.join(ROOT, 'bin', 'webmcp-browser.mjs');
 const WORKSPACE_ROOT = path.resolve(ROOT, '..');
 
 function createCaptureRunner(home, {

@@ -12,12 +12,10 @@
   "license": "MIT",
   "author": "uyencss",
   "bin": {
-    "webmcp": "bin/webmcp.mjs",
     "webmcp-browser": "bin/webmcp-browser.mjs"
   },
   "exports": {
-    ".": "./bin/webmcp.mjs",
-    "./bin/webmcp.mjs": "./bin/webmcp.mjs",
+    ".": "./bin/webmcp-browser.mjs",
     "./catalog/command-catalog.js": "./catalog/command-catalog.js",
     "./chrome-launcher": "./chrome-launcher/index.js",
     "./package.json": "./package.json",
@@ -45,9 +43,9 @@
   ],
   "scripts": {
     "setup": "npm --prefix server install",
-    "gateway": "node bin/webmcp.mjs gateway start",
-    "mcp": "node bin/webmcp.mjs mcp",
-    "cli": "node bin/webmcp.mjs",
+    "gateway": "node bin/webmcp-browser.mjs gateway start",
+    "mcp": "node bin/webmcp-browser.mjs mcp",
+    "cli": "node bin/webmcp-browser.mjs",
     "link:local": "npm link",
     "pack:dry-run": "npm pack --dry-run",
     "build:extension": "node scripts/build-extension-zip.mjs",
