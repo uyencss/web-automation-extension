@@ -8,6 +8,7 @@ import {
   validatePermitStructure,
   permitDigestDomain,
   isNormalizedHttpOrigin,
+  SCHEMAS,
 } from './trusted-context-schema.mjs';
 
 const ACTION_CLASS_PATTERN = /^[a-zA-Z][a-zA-Z0-9]*(?:[._:-][a-zA-Z0-9]+)*$/;
@@ -321,9 +322,15 @@ export class GatewayVerifier {
         }
       }
 
-      // RunId check
-      if (permit.runId !== context.runId) {
-        return this.deny('EXECUTION_REVISION_STALE', actionClass);
+      // RunId / correlation check
+      if (permit.schema === SCHEMAS.PERMIT_V2 && permit.subjectType === 'interactive-session') {
+        if (permit.permitCorrelation !== context.runId) {
+          return this.deny('EXECUTION_REVISION_STALE', actionClass);
+        }
+      } else {
+        if (permit.runId !== context.runId) {
+          return this.deny('EXECUTION_REVISION_STALE', actionClass);
+        }
       }
 
       // Fence freshness check

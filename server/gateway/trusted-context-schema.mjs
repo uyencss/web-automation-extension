@@ -3,15 +3,20 @@ import { createHash, createPublicKey, randomBytes } from 'node:crypto';
 export const SCHEMAS = Object.freeze({
   TRUSTED_CONTEXT: 'webmcp-trusted-context/1',
   PERMIT: 'webmcp-execution-permit/1',
+  PERMIT_V2: 'webmcp-execution-permit/2',
   DURABLE_PERMIT: 'webmcp-durable-execution-permit/1',
   RECEIPT: 'webmcp-execution-receipt/1',
   ACK: 'webmcp-trusted-context-ack/1',
 });
 
 export function permitDigestDomain(permit) {
-  return permit?.schema === SCHEMAS.DURABLE_PERMIT
-    ? 'webmcp-digest-v1:durable-permit'
-    : 'webmcp-digest-v1:permit';
+  if (permit?.schema === SCHEMAS.DURABLE_PERMIT) {
+    return 'webmcp-digest-v1:durable-permit';
+  }
+  if (permit?.schema === SCHEMAS.PERMIT_V2) {
+    return 'webmcp-digest-v1:permit';
+  }
+  return 'webmcp-digest-v1:permit';
 }
 
 export const RECEIPT_DIGEST_DOMAIN = 'webmcp-digest-v1:tool-receipt';
@@ -182,6 +187,8 @@ export function toRawPublicKeyHex(keyInput) {
 }
 
 const SHA256_PATTERN = /^sha256:[0-9a-fA-F]{64}$/;
+const SESSION_ID_PATTERN = /^sess_[A-Za-z0-9]{16,64}$/;
+const PERMIT_CORRELATION_PATTERN = /^corr_session_[A-Za-z0-9]{16,64}$/;
 const SAFE_REASON_PATTERN = /^[A-Z][A-Z0-9_:-]{1,96}$/;
 const SAFE_EVIDENCE_TYPE_PATTERN = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/;
 const SAFE_RECEIPT_CHILD_FIELDS = Object.freeze([
@@ -394,7 +401,8 @@ export function validatePermitStructure(permit) {
   }
 
   const durablePermit = permit.schema === SCHEMAS.DURABLE_PERMIT;
-  if (permit.schema !== SCHEMAS.PERMIT && !durablePermit) {
+  const isV2 = permit.schema === SCHEMAS.PERMIT_V2;
+  if (permit.schema !== SCHEMAS.PERMIT && !durablePermit && !isV2) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: `Expected schema ${SCHEMAS.PERMIT}` };
   }
 
@@ -402,8 +410,34 @@ export function validatePermitStructure(permit) {
     return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'permitId is required' };
   }
 
-  if (typeof permit.runId !== 'string' || !permit.runId.trim()) {
-    return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'runId is required' };
+  if (isV2) {
+    if (permit.subjectType === 'runner-run') {
+      if (typeof permit.runId !== 'string' || !permit.runId.trim()) {
+        return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'runId is required' };
+      }
+      if (permit.sessionId !== undefined || permit.permitCorrelation !== undefined || permit.sessionContextDigest !== undefined) {
+        return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'runner-run permit must not contain session fields' };
+      }
+    } else if (permit.subjectType === 'interactive-session') {
+      if (permit.runId !== undefined) {
+        return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'interactive-session permit must not contain runId' };
+      }
+      if (typeof permit.sessionId !== 'string' || !SESSION_ID_PATTERN.test(permit.sessionId)) {
+        return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'sessionId is required and must match pattern' };
+      }
+      if (typeof permit.permitCorrelation !== 'string' || !PERMIT_CORRELATION_PATTERN.test(permit.permitCorrelation) || permit.permitCorrelation === permit.sessionId) {
+        return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'permitCorrelation is required and must match pattern and differ from sessionId' };
+      }
+      if (typeof permit.sessionContextDigest !== 'string' || !SHA256_PATTERN.test(permit.sessionContextDigest)) {
+        return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'sessionContextDigest must be a valid sha256 digest' };
+      }
+    } else {
+      return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: `Invalid subjectType: '${permit.subjectType}'` };
+    }
+  } else {
+    if (typeof permit.runId !== 'string' || !permit.runId.trim()) {
+      return { ok: false, reason: 'EXECUTION_PERMIT_MALFORMED', error: 'runId is required' };
+    }
   }
 
   if (typeof permit.claimGeneration !== 'number' || !Number.isInteger(permit.claimGeneration) || permit.claimGeneration < 0) {
