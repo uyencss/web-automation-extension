@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const ROOT = join(fileURLToPath(new URL('../..', import.meta.url)));
-const BIN = join(ROOT, 'bin', 'webmcp.mjs');
+const BIN = join(ROOT, 'bin', 'webmcp-browser.mjs');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

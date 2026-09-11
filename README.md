@@ -23,17 +23,14 @@ The kit has three layers:
      other MCP clients.
    - Generates MCP tools from `catalog/command-catalog.js`.
    - Proxies each tool call to the gateway HTTP API.
-4. Package CLI: `bin/webmcp.mjs`
-   - Exposes `webmcp mcp`, `webmcp gateway start`, `webmcp launch`,
-     `webmcp profiles list`, `webmcp health`, and `webmcp call`.
-   - Exposes an optional `webmcp workflow` bridge when
-     `@gyga-browser/webmcp-workflow` is installed separately.
-   - Exposes an optional `webmcp ai` bridge when
-     `@gyga-browser/webmcp-ai` is installed separately.
-   - Exposes optional `webmcp automation` and `webmcp mobile` bridges when the
-     Automation Store and ADB Kit are installed.
-   - Reads the kit inventory for `webmcp skills list|path|doctor|adopt|prune|uninstall` without
-     taking ownership of component skill content.
+4. Package CLI: `bin/webmcp-browser.mjs`
+   - Exposes `webmcp-browser mcp`, `webmcp-browser gateway start`,
+     `webmcp-browser launch`, `webmcp-browser profiles list`,
+     `webmcp-browser health`, and `webmcp-browser call`.
+   - Exposes the legacy `webmcp-browser project` bridge onto the Automation
+     Runner workspace surface. All other aggregate routes (`workflow`, `ai`,
+     `site`, `automation`, `vault`, `mobile`, `adb`, `captcha`, `skills`,
+     `store`) belong to the WebMCP CLI (`webmcp`).
    - Supports npm/npx-style MCP configs without absolute repo paths through the
      released npm package.
 5. Chrome launcher: `chrome-launcher/`
@@ -136,9 +133,9 @@ npx -y @gyga-browser/webmcp-browser-automation-kit call webmcp.listTools '{"tabI
 ## Local Credential Vault
 
 Credential storage is a separate package,
-**[@gyga-browser/webmcp-vault-kit](../webmcp-vault-kit)**. This kit only exposes
-an optional `webmcp vault` CLI bridge to it (like `webmcp workflow`) — it does
-not bundle or depend on the vault package. See that package's README for setup.
+**[@gyga-browser/webmcp-vault-kit](../webmcp-vault-kit)**. This kit does not
+bundle or depend on the vault package, and the aggregate `vault` route belongs
+to the WebMCP CLI (`webmcp vault ...`). See that package's README for setup.
 
 Capture page console output around an automation step:
 
@@ -444,48 +441,55 @@ makes a retried acquire return the same lease. Leases expire by TTL
 unknown or expired leases. The broker never launches Chrome and never emits
 physical profile ids — they live only in the config file.
 
-Inside this monorepo checkout, workflow runner commands are available through
-the same `webmcp` CLI:
+Inside this monorepo checkout, workflow runner commands belong to the
+independent workflow package and the aggregate WebMCP CLI — not to
+`webmcp-browser`:
 
 ```bash
-node bin/webmcp.mjs workflow validate ../webmcp-workflow-cli/tests/fixtures/minimal-workflow.json
-node bin/webmcp.mjs workflow dry-run ../webmcp-workflow-cli/tests/fixtures/example-title-workflow.json --json
-node bin/webmcp.mjs workflow run minimal --config ../webmcp-workflow-cli/tests/fixtures/dispatcher.config.json --profile personal
+node ../webmcp-workflow-cli/bin/webmcp-workflow-cli.js --help
+node ../../packages/webmcp-cli/bin/webmcp-cli.mjs workflow --help
 ```
 
 This package does not install the workflow runner. For published npm workflow
 usage, install the independent workflow package in the same project/global
-context, or include both packages in an `npx` invocation:
+context:
 
 ```bash
-npx -y -p @gyga-browser/webmcp-browser-automation-kit -p @gyga-browser/webmcp-workflow webmcp workflow --help
+npx -y @gyga-browser/webmcp-workflow --help
 npx -y @gyga-browser/webmcp-workflow run workflow.json
 ```
 
-The AI provider CLI is also an independent package. The umbrella command only
-forwards arguments and stdio; workflow integrations should call `webmcp-ai`
-directly through the versioned tool protocol.
+The AI provider CLI is also an independent package. Workflow integrations
+should call `webmcp-ai` directly through the versioned tool protocol, or
+through the aggregate CLI:
 
 ```bash
-npx -y -p @gyga-browser/webmcp-browser-automation-kit -p @gyga-browser/webmcp-ai webmcp ai doctor --json
+node ../../packages/webmcp-cli/bin/webmcp-cli.mjs ai doctor --json
 npx -y @gyga-browser/webmcp-ai providers list --json
 ```
 
-After a global install, the same commands are available as:
+After a global install, the browser commands are available as:
 
 ```bash
-webmcp mcp
-webmcp gateway start
-webmcp gateway health --json
-webmcp call ping
+webmcp-browser mcp
+webmcp-browser gateway start
+webmcp-browser gateway health --json
+webmcp-browser call ping
+webmcp-browser project list --json
+webmcp-browser extension-info --json
+webmcp-browser extension-path
+```
+
+Aggregate routes (`workflow`, `ai`, `automation`, `skills`, `mobile`, `vault`,
+`site`, `store`, `captcha`, `adb`) are owned by the WebMCP CLI:
+
+```bash
 webmcp workflow doctor
 webmcp workflow run minimal --config ../webmcp-workflow-cli/tests/fixtures/dispatcher.config.json --profile personal
 webmcp ai doctor --json
 webmcp automation list
 webmcp skills doctor
 webmcp mobile --help
-webmcp extension-info --json
-webmcp extension-path
 ```
 
 Inside a local checkout, use the npm script wrapper:
@@ -495,11 +499,11 @@ npm run cli -- -h
 npm run cli -- health --json
 ```
 
-While developing this checkout, expose the `webmcp` command on your PATH with:
+While developing this checkout, expose the `webmcp-browser` command on your PATH with:
 
 ```bash
 npm run link:local
-webmcp -h
+webmcp-browser -h
 ```
 
 ## Agent Usage Contract
@@ -528,7 +532,7 @@ webmcp -h
 | `npm run gateway`                       | Start the HTTP/WebSocket gateway.                                                   |
 | `npm run mcp`                           | Start the stdio MCP adapter for clients that launch it manually.                    |
 | `npm run cli -- <command>`              | Run the package CLI from this checkout.                                             |
-| `npm run link:local`                    | Link this checkout globally so `webmcp ...` works from any shell.                   |
+| `npm run link:local`                    | Link this checkout globally so `webmcp-browser ...` works from any shell.   |
 | `npm run pack:dry-run`                  | Show the files that would be published to npm.                                      |
 | `npm run install:agent`                 | Run the multi-client installer helper.                                              |
 | `npm run install:claude`                | Copy skill to `~/.claude/skills` and register MCP server (user scope).              |

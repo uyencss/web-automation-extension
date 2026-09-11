@@ -7,7 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const BIN = path.join(ROOT, 'bin', 'webmcp.mjs');
+const BIN = path.join(ROOT, 'bin', 'webmcp-browser.mjs');
 
 const PHYSICAL = 'Chrome:Secret Suno Account';
 const PHYSICAL_FLOW = 'Chrome:Secret Flow Account';

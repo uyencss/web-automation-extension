@@ -7,10 +7,13 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const BIN = path.join(ROOT, 'bin', 'webmcp.mjs');
+const BIN = path.join(ROOT, 'bin', 'webmcp-browser.mjs');
 const WORKSPACE_ROOT = path.resolve(ROOT, '..');
+// Vault setup in bootstrap tests invokes the owning vault package directly:
+// the aggregate `vault` route now belongs to the WebMCP CLI, not the browser.
+const VAULT_BIN = path.join(WORKSPACE_ROOT, 'webmcp-vault-kit', 'bin', 'webmcp-vault.mjs');
 
-// Mirrors bin/webmcp.mjs serviceFileName(): the exact template name production
+// Mirrors bin/webmcp-browser.mjs serviceFileName(): the exact template name production
 // renders for this platform (launchd plist / systemd service / Windows task xml).
 const serviceTemplateFileName = (id) => {
   if (process.platform === 'darwin') return `io.${id}.plist`;
@@ -18,25 +21,6 @@ const serviceTemplateFileName = (id) => {
   return `${id}.service`;
 };
 
-test('webmcp workflow delegates to the workflow dispatcher CLI', () => {
-  const result = spawnSync(process.execPath, [
-    BIN,
-    'workflow',
-    'dry-run',
-    'webmcp-workflow-cli/tests/fixtures/minimal-workflow.json',
-    '--json',
-    '--no-history',
-  ], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.workflow.id, 'minimal');
-  assert.equal(payload.validation.valid, true);
-});
 
 test('webmcp mcp --help exits without starting the stdio adapter', () => {
   const result = spawnSync(process.execPath, [BIN, 'mcp', '--help'], {
@@ -46,7 +30,7 @@ test('webmcp mcp --help exits without starting the stdio adapter', () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /webmcp mcp/);
+  assert.match(result.stdout, /webmcp-browser mcp/);
   assert.match(result.stdout, /stdio MCP adapter/);
 });
 
@@ -742,7 +726,7 @@ test('webmcp bootstrap vault-key-plan reports redacted key-provider readiness', 
     WEBMCP_NO_AUTOSTART: '1',
     WEBMCP_VAULT_KEY_FILE: keyFile,
   };
-  const initialized = spawnSync(process.execPath, [BIN, 'vault', 'init', '--json'], {
+  const initialized = spawnSync(process.execPath, [VAULT_BIN, 'init', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
     timeout: 10000,
@@ -924,7 +908,7 @@ test('webmcp bootstrap canary reports typed live blockers without writing receip
     WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
     WEBMCP_NO_AUTOSTART: '1',
   };
-  const initialized = spawnSync(process.execPath, [BIN, 'vault', 'init', '--json'], {
+  const initialized = spawnSync(process.execPath, [VAULT_BIN, 'init', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
     timeout: 10000,
@@ -1258,91 +1242,12 @@ test('webmcp bootstrap subcommand help exits before validating required flags', 
   assert.doesNotMatch(result.stderr, /gateway must be a safe id|profile-id or candidate-ordinal/);
 });
 
-test('webmcp workflow help uses the webmcp workflow command name', () => {
-  const result = spawnSync(process.execPath, [BIN, 'workflow', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /webmcp workflow <command> \[options\]/);
-  assert.match(result.stdout, /webmcp workflow run example-title/);
-});
 
-test('webmcp workflow reports a clear install hint when dispatcher is unavailable', () => {
-  const result = spawnSync(process.execPath, [BIN, 'workflow', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_WORKFLOW_DISPATCHER_BIN: './missing-webmcp-workflow-cli.js',
-    },
-  });
 
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Workflow dispatcher CLI not found/);
-  assert.match(result.stderr, /Install @gyga-browser\/webmcp-workflow/);
-});
 
-test('webmcp site resolves the Site Store from a monorepo checkout', () => {
-  const result = spawnSync(process.execPath, [BIN, 'site', 'list-capabilities', '--json'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
 
-  assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout);
-  assert.ok(payload.capabilities.length > 0);
-  assert.match(payload.capabilities[0].id, /^[a-z0-9-]+\/[a-z0-9-]+$/);
-});
 
-test('webmcp store remains a deprecated compatibility route', () => {
-  const result = spawnSync(process.execPath, [BIN, 'store', 'list'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /Deprecation: 'webmcp store' is now 'webmcp site'/);
-  assert.match(result.stdout, /Site Store Capabilities/);
-});
-
-test('webmcp ai delegates to the standalone AI CLI', () => {
-  const result = spawnSync(process.execPath, [BIN, 'ai', 'providers', 'list', '--json'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.ok, true);
-  assert.deepEqual(payload.providers.map((provider) => provider.id), ['agy', 'claude', 'codex', 'opencode']);
-});
-
-test('webmcp ai help uses the umbrella command name', () => {
-  const result = spawnSync(process.execPath, [BIN, 'ai', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /webmcp ai <command>/);
-});
-
-test('webmcp ai reports a clear install hint when the CLI is unavailable', () => {
-  const result = spawnSync(process.execPath, [BIN, 'ai', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_AI_BIN: './missing-webmcp-ai.mjs',
-    },
-  });
-
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /WebMCP AI CLI not found/);
-  assert.match(result.stderr, /Install @gyga-browser\/webmcp-ai/);
-});
 
 test('webmcp extension-info prints published Chrome Web Store metadata', () => {
   const result = spawnSync(process.execPath, [BIN, 'extension-info', '--json'], {
@@ -1360,92 +1265,12 @@ test('webmcp extension-info prints published Chrome Web Store metadata', () => {
   assert.match(payload.unpackedExtensionPath, /webmcp-extension\/dist$/);
 });
 
-test('webmcp vault delegates to the vault CLI', () => {
-  const result = spawnSync(process.execPath, [BIN, 'vault', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /webmcp-vault — local encrypted credential vault/);
-});
 
-test('webmcp vault reports a clear install hint when vault is unavailable', () => {
-  const result = spawnSync(process.execPath, [BIN, 'vault', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_VAULT_BIN: './missing-webmcp-vault.js',
-    },
-  });
 
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /WebMCP vault CLI not found/);
-  assert.match(result.stderr, /Install @gyga-browser\/webmcp-vault-kit/);
-});
 
-test('webmcp automation delegates to the Automation Store CLI', () => {
-  const result = spawnSync(process.execPath, [BIN, 'automation', 'list', '--json'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
 
-  assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout);
-  assert.ok(payload.automations.length > 0);
-});
 
-test('webmcp automation help uses the umbrella command name', () => {
-  const result = spawnSync(process.execPath, [BIN, 'automation', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /webmcp automation run <id>/);
-});
-
-test('webmcp automation reports a clear install hint when unavailable', () => {
-  const result = spawnSync(process.execPath, [BIN, 'automation', 'list'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_AUTOMATION_BIN: './missing-webmcp-automation.mjs',
-    },
-  });
-
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /WebMCP Automation Store CLI not found/);
-  assert.match(result.stderr, /WEBMCP_AUTOMATION_BIN/);
-});
-
-test('webmcp mobile exposes the ADB MCP entry point without starting it from help', () => {
-  const result = spawnSync(process.execPath, [BIN, 'mobile', '--help'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-  });
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /webmcp mobile mcp/);
-  assert.match(result.stdout, /webmcp adb mcp/);
-});
-
-test('webmcp mobile reports a clear install hint when ADB Kit is unavailable', () => {
-  const result = spawnSync(process.execPath, [BIN, 'mobile', 'mcp'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_ADB_MCP_BIN: './missing-webmcp-adb-server.mjs',
-    },
-  });
-
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /WebMCP ADB MCP server not found/);
-  assert.match(result.stderr, /WEBMCP_ADB_MCP_BIN/);
-});
 
 function writeStubCliBin(dir) {
   const stubBin = path.join(dir, 'stub-webmcp-cli.mjs');
@@ -1461,92 +1286,9 @@ function writeStubCliBin(dir) {
   return stubBin;
 }
 
-test('webmcp skills delegates argv exactly to the CLI executable', () => {
-  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-skills-delegate-argv-'));
-  const stubBin = writeStubCliBin(home);
-  const captureFile = path.join(home, 'cli-argv.jsonl');
-  const result = spawnSync(process.execPath, [BIN, 'skills', 'list', '--json'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_CLI_BIN: stubBin,
-      WEBMCP_TEST_CLI_CAPTURE_FILE: captureFile,
-      WEBMCP_TEST_CLI_STDOUT: '{"stub":"argv"}\n',
-      WEBMCP_TEST_CLI_EXIT_CODE: '0',
-    },
-  });
 
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /"stub":"argv"/);
-  const argvLines = readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-  assert.deepEqual(argvLines, [['skills', 'list', '--json']]);
-});
 
-test('webmcp skills passes through stdout and exit code from the CLI', () => {
-  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-skills-delegate-passthrough-'));
-  const stubBin = writeStubCliBin(home);
-  const captureFile = path.join(home, 'cli-argv.jsonl');
-  const result = spawnSync(process.execPath, [BIN, 'skills', 'doctor', '--json'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_CLI_BIN: stubBin,
-      WEBMCP_TEST_CLI_CAPTURE_FILE: captureFile,
-      WEBMCP_TEST_CLI_STDOUT: '{"schema":"webmcp-skills-doctor/1","ok":true}\n',
-      WEBMCP_TEST_CLI_EXIT_CODE: '3',
-    },
-  });
 
-  assert.equal(result.status, 3, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), { schema: 'webmcp-skills-doctor/1', ok: true });
-  const argvLines = readFileSync(captureFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-  assert.deepEqual(argvLines, [['skills', 'doctor', '--json']]);
-});
-
-test('webmcp skills reports an install hint when the CLI executable is missing', () => {
-  const result = spawnSync(process.execPath, [BIN, 'skills', 'list'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      WEBMCP_CLI_BIN: './missing-webmcp-cli.mjs',
-    },
-  });
-
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /webmcp-cli/);
-  assert.match(result.stderr, /WEBMCP_CLI_BIN|Install/);
-});
-
-test('webmcp skills never resolves a bare webmcp command from PATH', () => {
-  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-skills-no-path-'));
-  const fakeDir = path.join(home, 'fake-path');
-  mkdirSync(fakeDir, { recursive: true });
-  const markerFile = path.join(home, 'path-invoked.marker');
-  const fakeBin = path.join(fakeDir, 'webmcp');
-  writeFileSync(fakeBin, [
-    '#!/bin/sh',
-    `touch ${JSON.stringify(markerFile)}`,
-    'echo "PATH-FAKE-INVOKED"',
-    '',
-  ].join('\n'), { mode: 0o755 });
-  const result = spawnSync(process.execPath, [BIN, 'skills', 'list', '--json'], {
-    cwd: WORKSPACE_ROOT,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: `${fakeDir}${path.delimiter}${process.env.PATH ?? ''}`,
-      WEBMCP_CLI_BIN: './missing-webmcp-cli.mjs',
-    },
-  });
-
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /webmcp-cli/);
-  assert.equal(existsSync(markerFile), false);
-  assert.doesNotMatch(result.stdout, /PATH-FAKE-INVOKED/);
-});
 
 function writeHealthyHome(base) {
   mkdirSync(path.join(base, '.codex'), { recursive: true });
@@ -1766,7 +1508,7 @@ test('webmcp bootstrap canary respects CLI skills probe', () => {
     WEBMCP_NO_AUTOSTART: '1',
     WEBMCP_CLI_BIN: stubBin,
   };
-  const initialized = spawnSync(process.execPath, [BIN, 'vault', 'init', '--json'], {
+  const initialized = spawnSync(process.execPath, [VAULT_BIN, 'init', '--json'], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
     timeout: 10000,
@@ -1822,7 +1564,7 @@ test('webmcp project help surfaces the project workspace commands in the top-lev
     encoding: 'utf8',
   });
   assert.equal(help.status, 0, help.stderr);
-  assert.match(help.stdout, /webmcp project <command> \[options\]/);
+  assert.match(help.stdout, /webmcp-browser project <command> \[options\]/);
 
   const project = spawnSync(process.execPath, [BIN, 'project', '--help'], {
     cwd: WORKSPACE_ROOT,
