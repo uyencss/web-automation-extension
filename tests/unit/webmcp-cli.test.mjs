@@ -195,6 +195,49 @@ test('webmcp doctor reports MCP readiness, config state, and gateway health as J
   assert.doesNotMatch(result.stdout, /secret-hostname|secret\\.tailnet|100\\.64\\.0\\.1/);
 });
 
+test('webmcp doctor accepts the installed CLI-wrapper registration form', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-cli-wrapper-'));
+  mkdirSync(path.join(home, '.codex'), { recursive: true });
+  mkdirSync(path.join(home, '.gemini', 'config'), { recursive: true });
+  mkdirSync(path.join(home, '.gemini', 'antigravity-ide'), { recursive: true });
+  const wrapper = path.join(home, '.local', 'share', 'webmcp', 'runtime', 'bin', 'webmcp');
+  writeFileSync(path.join(home, '.codex', 'config.toml'), [
+    '[mcp_servers.webmcp]',
+    `command = ${JSON.stringify(wrapper)}`,
+    'args = ["mcp"]',
+    '',
+  ].join('\n'));
+  writeFileSync(path.join(home, '.gemini', 'config', 'mcp_config.json'), JSON.stringify({
+    mcpServers: { webmcp: { command: wrapper, args: ['mcp'] } },
+  }, null, 2));
+  writeFileSync(path.join(home, '.gemini', 'antigravity-ide', 'mcp_config.json'), JSON.stringify({
+    mcpServers: { webmcp: { command: wrapper, args: ['mcp', '--extra'] } },
+  }, null, 2));
+
+  const result = spawnSync(process.execPath, [BIN, 'doctor', '--json'], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    timeout: 20000,
+    env: {
+      ...process.env,
+      HOME: home,
+      WEBMCP_GATEWAY_URL: 'http://127.0.0.1:9',
+      WEBMCP_NO_AUTOSTART: '1',
+      WEBMCP_KIT_MANIFEST: path.join(home, 'no-such-kit.json'),
+    },
+  });
+
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.config.codex.registered, true);
+  assert.equal(report.config.codex.mode, 'cli-wrapper');
+  assert.equal(report.config.codex.healthy, true);
+  assert.equal(report.config.gemini.mode, 'cli-wrapper');
+  assert.equal(report.config.gemini.healthy, true);
+  assert.equal(report.config.antigravity.registered, true);
+  assert.equal(report.config.antigravity.healthy, false);
+  assert.equal(report.bootstrap.mcpRegistered, true);
+});
+
 test('webmcp doctor blocks bootstrap when Chrome download policy is not effective', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-doctor-download-policy-'));
   mkdirSync(path.join(home, '.codex'), { recursive: true });
