@@ -125,13 +125,150 @@ export function extractExecutedOrigin(params) {
   return null;
 }
 
+// ── A3 slice v1: physical fence gate (ADR 0012) ──────────────────────────
+// Fence mode resolution: `--fence-observe` argv forces observe; otherwise
+// `A3_FENCE_MODE=enforce|observe` activates the gate; anything else (including
+// unset) leaves the gate dormant so the pre-wire runtime path is unchanged.
+export function resolveA3FenceMode({ argv = process.argv.slice(2), env = process.env } = {}) {
+  if (Array.isArray(argv) && argv.includes('--fence-observe')) return 'observe';
+  const raw = env?.A3_FENCE_MODE;
+  if (raw === 'enforce' || raw === 'observe') return raw;
+  return 'off';
+}
+
+// Divergence log sink: redacted records only (logical profile key, opaque
+// lease id, epoch, correlation id — never secrets or physical ids). The
+// module sink is the test hook; drain it with drainFenceDivergences().
+// Bound: at most FENCE_DIVERGENCE_MAX records are retained (oldest dropped
+// first) so attacker-spammed fence denies cannot grow memory without bound.
+export const fenceDivergenceSink = [];
+const FENCE_DIVERGENCE_MAX = 1024;
+
+export function drainFenceDivergences() {
+  const out = [...fenceDivergenceSink];
+  fenceDivergenceSink.length = 0;
+  return out;
+}
+
+export function logFenceDivergence(sink, record) {
+  const entry = {
+    profileKey: record.profileKey ?? null,
+    leaseId: record.leaseId ?? null,
+    fenceEpoch: record.fenceEpoch ?? null,
+    observedAt: new Date().toISOString(),
+    correlationId: record.correlationId ?? null,
+    decision: record.decision ?? null,
+    reason: record.reason ?? null,
+  };
+  const target = Array.isArray(sink) ? sink : fenceDivergenceSink;
+  target.push(entry);
+  while (target.length > FENCE_DIVERGENCE_MAX) target.shift();
+  return entry;
+}
+
+// Broker convention: the fence proof travels under `fenceProof`, with `fence`
+// and `fenceId` accepted as aliases.
+export function extractFenceProof(params) {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return undefined;
+  return params.fenceProof ?? params.fence ?? params.fenceId;
+}
+
+export function fenceProofEpoch(proof) {
+  if (proof && typeof proof === 'object' && !Array.isArray(proof)) {
+    return Number.isSafeInteger(proof.fenceEpoch) ? proof.fenceEpoch : null;
+  }
+  return null;
+}
+
+export function fenceProofLeaseId(proof) {
+  if (proof && typeof proof === 'object' && !Array.isArray(proof)) {
+    return typeof proof.leaseId === 'string' && proof.leaseId ? proof.leaseId : null;
+  }
+  return null;
+}
+
+// A3 physical fence scope (ADR 0012 D3/D5): the fence guards profile-mutating
+// actions. Read-only observations carry no outward effect, so they are not
+// fence-gated for durable permits and never trigger the no-governor
+// fail-safe. Anything not on the read-only list is mutating (fail-safe
+// default: unknown actions require a validated proof).
+const READ_ONLY_ACTION_CLASSES = new Set([
+  'browser.listTools',
+  'browser.getPageText',
+  'browser.getAriaSnapshot',
+  'browser.getElementBounds',
+  'browser.listDownloadEvents',
+]);
+
+export function isMutatingAction(actionClass) {
+  return typeof actionClass !== 'string' || !READ_ONLY_ACTION_CLASSES.has(actionClass);
+}
+
+// S6d Fix A — bind the issued proof to the requested action (F1). Issued
+// proofs carry `scope.actions` (e.g. `['browser-read']` or
+// `['browser-write']`); a `browser-read` proof must never authorize a
+// mutating call even when the lease admits both scopes. Mutating classes
+// require `browser-write`, read-only classes require `browser-read`.
+// Missing/mismatched scope → PROFILE_FENCE_STALE ("fence scope does not
+// admit the requested action").
+export function requiredFenceAction(actionClass) {
+  return isMutatingAction(actionClass) ? 'browser-write' : 'browser-read';
+}
+
+export function fenceScopeAdmitsAction(proof, actionClass) {
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
+  const actions = proof.scope?.actions;
+  return Array.isArray(actions) && actions.includes(requiredFenceAction(actionClass));
+}
+
+// Synchronous, fail-soft read of the in-process Governor live tuple for a
+// logical profile key. Null when unwired or unreadable — callers fall back
+// to the context-carried epoch. Returns a tuple ONLY for a live resource:
+// state leased/active, needsReconciliation false, a current lease exists,
+// that lease is unexpired by TTL, and its epoch matches the resource epoch.
+// Every other shape (unknown, quarantined, external_use, ready, cooldown,
+// expired lease, reconciling) is non-live and yields null (fail-closed), so
+// a crash orphan left `unknown` can never supply the "live" tuple.
+export function readGovernorActiveFence(governor, profileKey, nowMs = Date.now()) {
+  try {
+    if (!governor || typeof profileKey !== 'string' || !profileKey) return null;
+    const state = governor.repository?.read();
+    const resources = state && typeof state === 'object' ? Object.values(state.resources || {}) : [];
+    const resource = resources.find((r) => r && (r.profileAlias === profileKey || (Array.isArray(r.aliases) && r.aliases.includes(profileKey))));
+    if (!resource || !Number.isSafeInteger(resource.fenceEpoch)) return null;
+    if (resource.state !== 'leased' && resource.state !== 'active') return null;
+    if (resource.needsReconciliation === true) return null;
+    if (typeof resource.currentLeaseId !== 'string' || !resource.currentLeaseId) return null;
+    const leases = state.leases && typeof state.leases === 'object' ? state.leases : {};
+    const lease = leases[resource.currentLeaseId];
+    if (!lease || typeof lease !== 'object') return null;
+    if (lease.fenceEpoch !== resource.fenceEpoch) return null;
+    if (typeof lease.expiresAt !== 'string' || Number.isNaN(Date.parse(lease.expiresAt))) return null;
+    if (Date.parse(lease.expiresAt) <= nowMs) return null;
+    return {
+      profileKey,
+      leaseId: resource.currentLeaseId,
+      fenceEpoch: resource.fenceEpoch,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export class GatewayVerifier {
-  constructor({ publicKey = null, keyId = null, expectedPhase = null, permitStore = new PermitStore(), mode = 'enforce', physicalRouteMap = null, routeMap = null, aliasToPhysicalMap = null } = {}) {
+  constructor({ publicKey = null, keyId = null, expectedPhase = null, permitStore = new PermitStore(), mode = 'enforce', physicalRouteMap = null, routeMap = null, aliasToPhysicalMap = null, fenceMode = null, divergenceSink = null, getActiveFence = null } = {}) {
     this.publicKey = publicKey;
     this.keyId = keyId || null;
     this.expectedPhase = expectedPhase || null;
     this.permitStore = permitStore;
     this.mode = mode; // off | observe | enforce
+    // A3 physical fence gate (ADR 0012): explicit fenceMode wins, else the
+    // process fence flag/env. Dormant ('off') preserves the pre-wire path.
+    this.fenceMode = fenceMode ?? resolveA3FenceMode();
+    this.divergenceSink = Array.isArray(divergenceSink) ? divergenceSink : fenceDivergenceSink;
+    // Optional sync reader for the in-process Governor live tuple:
+    // (profileKey) => { profileKey, leaseId, fenceEpoch } | null.
+    this.getActiveFence = typeof getActiveFence === 'function' ? getActiveFence : null;
     const rawMap = physicalRouteMap || routeMap || aliasToPhysicalMap || null;
     if (rawMap instanceof Map) {
       this.physicalRouteMap = rawMap;
@@ -165,6 +302,129 @@ export class GatewayVerifier {
   deny(reason, actionClass) {
     const decision = this.mode === 'observe' ? 'would-deny' : 'deny';
     return { decision, reason, actionClass };
+  }
+
+  // A3 fence-layer verdict (ADR 0012 D3/D5): labelled by the physical fence
+  // mode, NOT the interactive permit mode. Under fence-observe the decision
+  // is would-deny (log divergence, do not deny); the gateway HTTP path
+  // forwards fence-layer would-deny while permit-layer would-deny still
+  // blocks. fenceLayer marks the layer for that HTTP distinction.
+  fenceVerdict(reason, actionClass) {
+    const decision = this.fenceMode === 'observe' ? 'would-deny' : 'deny';
+    return { decision, reason, actionClass, fenceLayer: true };
+  }
+
+  // A3 physical fence gate (ADR 0012 D3): exact-tuple check against the live
+  // tuple. The live epoch comes from the in-process Governor via
+  // getActiveFence when wired, else from the live trusted context (which
+  // carries the Governor-issued epoch). This is a cheap consistency
+  // precheck ONLY — issuance/scope/expiry/use validation is authoritative
+  // in Governor.authorizeFence, called from the async request path before
+  // this verifier runs. Missing proof → PROFILE_FENCE_REQUIRED;
+  // epoch/lease mismatch → PROFILE_FENCE_STALE. Returns null when the gate
+  // does not apply (dormant mode, durable permit without context, composite
+  // batch outer call whose children gate individually, or no known live epoch).
+  checkPhysicalFence({ actionClass, params, permit, context } = {}) {
+    if (this.fenceMode === 'off' || !context || typeof context !== 'object') return null;
+    if (actionClass === 'browser.batch') return null;
+    const profileKey = context.profileAlias || context.profileId
+      || permit?.profileAlias || permit?.profileId || null;
+    let liveEpoch = null;
+    let liveLeaseId = null;
+    if (this.getActiveFence && profileKey) {
+      try {
+        const live = this.getActiveFence(profileKey);
+        if (live && typeof live === 'object') {
+          if (Number.isSafeInteger(live.fenceEpoch)) liveEpoch = live.fenceEpoch;
+          if (typeof live.leaseId === 'string' && live.leaseId) liveLeaseId = live.leaseId;
+        }
+      } catch {
+        // Live-tuple read failure falls back to the context-carried epoch.
+      }
+    }
+    if (liveEpoch === null) {
+      if (!Number.isSafeInteger(context.fenceEpoch)) return null;
+      liveEpoch = context.fenceEpoch;
+    }
+    const proof = extractFenceProof(params);
+    const proofEpoch = fenceProofEpoch(proof);
+    const proofLeaseId = fenceProofLeaseId(proof);
+    const correlationId = permit?.runId ?? context?.runId ?? permit?.permitId ?? null;
+    let reason = null;
+    if (proof === undefined || proof === null) {
+      reason = 'PROFILE_FENCE_REQUIRED';
+    } else if (proofEpoch === null || proofEpoch !== liveEpoch) {
+      reason = 'PROFILE_FENCE_STALE';
+    } else if (proofLeaseId !== null && liveLeaseId !== null && proofLeaseId !== liveLeaseId) {
+      reason = 'PROFILE_FENCE_STALE';
+    } else if (!fenceScopeAdmitsAction(proof, actionClass)) {
+      // S6d Fix A: the presented proof's scope must admit the requested
+      // action (fence scope does not admit the requested action).
+      reason = 'PROFILE_FENCE_STALE';
+    }
+    if (reason) {
+      const verdict = this.fenceVerdict(reason, actionClass);
+      logFenceDivergence(this.divergenceSink, {
+        profileKey, leaseId: proofLeaseId, fenceEpoch: proofEpoch,
+        correlationId, decision: verdict.decision, reason,
+      });
+      return verdict;
+    }
+    return null;
+  }
+
+  // A3 durable-permit fence gate (ADR 0012 D3): durable permits carry no
+  // trusted context, so the live tuple comes ONLY from the wired Governor
+  // reader — never from a fallback. Under an active fence mode, mutating
+  // actions on durable permits must carry a valid fence proof: missing proof
+  // or no known live tuple → PROFILE_FENCE_REQUIRED (fail-safe: never allow
+  // a mutating durable action on an unvalidated proof); epoch/lease
+  // mismatch → PROFILE_FENCE_STALE. Read-only durable actions and dormant
+  // mode are exempt. Like checkPhysicalFence this is a precheck; the
+  // authoritative authorizeFence call happens on the async request path.
+  checkDurableFence({ actionClass, params, permit } = {}) {
+    if (this.fenceMode === 'off') return null;
+    if (!permit || typeof permit !== 'object') return null;
+    if (!isMutatingAction(actionClass) || actionClass === 'browser.batch') return null;
+    const profileKey = permit.profileAlias || permit.profileId || null;
+    let live = null;
+    if (this.getActiveFence && profileKey) {
+      try {
+        live = this.getActiveFence(profileKey);
+      } catch {
+        live = null;
+      }
+    }
+    const proof = extractFenceProof(params);
+    const proofEpoch = fenceProofEpoch(proof);
+    const proofLeaseId = fenceProofLeaseId(proof);
+    const correlationId = permit.runId ?? permit.permitId ?? null;
+    let reason = null;
+    if (proof === undefined || proof === null) {
+      reason = 'PROFILE_FENCE_REQUIRED';
+    } else if (!live || typeof live !== 'object' || !Number.isSafeInteger(live.fenceEpoch)) {
+      // No live tuple known: the presented proof cannot be bound to anything
+      // live, so the check cannot resolve — fail closed as REQUIRED (same as
+      // the no-governor fail-safe on the async path).
+      reason = 'PROFILE_FENCE_REQUIRED';
+    } else if (proofEpoch === null || proofEpoch !== live.fenceEpoch) {
+      reason = 'PROFILE_FENCE_STALE';
+    } else if (proofLeaseId !== null && typeof live.leaseId === 'string' && live.leaseId && proofLeaseId !== live.leaseId) {
+      reason = 'PROFILE_FENCE_STALE';
+    } else if (!fenceScopeAdmitsAction(proof, actionClass)) {
+      // S6d Fix A (durable analogue): bind the proof scope to the requested
+      // action for direct-sync durable callers too.
+      reason = 'PROFILE_FENCE_STALE';
+    }
+    if (reason) {
+      const verdict = this.fenceVerdict(reason, actionClass);
+      logFenceDivergence(this.divergenceSink, {
+        profileKey, leaseId: proofLeaseId, fenceEpoch: proofEpoch,
+        correlationId, decision: verdict.decision, reason,
+      });
+      return verdict;
+    }
+    return null;
   }
 
   checkBudget(permit, count = 1, dryRun = false) {
@@ -333,8 +593,12 @@ export class GatewayVerifier {
         }
       }
 
-      // Fence freshness check
-      if (permit.claimGeneration < context.fenceEpoch) {
+      // Fence freshness check (ADR 0012 D4): the cross-domain arithmetic
+      // compare between permit lineage and fence epochs is retired wherever
+      // the physical fence gate is active — the permit domain keeps
+      // EXECUTION_* codes only. It is retained solely while the gate is
+      // dormant (pre-wire compat so the baseline suite stays pinned).
+      if (this.fenceMode === 'off' && permit.claimGeneration < context.fenceEpoch) {
         return this.deny('EXECUTION_FENCE_STALE', actionClass);
       }
 
@@ -396,6 +660,24 @@ export class GatewayVerifier {
           return this.deny('EXECUTION_PROFILE_MISMATCH', actionClass);
         }
       }
+    }
+
+    // A3 physical fence layer (ADR 0012 D3): fail-closed exact-tuple gate.
+    // Runs after identity/binding checks and before any budget/nonce state is
+    // consumed, so a fence deny never forwards and never mutates the ledger.
+    // Fence-observe would-deny is returned (not swallowed) so the gateway
+    // HTTP path can forward it after logging divergence; permit-layer
+    // would-deny keeps the existing block behaviour there.
+    if (context && !durablePermit) {
+      const fenceVerdict = this.checkPhysicalFence({ actionClass, params, permit, context });
+      if (fenceVerdict) return fenceVerdict;
+    } else if (durablePermit) {
+      // Durable permits carry no trusted context: mutating durable actions
+      // gate on the Governor live tuple via checkDurableFence (missing →
+      // REQUIRED, mismatch → STALE). A valid signed durable permit alone no
+      // longer authorizes a browser mutation under an active fence mode.
+      const durableVerdict = this.checkDurableFence({ actionClass, params, permit });
+      if (durableVerdict) return durableVerdict;
     }
 
     if (this.expectedPhase) {
@@ -612,13 +894,19 @@ export class GatewayVerifier {
       }
     }
 
-    // If ANY child fails preflight, deny entire composite batch immediately without consuming state
+    // If ANY child fails preflight, deny entire composite batch immediately without consuming state.
+    // A fence-layer child deny keeps its fenceMode labelling (observe stays
+    // would-deny with the fence-layer marker) so the HTTP path forwards it;
+    // permit-layer child denies keep the existing interactive-mode label.
     if (deniedResult) {
-      const decision = this.mode === 'observe' ? 'would-deny' : 'deny';
+      const decision = deniedResult.fenceLayer === true
+        ? deniedResult.decision
+        : (this.mode === 'observe' ? 'would-deny' : 'deny');
       return {
         decision,
         reason: deniedResult.reason || 'EXECUTION_PERMIT_SCOPE_DENIED',
         actionClass: 'browser.batch',
+        ...(deniedResult.fenceLayer === true ? { fenceLayer: true } : {}),
         children: childResults,
       };
     }

@@ -19,6 +19,7 @@
     "./catalog/command-catalog.js": "./catalog/command-catalog.js",
     "./chrome-launcher": "./chrome-launcher/index.js",
     "./package.json": "./package.json",
+    "./profile-governor": "./profile-governor/lease-service.mjs",
     "./server/gateway_server.js": "./server/gateway_server.js",
     "./server/gateway/coordinator-dispatcher.mjs": "./server/gateway/coordinator-dispatcher.mjs",
     "./server/mcp_server.mjs": "./server/mcp_server.mjs",

@@ -1,5 +1,5 @@
 import { PermitStore } from './permit-store.mjs';
-import { GatewayVerifier } from './verifier.mjs';
+import { GatewayVerifier, readGovernorActiveFence, extractFenceProof, fenceProofEpoch, fenceProofLeaseId, isMutatingAction, fenceScopeAdmitsAction, logFenceDivergence } from './verifier.mjs';
 import { TrustedContextChannel } from './trusted-context-channel.mjs';
 import { loadDispatcherRouteMap } from './dispatcher-route-resolver.mjs';
 import {
@@ -58,6 +58,10 @@ export class InteractiveRuntime {
     physicalRouteMap = null,
     routeMap = null,
     aliasToPhysicalMap = null,
+    governor = null,
+    fenceMode = null,
+    divergenceSink = null,
+    getActiveFence = null,
   } = {}) {
     const isProduction = process.env.NODE_ENV === 'production';
     const isTestEnv = process.env.NODE_ENV === 'test';
@@ -102,6 +106,20 @@ export class InteractiveRuntime {
       throw new Error('Passing custom physicalRouteMap is not permitted in production construction');
     }
 
+    // A3 (ADR 0012 D6): the in-process Governor singleton is same-trust-domain
+    // local state (no daemon/socket), so unlike caller-supplied keys/stores it
+    // is accepted in production construction. Null keeps the pre-wire path.
+    this.governor = governor || null;
+    this.fenceMode = fenceMode ?? null;
+    if (typeof getActiveFence === 'function') {
+      this.getActiveFence = getActiveFence;
+    } else if (this.governor) {
+      const gov = this.governor;
+      this.getActiveFence = (profileKey) => readGovernorActiveFence(gov, profileKey);
+    } else {
+      this.getActiveFence = null;
+    }
+
     this.permitStore = (isTestSeamAllowed && permitStore) || new PermitStore();
     this.publicKey = !isTestSeamAllowed ? pinnedPublicKey : publicKey;
     this.keyId = !isTestSeamAllowed ? pinnedKeyId : (keyId || null);
@@ -132,6 +150,9 @@ export class InteractiveRuntime {
       permitStore: this.permitStore,
       mode: this.mode === 'observe' ? 'observe' : 'enforce',
       physicalRouteMap: this.physicalRouteMap,
+      fenceMode: this.fenceMode,
+      divergenceSink: divergenceSink ?? undefined,
+      getActiveFence: this.getActiveFence,
     });
 
     this.trustedContextChannel =
@@ -175,6 +196,126 @@ export class InteractiveRuntime {
     return receipt;
   }
 
+  _governorFenceEpochFor(permit, context) {
+    // A3 (ADR 0012 D1): the Governor-issued live epoch wins when the runtime
+    // is wired to the in-process Governor. Null keeps the legacy derivation.
+    try {
+      if (!this.governor) return null;
+      const alias = context?.profileAlias || context?.profileId
+        || permit?.profileAlias || permit?.profileId || null;
+      const live = alias ? readGovernorActiveFence(this.governor, alias) : null;
+      return live && Number.isSafeInteger(live.fenceEpoch) ? live.fenceEpoch : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // A3 authoritative fence check (ADR 0012 D3): validates the presented
+  // proof against the Governor via authorizeFence (issuance, scope, expiry,
+  // use count, liveness) BEFORE the sync verifier precheck runs. Returns a
+  // fence-layer deny verdict, or null to continue down the sync path.
+  //  - missing proof → PROFILE_FENCE_REQUIRED (sync gate also covers this);
+  //  - Governor typed failure (PROFILE_FENCE_STALE, PROFILE_LEASE_NOT_FOUND,
+  //    PROFILE_LEASE_EXPIRED, scope/use failures, …) → PROFILE_FENCE_STALE;
+  //  - non-Governor failure (check could not resolve) → REQUIRED;
+  //  - no governor wired → fail-safe REQUIRED for mutating actions under
+  //    enforce (never allow on an unvalidated proof);
+  //  - fence-observe → log divergence and continue (return null); the sync
+  //    gate then records its own would-deny and the HTTP path forwards it.
+  // Read-only actions and the composite batch outer call are exempt here
+  // (batch children authorize individually via authorizeBatchFences).
+  async authorizeFenceAsync({ actionClass, params, permit } = {}) {
+    const fenceMode = this.verifier?.fenceMode ?? 'off';
+    if (fenceMode === 'off') return null;
+    if (!isMutatingAction(actionClass) || actionClass === 'browser.batch') return null;
+    const proof = extractFenceProof(params);
+    const profileKey = permit?.profileAlias || permit?.profileId || null;
+    const correlationId = permit?.runId ?? permit?.permitId ?? null;
+    const deny = (reason) => {
+      const verdict = this.verifier.fenceVerdict(reason, actionClass);
+      logFenceDivergence(this.verifier.divergenceSink, {
+        profileKey,
+        leaseId: fenceProofLeaseId(proof),
+        fenceEpoch: fenceProofEpoch(proof),
+        correlationId,
+        decision: verdict.decision,
+        reason,
+      });
+      return verdict;
+    };
+    if (proof === undefined || proof === null) {
+      if (fenceMode === 'observe') return null;
+      return deny('PROFILE_FENCE_REQUIRED');
+    }
+    if (!this.governor || typeof this.governor.authorizeFence !== 'function') {
+      if (fenceMode === 'observe') return null;
+      return deny('PROFILE_FENCE_REQUIRED');
+    }
+    if (!fenceScopeAdmitsAction(proof, actionClass)) {
+      // S6d Fix A: bind the issued proof to the requested action before the
+      // authoritative call — a `browser-read` proof must never authorize a
+      // mutating call even when the lease admits both (fence scope does not
+      // admit the requested action). Observe logs divergence and continues.
+      const reason = 'PROFILE_FENCE_STALE';
+      if (fenceMode === 'observe') {
+        const verdict = this.verifier.fenceVerdict(reason, actionClass);
+        logFenceDivergence(this.verifier.divergenceSink, {
+          profileKey,
+          leaseId: fenceProofLeaseId(proof),
+          fenceEpoch: fenceProofEpoch(proof),
+          correlationId,
+          decision: verdict.decision,
+          reason,
+        });
+        return null;
+      }
+      return deny(reason);
+    }
+    try {
+      await this.governor.authorizeFence(proof);
+      return null;
+    } catch (error) {
+      const reason = (error && typeof error.code === 'string' && error.code.startsWith('PROFILE_'))
+        ? 'PROFILE_FENCE_STALE'
+        : 'PROFILE_FENCE_REQUIRED';
+      if (fenceMode === 'observe') {
+        const verdict = this.verifier.fenceVerdict(reason, actionClass);
+        logFenceDivergence(this.verifier.divergenceSink, {
+          profileKey,
+          leaseId: fenceProofLeaseId(proof),
+          fenceEpoch: fenceProofEpoch(proof),
+          correlationId,
+          decision: verdict.decision,
+          reason,
+        });
+        return null;
+      }
+      return deny(reason);
+    }
+  }
+
+  // Batch companion: authorize EVERY mutating child's proof individually
+  // (per-side-effect boundary, first deny wins) so no child can suppress
+  // Governor validation of another — same `fenceId` or repeated proof alike,
+  // each boundary consumes its own authorization use. Malformed children are
+  // left for the sync verifier (which owns MALFORMED/SCOPE verdicts).
+  // Returns the first fence deny verdict, or null to continue.
+  async authorizeBatchFences({ actions, permit } = {}) {
+    if (!Array.isArray(actions) || actions.length === 0) return null;
+    for (const act of actions) {
+      if (!act || typeof act !== 'object' || Array.isArray(act)) continue;
+      const childMethod = act.method || act.tool || act.action || act.command;
+      if (typeof childMethod !== 'string' || !childMethod.trim()) continue;
+      if (childMethod === 'batch' || childMethod === 'browser_batch') continue;
+      const childParams = act.params && typeof act.params === 'object' && !Array.isArray(act.params) ? act.params : {};
+      const childClass = this.verifier.classifyTool(childMethod, childParams);
+      if (!isMutatingAction(childClass) || childClass === 'browser.batch') continue;
+      const verdict = await this.authorizeFenceAsync({ actionClass: childClass, params: childParams, permit });
+      if (verdict) return verdict;
+    }
+    return null;
+  }
+
   _buildReceiptBase({ permit, context, actionClass, attempt, outcome, sequence, method, params, targetOrigin, result, children = null, decision = null }) {
     const normalizedTarget = normalizeTargetOriginForReceipt(targetOrigin) || deriveTargetOrigin({ targetOrigin, params });
     const safeTarget = normalizedTarget || null;
@@ -191,15 +332,16 @@ export class InteractiveRuntime {
       profileId: permit?.profileId || context?.profileId || null,
       claimGeneration: permit?.claimGeneration ?? context?.claimGeneration ?? null,
       claimDigest: permit?.claimDigest || context?.claimDigest || null,
-      // A construction-owned durable Runner permit bypasses the legacy
-      // trusted-context socket. Runner opens the phase fence by incrementing
-      // the plan state's frozen stateVersion, so the wire receipt carries
-      // that derived fence fact for coordinator reconciliation.
+      // A3 (ADR 0012 D1/D4): the receipt carries the Governor-issued live
+      // epoch when the runtime is wired to the in-process Governor. The
+      // `stateVersion + 1` derivation is retired on the wired path; it
+      // remains only as the unwired fallback for durable permits.
       // A durable permit owns the coordinator phase fence. A stale legacy
       // trusted context must never override that durable binding.
-      fenceEpoch: permit?.schema === 'webmcp-durable-execution-permit/1'
-        ? (Number.isSafeInteger(permit?.stateVersion) ? permit.stateVersion + 1 : null)
-        : context?.fenceEpoch ?? permit?.claimGeneration ?? null,
+      fenceEpoch: this._governorFenceEpochFor(permit, context)
+        ?? (permit?.schema === 'webmcp-durable-execution-permit/1'
+          ? (Number.isSafeInteger(permit?.stateVersion) ? permit.stateVersion + 1 : null)
+          : context?.fenceEpoch ?? permit?.claimGeneration ?? null),
       phaseId: permit?.phaseId || context?.phaseId || null,
       bindingId: permit?.bindingId || context?.bindingId || null,
       bindingRevision: permit?.bindingRevision ?? context?.bindingRevision ?? null,
@@ -458,7 +600,7 @@ export class InteractiveRuntime {
       profileId: permit?.profileId || context?.profileId || null,
       claimGeneration: permit?.claimGeneration ?? context?.claimGeneration ?? null,
       claimDigest: permit?.claimDigest || context?.claimDigest || null,
-      fenceEpoch: context?.fenceEpoch ?? null,
+      fenceEpoch: this._governorFenceEpochFor(permit, context) ?? context?.fenceEpoch ?? null,
       phaseId: permit?.phaseId || context?.phaseId || null,
       bindingId: permit?.bindingId || context?.bindingId || null,
       bindingRevision: permit?.bindingRevision ?? context?.bindingRevision ?? null,
@@ -537,7 +679,7 @@ export class InteractiveRuntime {
       profileId: permit?.profileId || context?.profileId || null,
       claimGeneration: permit?.claimGeneration ?? context?.claimGeneration ?? null,
       claimDigest: permit?.claimDigest || context?.claimDigest || null,
-      fenceEpoch: context?.fenceEpoch ?? null,
+      fenceEpoch: this._governorFenceEpochFor(permit, context) ?? context?.fenceEpoch ?? null,
       phaseId: permit?.phaseId || context?.phaseId || null,
       bindingId: permit?.bindingId || context?.bindingId || null,
       bindingRevision: permit?.bindingRevision ?? context?.bindingRevision ?? null,
@@ -634,7 +776,7 @@ export class InteractiveRuntime {
       profileId: permit?.profileId || context?.profileId || null,
       claimGeneration: permit?.claimGeneration ?? context?.claimGeneration ?? null,
       claimDigest: permit?.claimDigest || context?.claimDigest || null,
-      fenceEpoch: context?.fenceEpoch ?? null,
+      fenceEpoch: this._governorFenceEpochFor(permit, context) ?? context?.fenceEpoch ?? null,
       phaseId: permit?.phaseId || context?.phaseId || null,
       bindingId: permit?.bindingId || context?.bindingId || null,
       bindingRevision: permit?.bindingRevision ?? context?.bindingRevision ?? null,
@@ -829,6 +971,49 @@ export class InteractiveRuntime {
       ...verifierResult,
       receipt: finalReceipt,
     };
+  }
+
+  // Async request path (ADR 0012 D3): runs the authoritative Governor fence
+  // check first, then delegates to the sync enforceRequest (which runs the
+  // cheap epoch precheck plus the full permit layers). The gateway HTTP path
+  // uses this; direct sync enforceRequest stays for dormant/test callers.
+  // A fence deny here carries a blocked receipt and never reaches the sync
+  // ledger (no budget/nonce consumed). Fence-observe never denies here —
+  // authorizeFenceAsync logs divergence and returns null to continue.
+  async enforceRequestAsync({
+    method,
+    params = {},
+    verificationParams = params,
+    profileId = null,
+    permit = null,
+    targetOrigin = null,
+    now = new Date(),
+  } = {}) {
+    const authParams = verificationParams || params || {};
+    let fenceVerdict = null;
+    if (method === 'batch' || method === 'browser_batch') {
+      const actions = Array.isArray(authParams?.actions)
+        ? authParams.actions
+        : (Array.isArray(authParams?.batch) ? authParams.batch : []);
+      fenceVerdict = await this.authorizeBatchFences({ actions, permit });
+    } else {
+      const actionClass = this.verifier.classifyTool(method, authParams);
+      fenceVerdict = await this.authorizeFenceAsync({ actionClass, params: authParams, permit });
+    }
+    if (fenceVerdict) {
+      const safeTarget = normalizeTargetOriginForReceipt(targetOrigin) || deriveTargetOrigin({ targetOrigin, params });
+      const receipt = this.createBlockedReceipt({
+        permit,
+        context: this.getCurrentContext(),
+        method,
+        params: params || {},
+        targetOrigin: safeTarget,
+        reason: fenceVerdict.reason,
+        sequence: 1,
+      });
+      return { ...fenceVerdict, receipt };
+    }
+    return this.enforceRequest({ method, params, verificationParams, profileId, permit, targetOrigin, now });
   }
 
   getContextSummary() {

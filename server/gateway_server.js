@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -8,8 +9,10 @@ import { WebSocketServer } from 'ws';
 import { InteractiveRuntime } from './gateway/interactive-runtime.mjs';
 import { PermitStore } from './gateway/permit-store.mjs';
 import { TrustedContextChannel } from './gateway/trusted-context-channel.mjs';
-import { classifyTool } from './gateway/verifier.mjs';
+import { classifyTool, readGovernorActiveFence, resolveA3FenceMode, logFenceDivergence } from './gateway/verifier.mjs';
 import { digestCanonical } from './gateway/trusted-context-schema.mjs';
+import { GovernorRepository } from '../profile-governor/repository.mjs';
+import { ProfileGovernor } from '../profile-governor/lease-service.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -235,6 +238,90 @@ function sanitizeParams(params) {
 }
 function sanitizeParamsForTest(params) { return sanitizeParams(params); }
 
+// ── A3 slice v1: in-process Governor DI bootstrap (ADR 0012 D6) ──────────
+// Singleton, no daemon/socket. Constructing or reconciling touches only the
+// local state file, and only when the fence mode flag activates it — without
+// the flag every path below is skipped and runtime behavior is unchanged.
+const GOVERNOR_STATE_ENV = 'WEBMCP_GOVERNOR_STATE';
+
+function defaultGovernorStatePath() {
+  const explicit = process.env[GOVERNOR_STATE_ENV];
+  if (explicit && typeof explicit === 'string' && explicit.trim()) return explicit.trim();
+  return path.join(os.homedir(), '.webmcp', 'governor-state.json');
+}
+
+export function createGatewayGovernor({ statePath = null, registry = null, claims = null, liveness = null, revokeGrants = null } = {}) {
+  const repository = new GovernorRepository({ statePath: statePath || defaultGovernorStatePath() });
+  const governor = new ProfileGovernor({
+    repository,
+    ...(registry ? { registry } : {}),
+    ...(claims ? { claims } : {}),
+    ...(liveness ? { liveness } : {}),
+    revokeGrants: typeof revokeGrants === 'function' ? revokeGrants : async () => true,
+  });
+  return { governor, repository, statePath: repository.statePath };
+}
+
+let gatewayGovernorSingleton = null;
+
+export function getGatewayGovernorSingleton(options = null) {
+  if (gatewayGovernorSingleton) return gatewayGovernorSingleton;
+  gatewayGovernorSingleton = createGatewayGovernor(options || {});
+  return gatewayGovernorSingleton;
+}
+
+export function resetGatewayGovernorSingleton() {
+  const prev = gatewayGovernorSingleton;
+  gatewayGovernorSingleton = null;
+  return prev;
+}
+
+// Gateway startup reconcile: every known profile is reconciled with real
+// liveness so crash orphans land in quarantine (with a recovery receipt and
+// a bumped epoch that invalidates pre-crash fences) instead of lingering.
+export async function reconcileGatewayProfiles({ governor, aliases = [] } = {}) {
+  if (!governor || typeof governor.reconcileProfile !== 'function') {
+    throw new Error('Gateway reconcile requires a Governor instance.');
+  }
+  const results = [];
+  for (const alias of aliases) {
+    try {
+      const resource = await governor.reconcileProfile(alias);
+      results.push({ alias, ok: true, state: resource?.state ?? null, fenceEpoch: resource?.fenceEpoch ?? null });
+    } catch (error) {
+      results.push({ alias, ok: false, code: error?.code || 'UNKNOWN', message: error?.message || String(error) });
+    }
+  }
+  return results;
+}
+
+// Gateway external-use detection wiring: a positive Governor external_use
+// verdict becomes a typed PROFILE_EXTERNAL_USE deny instead of trusting TTL.
+// Advisory in-slice — an unreadable probe reports unchecked, never a deny.
+export async function checkGatewayExternalUse({ governor, profileAlias, fenceMode = null } = {}) {
+  const mode = fenceMode ?? resolveA3FenceMode();
+  const denyDecision = mode === 'observe' ? 'would-deny' : 'deny';
+  const allowDecision = mode === 'observe' ? 'would-allow' : 'allow';
+  if (!governor || typeof governor.detectExternalUse !== 'function' || !profileAlias) {
+    return { decision: allowDecision, reason: null, checked: false };
+  }
+  const resource = await governor.detectExternalUse(profileAlias);
+  if (resource?.state === 'external_use') {
+    return {
+      decision: denyDecision,
+      reason: 'PROFILE_EXTERNAL_USE',
+      checked: true,
+      state: resource.state,
+      fenceEpoch: resource.fenceEpoch ?? null,
+    };
+  }
+  return { decision: allowDecision, reason: null, checked: true, state: resource?.state ?? null };
+}
+
+export function makeGovernorActiveFenceReader(governor) {
+  return (profileKey) => readGovernorActiveFence(governor, profileKey);
+}
+
 function readJsonSafe(relPath) {
   try {
     return JSON.parse(fs.readFileSync(path.resolve(__dirname, relPath), 'utf8'));
@@ -429,6 +516,28 @@ function createGatewayServer({
     }
   }
 
+  const runtimeFenceMode = resolveA3FenceMode({ argv: process.argv.slice(2) });
+
+  // A3 in-process Governor (ADR 0012 D6): built only under the fence mode
+  // flag; otherwise null and every wired path below stays dormant. Liveness
+  // is real gateway state — extension connectivity observed here, not a stub.
+  let gatewayGovernor = null;
+  if (runtimeFenceMode !== 'off') {
+    try {
+      gatewayGovernor = getGatewayGovernorSingleton({
+        liveness: async () => {
+          const linked = connectedProfileIds().length > 0;
+          return {
+            governor: 'healthy', registry: 'healthy', runnerClaim: 'active',
+            browserAlive: linked, extensionConnected: linked,
+          };
+        },
+      }).governor;
+    } catch {
+      gatewayGovernor = null;
+    }
+  }
+
   const runtime =
     (isTestSeamAllowed && interactiveRuntime) ||
     new InteractiveRuntime({
@@ -440,6 +549,9 @@ function createGatewayServer({
       allowTestSeams: isTestSeamAllowed,
       _testSeam: isTestSeamAllowed,
       physicalRouteMap: isTestSeamAllowed && injectedRouteMap ? injectedRouteMap : null,
+      governor: gatewayGovernor,
+      fenceMode: runtimeFenceMode,
+      getActiveFence: gatewayGovernor ? makeGovernorActiveFenceReader(gatewayGovernor) : null,
     });
 
   function connectedProfileIds() {
@@ -659,7 +771,7 @@ function createGatewayServer({
         body += chunk.toString();
       });
 
-      req.on('end', () => {
+      req.on('end', async () => {
         let requestPayload;
         try {
           requestPayload = JSON.parse(body);
@@ -726,7 +838,7 @@ function createGatewayServer({
               }
               // For interactive physical routing mismatch, fail closed with typed deny rather than 404
               try {
-                const check = runtime.enforceRequest({
+                const check = await runtime.enforceRequestAsync({
                   method,
                   params: params || {},
                   profileId: effectiveProfileId,
@@ -780,6 +892,57 @@ function createGatewayServer({
         const isInteractive = runtime.mode !== 'off' || Boolean(permit);
         let executionReceipt = null;
         let enforcement = null;
+        // A3 physical fence: surface Governor external-use detection as a
+        // typed PROFILE_EXTERNAL_USE deny instead of trusting TTL. Advisory
+        // in-slice: only a positive external_use verdict denies; probe
+        // failures log (redacted) and continue without denying.
+        if (gatewayGovernor && runtimeFenceMode !== 'off' && !isDownloadMethod && isInteractive) {
+          const fenceAlias = permit?.profileAlias || runtime.getCurrentContext()?.profileAlias || null;
+          if (fenceAlias) {
+            try {
+              const externalUse = await checkGatewayExternalUse({
+                governor: gatewayGovernor,
+                profileAlias: fenceAlias,
+                fenceMode: runtimeFenceMode,
+              });
+              if (externalUse.reason === 'PROFILE_EXTERNAL_USE') {
+                if (externalUse.decision === 'would-deny') {
+                  // S6d Fix C: fence-observe means "log divergence, do not
+                  // deny" — continue the request. Only the enforce `deny`
+                  // below blocks with a typed receipt.
+                  logFenceDivergence(runtime.verifier?.divergenceSink, {
+                    profileKey: fenceAlias,
+                    leaseId: null,
+                    fenceEpoch: externalUse.fenceEpoch ?? null,
+                    correlationId: permit?.runId ?? permit?.permitId ?? null,
+                    decision: externalUse.decision,
+                    reason: 'PROFILE_EXTERNAL_USE',
+                  });
+                  console.log(`[Gateway] External-use observe pass-through: decision=would-deny reason=PROFILE_EXTERNAL_USE (divergence logged, continuing)`);
+                } else {
+                  const blockedReceipt = runtime.createBlockedReceipt({
+                    permit,
+                    context: runtime.getCurrentContext(),
+                    method,
+                    params: params || {},
+                    targetOrigin,
+                    reason: 'PROFILE_EXTERNAL_USE',
+                    sequence: 1,
+                  });
+                  console.log(`[Gateway] External-use deny: decision=${externalUse.decision} reason=PROFILE_EXTERNAL_USE`);
+                  return writeJson(res, 403, {
+                    error: 'PROFILE_EXTERNAL_USE',
+                    decision: externalUse.decision,
+                    reason: 'PROFILE_EXTERNAL_USE',
+                    receipt: blockedReceipt,
+                  });
+                }
+              }
+            } catch (error) {
+              console.log(`[Gateway] External-use probe skipped for profile=[redacted] (${error?.code || 'UNKNOWN'})`);
+            }
+          }
+        }
         const rawOriginError = isInteractive
           ? rawOriginScopeError(method, params || {}, targetOrigin, permit)
           : null;
@@ -820,7 +983,7 @@ function createGatewayServer({
         }
 
         if (isInteractive) {
-          enforcement = runtime.enforceRequest({
+          enforcement = await runtime.enforceRequestAsync({
             method,
             params: params || {},
             verificationParams: prepareAuthorizationParams(method, params || {}),
@@ -832,10 +995,20 @@ function createGatewayServer({
 
           executionReceipt = enforcement.receipt;
 
+          // A3 fence-observe pass-through (ADR 0012 D5): a fence-layer
+          // would-deny means "log divergence, do not deny" — the divergence
+          // is already recorded, so fall through to forwarding instead of
+          // blocking. Permit-layer would-deny keeps blocking (unchanged).
+          const fenceObservePassThrough = enforcement.decision === 'would-deny'
+            && enforcement.fenceLayer === true;
+          if (fenceObservePassThrough) {
+            console.log(`[Gateway] Fence observe pass-through: reason=${enforcement.reason} actionClass=${enforcement.actionClass} (divergence logged, forwarding)`);
+          }
+
           // Handle batch denied with zero-forward: create blocked child receipts
           const isBatch = method === 'batch' || method === 'browser_batch';
           const batchActions = isBatch ? getBatchActions(params) : null;
-          if ((enforcement.decision === 'deny' || enforcement.decision === 'would-deny')) {
+          if ((enforcement.decision === 'deny' || enforcement.decision === 'would-deny') && !fenceObservePassThrough) {
             if (isBatch && Array.isArray(batchActions) && batchActions.length > 0) {
               const ctx = runtime.getCurrentContext();
               const blocked = runtime.createBatchBlockedReceipts({
@@ -855,6 +1028,12 @@ function createGatewayServer({
               });
             }
             console.log(`[Gateway] Request denied: reason=${enforcement.reason} actionClass=${enforcement.actionClass} decision=${enforcement.decision}`);
+            // A3 physical fence audit: fence-layer denies carry their typed
+            // code end-to-end (PROFILE_FENCE_REQUIRED when the proof is
+            // absent, PROFILE_FENCE_STALE when it is no longer current).
+            if (enforcement.reason === 'PROFILE_FENCE_REQUIRED' || enforcement.reason === 'PROFILE_FENCE_STALE') {
+              console.log(`[Gateway] Physical fence deny: reason=${enforcement.reason} decision=${enforcement.decision} actionClass=${enforcement.actionClass}`);
+            }
             return writeJson(res, 403, {
               error: enforcement.reason,
               decision: enforcement.decision,
@@ -1482,6 +1661,25 @@ function createGatewayServer({
 
   async function start() {
     await runtime.start();
+    // A3 gateway bootstrap reconcile (S3 seam): under the fence mode flag,
+    // reconcile every known profile with real liveness so crash orphans are
+    // quarantined (recovery receipt + bumped epoch) before serving traffic.
+    if (gatewayGovernor && runtimeFenceMode !== 'off') {
+      try {
+        const aliases = runtime.physicalRouteMap ? [...runtime.physicalRouteMap.keys()] : [];
+        const reconciled = await reconcileGatewayProfiles({ governor: gatewayGovernor, aliases });
+        const settled = reconciled.filter((r) => r.ok && (r.state === 'quarantined' || r.state === 'external_use'));
+        if (settled.length) {
+          console.log(`[Gateway] Governor reconcile settled ${settled.length} profile(s) at bootstrap (quarantine/external_use)`);
+        }
+        const failed = reconciled.filter((r) => !r.ok);
+        for (const f of failed) {
+          console.log(`[Gateway] Governor reconcile skipped profile=[redacted] (${f.code || 'UNKNOWN'})`);
+        }
+      } catch (error) {
+        console.log(`[Gateway] Governor bootstrap reconcile skipped (${error?.code || error?.message || 'UNKNOWN'})`);
+      }
+    }
     await new Promise((resolve) => {
       server.listen(port, host, () => {
         resolve();
@@ -1534,6 +1732,8 @@ function createGatewayServer({
     close,
     resolveTarget,
     connectedProfileIds,
+    governor: gatewayGovernor,
+    fenceMode: runtimeFenceMode,
   };
 }
 
