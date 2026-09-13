@@ -13,6 +13,7 @@ import { classifyTool, readGovernorActiveFence, resolveA3FenceMode, logFenceDive
 import { digestCanonical } from './gateway/trusted-context-schema.mjs';
 import { GovernorRepository } from '../profile-governor/repository.mjs';
 import { ProfileGovernor } from '../profile-governor/lease-service.mjs';
+import { createGovernorRegistryAdapter } from './gateway/governor-registry-adapter.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -521,18 +522,48 @@ function createGatewayServer({
   // A3 in-process Governor (ADR 0012 D6): built only under the fence mode
   // flag; otherwise null and every wired path below stays dormant. Liveness
   // is real gateway state — extension connectivity observed here, not a stub.
+  // B1 (A3b): when A3_GOVERNOR_REGISTRY=1, wire the file-backed registry
+  // adapter (registry + claims) into the Governor seams and reconcile its
+  // aliases at start(). Default off preserves exactly today's behavior.
+  const registryFlagOn = process.env.A3_GOVERNOR_REGISTRY === '1';
+  let gatewayGovernorAdapter = null;
   let gatewayGovernor = null;
   if (runtimeFenceMode !== 'off') {
     try {
-      gatewayGovernor = getGatewayGovernorSingleton({
-        liveness: async () => {
-          const linked = connectedProfileIds().length > 0;
-          return {
-            governor: 'healthy', registry: 'healthy', runnerClaim: 'active',
-            browserAlive: linked, extensionConnected: linked,
-          };
-        },
-      }).governor;
+      const gatewayLiveness = async () => {
+        const linked = connectedProfileIds().length > 0;
+        return {
+          governor: 'healthy', registry: 'healthy', runnerClaim: 'active',
+          browserAlive: linked, extensionConnected: linked,
+        };
+      };
+      if (registryFlagOn) {
+        let wired = false;
+        try {
+          const adapter = createGovernorRegistryAdapter({});
+          const adapterStatus = typeof adapter?.status === 'function' ? adapter.status() : null;
+          if (adapterStatus?.ok) {
+            gatewayGovernorAdapter = adapter;
+            gatewayGovernor = getGatewayGovernorSingleton({
+              registry: adapter,
+              claims: adapter.claims,
+              liveness: gatewayLiveness,
+            }).governor;
+            wired = true;
+          } else {
+            console.log(`[Gateway] Governor bootstrap reconcile skipped (PROFILE_REGISTRY_UNAVAILABLE)`);
+          }
+        } catch (error) {
+          console.log(`[Gateway] Governor bootstrap reconcile skipped (${error?.code || error?.message || 'UNKNOWN'})`);
+        }
+        if (!wired && !gatewayGovernor) {
+          gatewayGovernor = getGatewayGovernorSingleton({ liveness: gatewayLiveness }).governor;
+        }
+      } else {
+        gatewayGovernor = getGatewayGovernorSingleton({
+          liveness: gatewayLiveness,
+        }).governor;
+      }
     } catch {
       gatewayGovernor = null;
     }
@@ -1666,7 +1697,17 @@ function createGatewayServer({
     // quarantined (recovery receipt + bumped epoch) before serving traffic.
     if (gatewayGovernor && runtimeFenceMode !== 'off') {
       try {
-        const aliases = runtime.physicalRouteMap ? [...runtime.physicalRouteMap.keys()] : [];
+        let aliases;
+        if (registryFlagOn && gatewayGovernorAdapter) {
+          try {
+            aliases = gatewayGovernorAdapter.listAliases();
+          } catch (error) {
+            console.log(`[Gateway] Governor bootstrap reconcile skipped (${error?.code || error?.message || 'UNKNOWN'})`);
+            aliases = [];
+          }
+        } else {
+          aliases = runtime.physicalRouteMap ? [...runtime.physicalRouteMap.keys()] : [];
+        }
         const reconciled = await reconcileGatewayProfiles({ governor: gatewayGovernor, aliases });
         const settled = reconciled.filter((r) => r.ok && (r.state === 'quarantined' || r.state === 'external_use'));
         if (settled.length) {

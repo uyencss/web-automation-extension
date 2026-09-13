@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -112,6 +113,8 @@ async function callGateway(method, params, requestProfileId) {
   const body = { method, params: params || {} };
   const targetProfileId = requestProfileId || profileId;
   if (targetProfileId) body.profileId = targetProfileId;
+  const permit = resolveClientPermit();
+  if (permit !== undefined) body.permit = permit;
   const headers = { 'Content-Type': 'application/json' };
   const token = process.env.WEBMCP_GATEWAY_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -123,11 +126,79 @@ async function callGateway(method, params, requestProfileId) {
 
   const payload = await readGatewayJson(response);
   if (!response.ok || payload.error) {
-    const detail = payload.error || `Gateway HTTP ${response.status}`;
-    throw new Error(`${detail}. Make sure webmcp gateway start is running and the Chrome extension is connected.`);
+    throw gatewayError(response.status, payload.error, payload?.reason);
   }
 
   return payload.result;
+}
+
+// B2 client permit plumbing: WEBMCP_PERMIT_FILE (path to JSON) wins over
+// inline WEBMCP_PERMIT JSON. Unset → undefined (no `permit` key, body
+// byte-equivalent to today). Set-but-broken → typed WEBMCP_PERMIT_INVALID
+// (never silently dropped).
+function resolveClientPermit() {
+  const permitFile = process.env.WEBMCP_PERMIT_FILE;
+  if (permitFile) {
+    let raw;
+    try {
+      raw = readFileSync(permitFile, 'utf8');
+    } catch (error) {
+      return permitFailure(`WEBMCP_PERMIT_FILE is unreadable (${permitFile}): ${error?.message ?? error}`);
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return permitFailure(`WEBMCP_PERMIT_FILE holds invalid JSON (${permitFile}): ${error?.message ?? error}`);
+    }
+  }
+  const inline = process.env.WEBMCP_PERMIT;
+  if (inline) {
+    try {
+      return JSON.parse(inline);
+    } catch (error) {
+      return permitFailure(`WEBMCP_PERMIT holds invalid JSON: ${error?.message ?? error}`);
+    }
+  }
+  return undefined;
+}
+
+function permitFailure(message) {
+  const error = new Error(`WEBMCP_PERMIT_INVALID: ${message}`);
+  error.code = 'WEBMCP_PERMIT_INVALID';
+  throw error;
+}
+
+// Preserve the typed gateway error `code` on the thrown error instead of
+// flattening an object error to "[object Object]". The real gateway returns
+// string-form denials ({ error: "PROFILE_FENCE_REQUIRED",
+// reason: "PROFILE_FENCE_REQUIRED" }); older shapes carry an object
+// ({ error: { code, message } }). Both decode to `error.code` with the code
+// in the message text so callers can branch on it.
+const GATEWAY_CODE_RE = /^[A-Z][A-Z0-9_]{2,}$/;
+function gatewayError(httpStatus, gatewayErrorPayload, fallbackReason) {
+  let code;
+  let detail;
+  if (gatewayErrorPayload && typeof gatewayErrorPayload === 'object') {
+    code = typeof gatewayErrorPayload.code === 'string' ? gatewayErrorPayload.code : undefined;
+    detail = code && gatewayErrorPayload.message
+      ? `${code}: ${gatewayErrorPayload.message}`
+      : (code ?? JSON.stringify(gatewayErrorPayload));
+  } else if (typeof gatewayErrorPayload === 'string' && GATEWAY_CODE_RE.test(gatewayErrorPayload.trim())) {
+    code = gatewayErrorPayload.trim();
+    detail = code;
+  } else {
+    const fallback = typeof fallbackReason === 'string' && GATEWAY_CODE_RE.test(fallbackReason.trim())
+      ? fallbackReason.trim()
+      : undefined;
+    code = fallback ?? `GATEWAY_HTTP_${httpStatus}`;
+    const raw = typeof gatewayErrorPayload === 'string' && gatewayErrorPayload.trim()
+      ? gatewayErrorPayload.trim()
+      : '';
+    detail = raw && raw !== code ? `${code}: ${raw}` : code;
+  }
+  const error = new Error(`${detail}. Make sure webmcp gateway start is running and the Chrome extension is connected.`);
+  error.code = code;
+  return error;
 }
 
 function contentFromResult(result) {
