@@ -1776,3 +1776,175 @@ test('A4 CLI: ADDED valid re-barrier whose raw reason is represented only throug
   const foundReceipt = receiptsParsed.data.find((r) => r?.receiptId === 'prr_0123456789abcdef');
   assert.match(foundReceipt.receiptId, /^prr_[0-9a-f]{16}$/, 'receiptId matches existing schema');
 });
+
+// 32. ADDED (Sol S15 finding 1): earlier + current-epoch quarantine events with
+// an arbitrary recovery-plan digest must still fail closed — no fail-open
+// escape when both proof generations are present.
+test('A4 CLI: ADDED earlier+current quarantine with arbitrary digest still fails closed', async (t) => {
+  const { dir, statePath } = freshState(t, 'a4-cli-s15-f1-');
+  const configPath = writeDispatcherConfig(dir);
+
+  const governor = openGovernor(statePath);
+  let leaseId;
+  try {
+    await governor.reconcileProfile(ALIAS);
+    const lease = await governor.acquire(leaseRequest());
+    leaseId = lease.leaseId;
+    const fence = await governor.createFence({
+      leaseId: lease.leaseId,
+      fenceEpoch: lease.fenceEpoch,
+      leaseBindingDigest: lease.leaseBindingDigest,
+      runId: lease.runId,
+      bindingId: lease.bindingId,
+      action: 'browser-read',
+    });
+    await governor.authorizeFence(fence);
+    const facts = {
+      leaseId: lease.leaseId,
+      fenceId: fence.fenceId,
+      fenceEpoch: lease.fenceEpoch,
+      leaseBindingDigest: lease.leaseBindingDigest,
+      bindingId: lease.bindingId,
+      bindingDigest: lease.bindingDigest,
+      runId: lease.runId,
+      runnerClaimDigest: lease.runnerClaimDigest,
+      actionId: 'act_a4cli-1',
+    };
+    await governor.recordAction({ ...facts, outcome: 'prepared' });
+    await governor.recordAction({ ...facts, outcome: 'dispatched' });
+    const qReceipt = await governor.recordAction({ ...facts, outcome: 'indeterminate' });
+    assert.equal(qReceipt.newState, 'quarantined');
+    const currentLease = governor.repository.read().leases[leaseId];
+    await governor._establishRevocationBarrier(currentLease, { reasonCode: 'PROFILE_RECLAIM_UNSAFE' });
+  } finally {
+    governor.close();
+  }
+
+  const validDurable = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const validRes = validDurable.resources[PHYSICAL_ID];
+  assert.equal(validRes.state, 'quarantined');
+  assert.equal(validRes.fenceEpoch, 3, 're-barrier must advance to epoch 3');
+  assert.ok(
+    validDurable.events.some((e) => e.leaseId === leaseId && e.state === 'quarantined' && e.fenceEpoch === 2),
+    'precondition: earlier quarantine event at epoch 2 must exist',
+  );
+  assert.ok(
+    validDurable.events.some((e) => e.leaseId === leaseId && e.state === 'quarantined' && e.fenceEpoch === 3),
+    'precondition: current-epoch quarantine event at epoch 3 must exist',
+  );
+
+  // Overwrite with an arbitrary integrity-shaped digest that proves no durable
+  // reason/fact (the fail-open escape would have accepted mere event presence).
+  const arbitraryDigest = `sha256:${'4'.repeat(64)}`;
+  assert.notEqual(validRes.recoveryPlanDigest, arbitraryDigest, 'precondition: arbitrary digest must differ from the valid paired digest');
+  validDurable.resources[PHYSICAL_ID].recoveryPlanDigest = arbitraryDigest;
+  validDurable.leases[leaseId].recoveryPlanDigest = arbitraryDigest;
+  fs.writeFileSync(statePath, `${JSON.stringify(validDurable, null, 2)}\n`);
+
+  // Event integrity + receipt digests remain valid; only the recovery binding is unproven.
+  for (const args of [
+    ['governor', 'status', '--json'],
+    ['governor', 'inspect', ALIAS, '--approve', '--json'],
+  ]) {
+    const result = runCLI(args, statePath, configPath);
+    redIfUnimplemented(result, `S15F1 ${args[1]} with arbitrary digest`);
+    assert.equal(result.status, 2, `${args[1]} must exit 2 on arbitrary digest despite earlier+current quarantine events`);
+    const parsed = assertExactJsonEnvelope(result, `${args[1]} with arbitrary digest`);
+    assert.equal(parsed?.ok, false, `${args[1]} must return {ok:false,...}`);
+    assert.equal(parsed?.error?.code, 'PROFILE_GOVERNOR_STATE_INVALID', `${args[1]} must fail PROFILE_GOVERNOR_STATE_INVALID`);
+  }
+});
+
+// 33. ADDED (Sol S15 finding 2): contradictory current pair — resource `active`
+// with current lease `quarantined` — fails closed even when every other record
+// is integrity-valid.
+test('A4 CLI: ADDED contradictory active resource with quarantined current lease fails closed', async (t) => {
+  const { dir, statePath } = freshState(t, 'a4-cli-s15-f2-');
+  await seedQuarantined(statePath);
+  const configPath = writeDispatcherConfig(dir);
+  const durable = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const res = durable.resources[PHYSICAL_ID];
+  const leaseId = res.currentLeaseId;
+  const lease = durable.leases[leaseId];
+  assert.equal(res.state, 'quarantined', 'precondition: resource must be quarantined');
+  assert.equal(lease.state, 'quarantined', 'precondition: lease must be quarantined');
+  assert.equal(res.fenceEpoch, lease.fenceEpoch, 'precondition: epochs must agree');
+
+  // Flip only the resource state: every identity/epoch/digest fact stays paired.
+  res.state = 'active';
+  fs.writeFileSync(statePath, `${JSON.stringify(durable, null, 2)}\n`);
+
+  const mutated = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(mutated.resources[PHYSICAL_ID].state, 'active');
+  assert.equal(mutated.leases[leaseId].state, 'quarantined');
+  assert.equal(mutated.resources[PHYSICAL_ID].currentLeaseId, leaseId);
+  assert.equal(mutated.resources[PHYSICAL_ID].fenceEpoch, mutated.leases[leaseId].fenceEpoch);
+
+  for (const args of [
+    ['governor', 'status', '--json'],
+    ['governor', 'inspect', ALIAS, '--approve', '--json'],
+  ]) {
+    const result = runCLI(args, statePath, configPath);
+    redIfUnimplemented(result, `S15F2 ${args[1]} with contradictory pair`);
+    assert.equal(result.status, 2, `${args[1]} must exit 2 on active/quarantined contradiction`);
+    const parsed = assertExactJsonEnvelope(result, `${args[1]} with contradictory pair`);
+    assert.equal(parsed?.ok, false, `${args[1]} must return {ok:false,...}`);
+    assert.equal(parsed?.error?.code, 'PROFILE_GOVERNOR_STATE_INVALID', `${args[1]} must fail PROFILE_GOVERNOR_STATE_INVALID`);
+  }
+});
+
+// 34. ADDED (Sol S15 finding 3): malformed writer operands fail before
+// GovernorRepository/client construction can run startup mutation — typed
+// PROFILE_REQUEST_INVALID with state file + registry untouched.
+test('A4 CLI: ADDED malformed writer operands fail before startup mutation without touching state or registry', async (t) => {
+  const { dir, statePath } = freshState(t, 'a4-cli-s15-f3-');
+  await seedQuarantined(statePath);
+  const configPath = writeDispatcherConfig(dir);
+  const preSha = sha256File(statePath);
+  const preConfigSha = sha256File(configPath);
+  const preRaw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(preRaw.resources[PHYSICAL_ID].state, 'quarantined', 'precondition: resource must be quarantined (startup would normalize to unknown)');
+  const writerLockPath = `${statePath}.writer`;
+
+  const badCases = [
+    ['bad release lease-id', ['governor', 'release', '--lease-id', 'not-a-lease', '--approve', '--json']],
+    ['short release lease-id', ['governor', 'release', '--lease-id', 'lease_SHORT', '--approve', '--json']],
+    ['bad reconcile alias', ['governor', 'reconcile', 'BAD_ALIAS!!', '--approve', '--json']],
+    ['uppercase reconcile alias', ['governor', 'reconcile', 'UPPERCASE', '--approve', '--json']],
+    ['bad recover alias', ['governor', 'recover', 'BAD_ALIAS!!', '--approve', '--json']],
+    ['single-char recover alias', ['governor', 'recover', 'x', '--approve', '--json']],
+  ];
+  for (const [label, args] of badCases) {
+    const result = runCLI(args, statePath, configPath);
+    redIfUnimplemented(result, `S15F3 ${label}`);
+    assertTypedFailure(result, `S15F3 ${label}`, 'PROFILE_REQUEST_INVALID');
+    assertExactJsonEnvelope(result, `S15F3 ${label}`);
+    assert.equal(sha256File(statePath), preSha, `${label} must leave the state file byte-identical (no startup mutation)`);
+    assert.equal(sha256File(configPath), preConfigSha, `${label} must leave the registry fixture untouched`);
+    assert.ok(!fs.existsSync(writerLockPath), `${label} must not leave a writer lock behind`);
+    const raw = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(raw.resources[PHYSICAL_ID].state, 'quarantined', `${label} must not run startup normalization (resource stays quarantined)`);
+  }
+
+  // Missing-file probe: malformed writer operands must not create state via
+  // GovernorRepository construction (which would transact markStartupUnknown).
+  {
+    const missingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'a4-cli-s15-f3-missing-'));
+    t.after(() => { try { fs.rmSync(missingDir, { recursive: true, force: true }); } catch {} });
+    const missingState = path.join(missingDir, 'governor-state.json');
+    const missingConfig = writeDispatcherConfig(missingDir);
+    assert.ok(!fs.existsSync(missingState), 'precondition: missing state file must be absent');
+    const missingCases = [
+      ['missing-state bad release', ['governor', 'release', '--lease-id', 'not-a-lease', '--approve', '--json']],
+      ['missing-state bad reconcile', ['governor', 'reconcile', 'BAD_ALIAS!!', '--approve', '--json']],
+      ['missing-state bad recover', ['governor', 'recover', 'BAD_ALIAS!!', '--approve', '--json']],
+    ];
+    for (const [label, args] of missingCases) {
+      const result = runCLI(args, missingState, missingConfig);
+      redIfUnimplemented(result, `S15F3 ${label}`);
+      assertTypedFailure(result, `S15F3 ${label}`, 'PROFILE_REQUEST_INVALID');
+      assert.ok(!fs.existsSync(missingState), `${label} must not create the state file`);
+      assert.ok(!fs.existsSync(`${missingState}.writer`), `${label} must not create a writer lock`);
+    }
+  }
+});
