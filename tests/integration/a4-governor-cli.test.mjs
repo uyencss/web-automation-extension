@@ -1948,3 +1948,225 @@ test('A4 CLI: ADDED malformed writer operands fail before startup mutation witho
     }
   }
 });
+
+// 35. ADDED (S16 finding 1): a detached historical resource whose durable
+// public quarantine event stores the mapped reason PROFILE_LEASE_REVOKED while
+// the retained recovery-plan digest binds the raw barrier reason
+// PROFILE_BINDING_STALE must remain readable via the bounded
+// rawReasonsBoundToEvent mapping (events retained; the only quarantine receipt
+// proves an earlier epoch/reason, so the event mapping carries the proof).
+test('A4 CLI: ADDED detached historical digest bound to raw PROFILE_BINDING_STALE with mapped event reason stays readable', async (t) => {
+  const { dir, statePath } = freshState(t, 'a4-cli-historical-mapped-');
+  const configPath = writeDispatcherConfig(dir);
+
+  const governor = openGovernor(statePath);
+  let leaseId;
+  try {
+    await governor.reconcileProfile(ALIAS);
+    const lease = await governor.acquire(leaseRequest());
+    leaseId = lease.leaseId;
+    const fence = await governor.createFence({
+      leaseId: lease.leaseId,
+      fenceEpoch: lease.fenceEpoch,
+      leaseBindingDigest: lease.leaseBindingDigest,
+      runId: lease.runId,
+      bindingId: lease.bindingId,
+      action: 'browser-read',
+    });
+    await governor.authorizeFence(fence);
+    const facts = {
+      leaseId: lease.leaseId,
+      fenceId: fence.fenceId,
+      fenceEpoch: lease.fenceEpoch,
+      leaseBindingDigest: lease.leaseBindingDigest,
+      bindingId: lease.bindingId,
+      bindingDigest: lease.bindingDigest,
+      runId: lease.runId,
+      runnerClaimDigest: lease.runnerClaimDigest,
+      actionId: 'act_a4cli-1',
+    };
+    await governor.recordAction({ ...facts, outcome: 'prepared' });
+    await governor.recordAction({ ...facts, outcome: 'dispatched' });
+    const qReceipt = await governor.recordAction({ ...facts, outcome: 'indeterminate' });
+    assert.equal(qReceipt.newState, 'quarantined');
+    assert.equal(qReceipt.newFenceEpoch, 2);
+    // Re-barrier with PROFILE_BINDING_STALE: the core mints the digest with
+    // the raw reason while the durable event stores PROFILE_LEASE_REVOKED.
+    const currentLease = governor.repository.read().leases[leaseId];
+    await governor._establishRevocationBarrier(currentLease, { reasonCode: 'PROFILE_BINDING_STALE' });
+  } finally {
+    governor.close();
+  }
+
+  // Detach into historical ready/cooldown history: clear the current-lease
+  // pointer, rest the resource, and retire the lease — digests, events, and
+  // receipts are left exactly as the core persisted them.
+  const detached = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const res = detached.resources[PHYSICAL_ID];
+  const histLease = detached.leases[leaseId];
+  assert.equal(res.state, 'quarantined', 'precondition: resource must be quarantined after re-barrier');
+  assert.equal(res.fenceEpoch, 3, 'precondition: re-barrier must advance to epoch 3');
+  assert.ok(
+    detached.events.some((e) => e.leaseId === leaseId && e.state === 'quarantined' && e.fenceEpoch === 3 && e.stateReasonCode === 'PROFILE_LEASE_REVOKED'),
+    'precondition: current-epoch quarantine event must carry the mapped public reason PROFILE_LEASE_REVOKED',
+  );
+  assert.ok(
+    !detached.events.some((e) => e.leaseId === leaseId && e.stateReasonCode === 'PROFILE_BINDING_STALE'),
+    'precondition: no durable event may carry the raw reason verbatim (the mapping path must be exercised)',
+  );
+  const expectedDigest = computeRecoveryPlanDigest({
+    leaseId,
+    bindingDigest: DIGEST,
+    fenceEpoch: 3,
+    reasonCode: 'PROFILE_BINDING_STALE',
+  });
+  assert.equal(res.recoveryPlanDigest, expectedDigest, 'precondition: resource digest must bind the raw barrier reason');
+  assert.equal(histLease.recoveryPlanDigest, expectedDigest, 'precondition: lease digest must bind the raw barrier reason');
+  res.currentLeaseId = null;
+  res.state = 'ready';
+  histLease.state = 'cooldown';
+  histLease.releasedAt = new Date().toISOString();
+  fs.writeFileSync(statePath, `${JSON.stringify(detached, null, 2)}\n`);
+
+  const statusResult = runCLI(['governor', 'status', '--json'], statePath, configPath);
+  redIfUnimplemented(statusResult, 'status on detached mapped historical state');
+  assert.equal(statusResult.status, 0, `status must exit 0 on detached mapped historical state (got ${statusResult.status}; stderr=${statusResult.stderr ?? ''})`);
+  const statusParsed = assertExactJsonEnvelope(statusResult, 'status on detached mapped historical state');
+  assert.equal(statusParsed?.ok, true, 'status must return {ok:true,...}');
+
+  const inspectResult = runCLI(['governor', 'inspect', ALIAS, '--approve', '--json'], statePath, configPath);
+  redIfUnimplemented(inspectResult, 'inspect on detached mapped historical state');
+  assert.equal(inspectResult.status, 0, `inspect must exit 0 on detached mapped historical state (got ${inspectResult.status}; stderr=${inspectResult.stderr ?? ''})`);
+  const inspectParsed = assertExactJsonEnvelope(inspectResult, 'inspect on detached mapped historical state');
+  assert.equal(inspectParsed?.ok, true, 'inspect must return {ok:true,...}');
+  assert.equal(inspectParsed?.data?.state, 'ready', 'inspect must report the detached ready state');
+  assert.ok(!JSON.stringify(inspectParsed).includes(PHYSICAL_ID), 'inspect must not expose the physical resource id');
+  assert.ok(!JSON.stringify(inspectParsed).includes(expectedDigest), 'inspect must not expose the recovery digest');
+});
+
+// 36. ADDED (S16 finding 1, event-retained/receipt-trimmed path): the same
+// detached historical state with all quarantine receipts trimmed must remain
+// read-only (reads exit 0 without mutating the file) and the writer must never
+// authorize reclaim — recover fails closed with PROFILE_RECLAIM_UNSAFE while
+// the retired lease stays in cooldown with no reclaim minted.
+test('A4 CLI: ADDED detached historical state with receipts trimmed stays read-only and never authorizes reclaim', async (t) => {
+  const { dir, statePath } = freshState(t, 'a4-cli-historical-trimmed-');
+  const configPath = writeDispatcherConfig(dir);
+
+  const governor = openGovernor(statePath);
+  let leaseId;
+  try {
+    await governor.reconcileProfile(ALIAS);
+    const lease = await governor.acquire(leaseRequest());
+    leaseId = lease.leaseId;
+    const fence = await governor.createFence({
+      leaseId: lease.leaseId,
+      fenceEpoch: lease.fenceEpoch,
+      leaseBindingDigest: lease.leaseBindingDigest,
+      runId: lease.runId,
+      bindingId: lease.bindingId,
+      action: 'browser-read',
+    });
+    await governor.authorizeFence(fence);
+    const facts = {
+      leaseId: lease.leaseId,
+      fenceId: fence.fenceId,
+      fenceEpoch: lease.fenceEpoch,
+      leaseBindingDigest: lease.leaseBindingDigest,
+      bindingId: lease.bindingId,
+      bindingDigest: lease.bindingDigest,
+      runId: lease.runId,
+      runnerClaimDigest: lease.runnerClaimDigest,
+      actionId: 'act_a4cli-1',
+    };
+    await governor.recordAction({ ...facts, outcome: 'prepared' });
+    await governor.recordAction({ ...facts, outcome: 'dispatched' });
+    await governor.recordAction({ ...facts, outcome: 'indeterminate' });
+    const currentLease = governor.repository.read().leases[leaseId];
+    await governor._establishRevocationBarrier(currentLease, { reasonCode: 'PROFILE_BINDING_STALE' });
+  } finally {
+    governor.close();
+  }
+
+  const detached = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const expectedDigest = computeRecoveryPlanDigest({
+    leaseId,
+    bindingDigest: DIGEST,
+    fenceEpoch: 3,
+    reasonCode: 'PROFILE_BINDING_STALE',
+  });
+  assert.equal(detached.resources[PHYSICAL_ID].recoveryPlanDigest, expectedDigest, 'precondition: digest must bind the raw barrier reason');
+  detached.resources[PHYSICAL_ID].currentLeaseId = null;
+  detached.resources[PHYSICAL_ID].state = 'ready';
+  detached.leases[leaseId].state = 'cooldown';
+  detached.leases[leaseId].releasedAt = new Date().toISOString();
+  // Trim every quarantine proof receipt; the mapped quarantine event is retained.
+  detached.receipts = detached.receipts.filter((r) => r.newState !== 'quarantined');
+  assert.ok(
+    detached.events.some((e) => e.leaseId === leaseId && e.state === 'quarantined' && e.fenceEpoch === 3 && e.stateReasonCode === 'PROFILE_LEASE_REVOKED'),
+    'precondition: mapped quarantine event must be retained after trimming receipts',
+  );
+  fs.writeFileSync(statePath, `${JSON.stringify(detached, null, 2)}\n`);
+
+  // Read-only paths succeed and leave the state file byte-identical.
+  const beforeReads = sha256File(statePath);
+  for (const args of [
+    ['governor', 'status', '--json'],
+    ['governor', 'inspect', ALIAS, '--approve', '--json'],
+    ['governor', 'receipts', '--approve', '--json'],
+    ['governor', 'events', '--approve', '--json'],
+  ]) {
+    const result = runCLI(args, statePath, configPath);
+    redIfUnimplemented(result, `trimmed-history read-only ${args[1]}`);
+    assert.equal(result.status, 0, `read path ${args[1]} must exit 0 on trimmed historical state (got ${result.status}; stderr=${result.stderr ?? ''})`);
+    const parsed = assertExactJsonEnvelope(result, `trimmed-history read-only ${args[1]}`);
+    assert.equal(parsed?.ok, true, `read path ${args[1]} must return {ok:true,...}`);
+    assert.equal(sha256File(statePath), beforeReads, `read path ${args[1]} must not mutate the trimmed historical state file`);
+  }
+
+  // The writer must never authorize reclaim of the retired history: recover
+  // fails closed with the typed unsafe code while the lease stays retired.
+  const preRecover = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const preRecoverReceipts = (preRecover.receipts ?? []).length;
+  const recover = runCLI(['governor', 'recover', ALIAS, '--approve', '--json'], statePath, configPath);
+  redIfUnimplemented(recover, 'trimmed-history recover --approve');
+  assertTypedFailure(recover, 'trimmed-history recover --approve', 'PROFILE_RECLAIM_UNSAFE');
+  assertExactJsonEnvelope(recover, 'trimmed-history recover --approve');
+  const post = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(post.resources?.[PHYSICAL_ID]?.currentLeaseId, null, 'failed recover must not reclaim a current lease');
+  assert.equal(post.leases?.[leaseId]?.state, 'cooldown', 'failed recover must leave the retired lease in cooldown');
+  assert.equal(post.leases?.[leaseId]?.fenceEpoch, 3, 'failed recover must not advance the retired fence epoch');
+  assert.equal(Object.keys(post.leases ?? {}).length, 1, 'failed recover must mint no new lease');
+  assert.equal((post.receipts ?? []).length, preRecoverReceipts, 'failed recover must mint no receipt');
+});
+
+// 37. ADDED (S16 finding 2): a FIFO state source fails quickly with the typed
+// state error instead of blocking on open/read, without mutating anything —
+// O_NONBLOCK keeps the fd-first open from hanging and the fstat
+// private-regular-file guard rejects the non-regular descriptor fail-closed.
+test('A4 CLI: ADDED FIFO state source fails fast with the typed state error without blocking', async (t) => {
+  const { dir, statePath } = freshState(t, 'a4-cli-fifo-');
+  const configPath = writeDispatcherConfig(dir);
+  const fifoPath = path.join(dir, 'governor-fifo.json');
+  if (typeof fs.mkfifoSync === 'function') {
+    fs.mkfifoSync(fifoPath, 0o600);
+  } else {
+    const mk = spawnSync('mkfifo', ['-m', '0600', fifoPath], { timeout: 10000 });
+    assert.equal(mk.status, 0, `mkfifo must succeed (status=${mk.status} stderr=${mk.stderr ?? ''})`);
+  }
+  try { fs.chmodSync(fifoPath, 0o600); } catch {}
+  assert.ok(fs.statSync(fifoPath).isFIFO(), 'precondition: probe path must be a FIFO');
+
+  const startedAt = Date.now();
+  const result = runCLI(['governor', 'status', '--json'], fifoPath, configPath);
+  const elapsedMs = Date.now() - startedAt;
+  redIfUnimplemented(result, 'status on FIFO state');
+  assert.equal(result.status, 2, `status on FIFO state must exit 2 (got ${result.status}; stdout=${result.stdout ?? ''} stderr=${result.stderr ?? ''})`);
+  const parsed = assertExactJsonEnvelope(result, 'status on FIFO state');
+  assert.equal(parsed?.ok, false, 'status on FIFO state must return {ok:false,...}');
+  assert.equal(parsed?.error?.code, 'PROFILE_GOVERNOR_STATE_INVALID', 'status on FIFO state must fail with PROFILE_GOVERNOR_STATE_INVALID');
+  assert.equal(typeof parsed?.error?.message, 'string', 'status on FIFO state must carry a message');
+  assert.ok(elapsedMs < 15000, `FIFO read must fail fast without blocking (took ${elapsedMs}ms)`);
+  assert.ok(fs.statSync(fifoPath).isFIFO(), 'FIFO probe path must persist unchanged (no mutation/replacement)');
+  assert.ok(!fs.existsSync(statePath), 'FIFO rejection must not create the default state file as a side effect');
+});
