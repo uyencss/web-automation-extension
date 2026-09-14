@@ -321,6 +321,8 @@ test('schedule rejects an incompatible Runner envelope version as not installed'
       JSON.stringify({ ok: true, schema: 'webmcp-automation-runner/9', command: 'x', data: {} }),
       'not json at all',
       JSON.stringify({ ok: true, schema: 'webmcp-automation-runner/1', command: 'project-schedule.list', data: { schema: 'webmcp.unknown/9' } }),
+      JSON.stringify({ ok: true, schema: 'webmcp-automation-runner/1', command: 'project-schedule.list', data: { projectId: 'project-alpha' } }),
+      JSON.stringify({ ok: true, schema: 'webmcp-automation-runner/1', command: 'project-schedule.list' }),
     ]) {
       const { result, calls } = runBrowser(
         ['project', 'schedule', 'list', '--workspace', env.project, '--json'],
@@ -331,6 +333,197 @@ test('schedule rejects an incompatible Runner envelope version as not installed'
       assert.match(result.stderr, /CAPABILITY_NOT_INSTALLED/);
       assert.deepEqual(calls(), [['project-schedule', 'list', '--workspace', env.project, '--json']]);
     }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule per-verb arity and flag validation fails usage before spawn', () => {
+  const env = tempDirs();
+  try {
+    const cases = [
+      // Excess positionals are never silently truncated.
+      ['project', 'schedule', 'operation', 'operation-1', 'extra', '--workspace', env.project],
+      ['project', 'schedule', 'recover', 'operation-1', 'extra', '--workspace', env.project, '--json'],
+      ['project', 'schedule', 'status', 'a', 'b', '--workspace', env.project],
+      ['project', 'schedule', 'plan', 'a', 'b', '--target', 'gemini-sidecar', '--workspace', env.project],
+      ['project', 'schedule', 'list', 'extra', '--workspace', env.project],
+      ['project', 'schedule', 'reconcile', 'extra', '--workspace', env.project],
+      // Verb-inapplicable flags are never forwarded.
+      ['project', 'schedule', 'list', '--target', 'bogus', '--workspace', env.project],
+      ['project', 'schedule', 'list', '--id', 'x', '--workspace', env.project],
+      ['project', 'schedule', 'reconcile', '--target', 'bogus', '--workspace', env.project],
+      ['project', 'schedule', 'reconcile', '--as', 'bogus', '--workspace', env.project],
+      ['project', 'schedule', 'operation', 'operation-1', '--target', 'bogus', '--workspace', env.project],
+      ['project', 'schedule', 'recover', 'operation-1', '--as', 'bogus', '--workspace', env.project],
+      // plan without any id (positional or --id) cannot spawn.
+      ['project', 'schedule', 'plan', '--target', 'gemini-sidecar', '--workspace', env.project],
+      ['project', 'schedule', 'plan', '--target', 'gemini-sidecar', '--workspace', env.project, '--json'],
+    ];
+    for (const args of cases) {
+      const { result, calls } = runBrowser(args, env.home, { stdout: '{}', exit: 0 });
+      assert.equal(result.status, 2, `${args.join(' ')}: ${result.stderr}`);
+      assert.equal(calls(), null, `Runner must not spawn for: ${args.join(' ')}`);
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule minimal valid argv delegates exactly for every verb', () => {
+  const env = tempDirs();
+  try {
+    const cases = [
+      {
+        args: ['project', 'schedule', 'list', '--workspace', env.project],
+        argv: ['project-schedule', 'list', '--workspace', env.project],
+      },
+      {
+        args: ['project', 'schedule', 'plan', 'morning-report', '--target', 'gemini-sidecar', '--workspace', env.project],
+        argv: ['project-schedule', 'plan', 'morning-report', '--target', 'gemini-sidecar', '--workspace', env.project],
+      },
+      {
+        args: ['project', 'schedule', 'status', '--workspace', env.project],
+        argv: ['project-schedule', 'status', '--workspace', env.project],
+      },
+      {
+        args: ['project', 'schedule', 'reconcile', '--workspace', env.project],
+        argv: ['project-schedule', 'reconcile', '--workspace', env.project],
+      },
+      {
+        args: ['project', 'schedule', 'operation', 'operation-1', '--workspace', env.project],
+        argv: ['project-schedule', 'operation', 'operation-1', '--workspace', env.project],
+      },
+      {
+        args: ['project', 'schedule', 'recover', 'operation-1', '--workspace', env.project],
+        argv: ['project-schedule', 'recover', 'operation-1', '--workspace', env.project],
+      },
+    ];
+    for (const entry of cases) {
+      const { result, calls } = runBrowser(entry.args, env.home, { stdout: 'human ok\n', exit: 0 });
+      assert.equal(result.status, 0, `${entry.args.join(' ')}: ${result.stderr}`);
+      assert.deepEqual(calls(), [entry.argv]);
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule preserves the delegated child exit on malformed JSON', () => {
+  const env = tempDirs();
+  try {
+    for (const [childExit, wantExit] of [[0, 1], [1, 1], [2, 2]]) {
+      const { result, calls } = runBrowser(
+        ['project', 'schedule', 'list', '--workspace', env.project, '--json'],
+        env.home,
+        { stdout: 'not json at all', exit: childExit },
+      );
+      assert.equal(result.status, wantExit, `child exit ${childExit}: ${result.stderr}`);
+      assert.match(result.stderr, /CAPABILITY_NOT_INSTALLED/);
+      assert.deepEqual(calls(), [['project-schedule', 'list', '--workspace', env.project, '--json']]);
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule preserves the delegated child exit on typed Runner failures', () => {
+  const env = tempDirs();
+  try {
+    for (const childExit of [1, 2, 3, 4]) {
+      const envelope = JSON.stringify({
+        ok: false,
+        schema: 'webmcp-automation-runner/1',
+        error: { code: 'SCHEDULE_RECOVERY_REQUIRED', message: 'nope', retryable: false },
+      });
+      const { result } = runBrowser(
+        ['project', 'schedule', 'operation', 'operation-1', '--workspace', env.project, '--json'],
+        env.home,
+        { stdout: envelope, exit: childExit },
+      );
+      assert.equal(result.status, childExit, `typed failure must relay exit ${childExit}`);
+      assert.equal(JSON.parse(result.stdout).error.code, 'SCHEDULE_RECOVERY_REQUIRED');
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule sanitizes absolute paths out of error envelopes', () => {
+  const env = tempDirs();
+  try {
+    const envelope = JSON.stringify({
+      ok: false,
+      schema: 'webmcp-automation-runner/1',
+      error: { code: 'SCHEDULE_RECOVERY_REQUIRED', message: `recovery under ${env.project} needs inspection`, retryable: false },
+    });
+    const { result } = runBrowser(
+      ['project', 'schedule', 'operation', 'operation-1', '--workspace', env.project, '--json'],
+      env.home,
+      { stdout: envelope, exit: 3 },
+    );
+    assert.equal(result.status, 3, result.stderr);
+    assert.ok(!result.stdout.includes(env.project), 'workspace root must not leak from error envelopes');
+    assert.match(result.stdout, /<workspace>/);
+    assert.equal(JSON.parse(result.stdout).error.code, 'SCHEDULE_RECOVERY_REQUIRED');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('runner source-checkout fallback is refused in production and honored with the dev signal', async () => {
+  const { getRunnerBin } = await import('../../lib/cli/component-resolver.mjs');
+  const prevRunner = process.env.WEBMCP_RUNNER_BIN;
+  const prevDev = process.env.WEBMCP_DEV_SOURCE_FALLBACK;
+  const prevNodeEnv = process.env.NODE_ENV;
+  const restore = () => {
+    if (prevRunner === undefined) delete process.env.WEBMCP_RUNNER_BIN;
+    else process.env.WEBMCP_RUNNER_BIN = prevRunner;
+    if (prevDev === undefined) delete process.env.WEBMCP_DEV_SOURCE_FALLBACK;
+    else process.env.WEBMCP_DEV_SOURCE_FALLBACK = prevDev;
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+  };
+  try {
+    delete process.env.WEBMCP_RUNNER_BIN;
+    // Production without the opt-in must never resolve a source checkout.
+    delete process.env.WEBMCP_DEV_SOURCE_FALLBACK;
+    process.env.NODE_ENV = 'production';
+    assert.equal(getRunnerBin(), null, 'packaged resolution must never fall back to a source checkout');
+    // Explicit dev opt-in is honored, including under production.
+    process.env.WEBMCP_DEV_SOURCE_FALLBACK = '1';
+    const bin = getRunnerBin();
+    assert.ok(typeof bin === 'string' && bin.endsWith('bin/webmcp-automation-runner.mjs'), `dev fallback must resolve the sibling checkout, got ${bin}`);
+    assert.ok(existsSync(bin));
+    // Dev/test default keeps the sibling resolution.
+    delete process.env.WEBMCP_DEV_SOURCE_FALLBACK;
+    delete process.env.NODE_ENV;
+    assert.ok(getRunnerBin()?.endsWith('bin/webmcp-automation-runner.mjs'));
+  } finally {
+    restore();
+  }
+});
+
+test('schedule refuses the source-checkout fallback in production end to end', () => {
+  const env = tempDirs();
+  try {
+    const captureFile = path.join(env.home, 'runner-calls.jsonl');
+    writeFileSync(captureFile, '');
+    const spawnEnv = {
+      ...process.env,
+      HOME: env.home,
+      WEBMCP_HOME: path.join(env.home, '.webmcp-home'),
+      NODE_ENV: 'production',
+      WEBMCP_TEST_CAPTURE_FILE: captureFile,
+      WEBMCP_TEST_FAKE_SCRIPT: '{}',
+    };
+    delete spawnEnv.WEBMCP_RUNNER_BIN;
+    delete spawnEnv.WEBMCP_DEV_SOURCE_FALLBACK;
+    const result = spawnSync(process.execPath, [
+      BIN, 'project', 'schedule', 'list', '--workspace', env.project, '--json',
+    ], { cwd: WORKSPACE_ROOT, encoding: 'utf8', env: spawnEnv });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /SCHEDULE_RUNTIME_UNAVAILABLE/);
   } finally {
     env.cleanup();
   }
@@ -453,6 +646,9 @@ function smokeEnv(env) {
     HOME: env.home,
     WEBMCP_HOME: env.home,
     WEBMCP_AUTOMATION_STORE_ROOT: DEV_STORE_ROOT,
+    // The real-Runner smoke path resolves the sibling source checkout, which
+    // is an explicit dev-only opt-in (see getRunnerBin).
+    WEBMCP_DEV_SOURCE_FALLBACK: '1',
   };
 }
 
