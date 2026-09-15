@@ -92,12 +92,12 @@ First-class MCP tool counts per preset. Every preset also always includes `brows
 
 | Preset | First-class tools | Hidden (via `browser_raw_command`) |
 |---|---|---|
-| `minimal` (default) | 30 | 28 |
-| `core` | 50 | 8 |
-| `full` | 58 | 0 |
+| `minimal` (default) | 30 | 30 |
+| `core` | 52 | 8 |
+| `full` | 60 | 0 |
 
 - `core` hides: `click`, `getAccessibilityTree`, `getDOMSnapshot`, `getInteractiveElements`, `getPageContent`, `hover`, `selectOption`, `type`
-- `minimal` hides (superset of `core`): `clearConsoleMessages`, `click`, `createWindow`, `deleteCookies`, `executeCDP`, `getAccessibilityTree`, `getCookies`, `getDOMSnapshot`, `getExtensionInfo`, `getInteractiveElements`, `getLocalStorage`, `getPageContent`, `hover`, `listFrames`, `listWindows`, `moveMouse`, `pageFetch`, `ping`, `readConsoleMessages`, `resetViewport`, `selectOption`, `setCookie`, `setLocalStorage`, `setViewport`, `startConsoleCapture`, `stopConsoleCapture`, `type`, `typeText`
+- `minimal` hides (superset of `core`): `clearConsoleMessages`, `clearDownloadEvents`, `click`, `createWindow`, `deleteCookies`, `executeCDP`, `getAccessibilityTree`, `getCookies`, `getDOMSnapshot`, `getExtensionInfo`, `getInteractiveElements`, `getLocalStorage`, `getPageContent`, `hover`, `listDownloadEvents`, `listFrames`, `listWindows`, `moveMouse`, `pageFetch`, `ping`, `readConsoleMessages`, `resetViewport`, `selectOption`, `setCookie`, `setLocalStorage`, `setViewport`, `startConsoleCapture`, `stopConsoleCapture`, `type`, `typeText`
 
 ## Capability Announcement Check
 
