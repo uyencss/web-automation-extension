@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -102,6 +102,10 @@ test('schedule usage documents every lifecycle verb and the closed apply path', 
       assert.match(result.stderr, /schedule reconcile --workspace <path>/);
       assert.match(result.stderr, /schedule operation <operation-id> --workspace <path>/);
       assert.match(result.stderr, /schedule recover <operation-id> --workspace <path>/);
+      // The Browser always spawns a fresh Runner, so the lifecycle verbs carry
+      // the in-process caveat, never the impossible cross-process sequence.
+      assert.match(result.stderr, /in-process/);
+      assert.match(result.stderr, /SCHEDULE_RECOVERY_REQUIRED/);
     }
   } finally {
     cleanup();
@@ -286,6 +290,10 @@ test('schedule legacy apply fails closed naming the lifecycle path without spawn
     assert.match(result.stderr, /plan/);
     assert.match(result.stderr, /operation/);
     assert.match(result.stderr, /recover/);
+    // The remedy must state the honest in-process path, not a guaranteed
+    // cross-process dead end.
+    assert.match(result.stderr, /in-process/);
+    assert.match(result.stderr, /SCHEDULE_RECOVERY_REQUIRED/);
     assert.equal(calls(), null, 'apply must never reach a Runner or provider');
   } finally {
     env.cleanup();
@@ -365,6 +373,79 @@ test('schedule per-verb arity and flag validation fails usage before spawn', () 
       assert.equal(result.status, 2, `${args.join(' ')}: ${result.stderr}`);
       assert.equal(calls(), null, `Runner must not spawn for: ${args.join(' ')}`);
     }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule missing or empty value-flag arguments fail usage before spawn', () => {
+  const env = tempDirs();
+  try {
+    const cases = [
+      ['project', 'schedule', 'status', '--target', '--workspace', env.project],
+      ['project', 'schedule', 'plan', '--id', '--target', 'gemini-sidecar', '--workspace', env.project],
+      ['project', 'schedule', 'status', '--id', '--workspace', env.project],
+      ['project', 'schedule', 'plan', 'morning-report', '--target=', '--workspace', env.project],
+      ['project', 'schedule', 'plan', 'morning-report', '--target', '--workspace', env.project],
+      ['project', 'schedule', 'status', '--target', '', '--workspace', env.project],
+      ['project', 'schedule', 'operation', '--id=', '--workspace', env.project],
+      ['project', 'schedule', 'recover', 'operation-1', '--workspace'],
+    ];
+    for (const args of cases) {
+      const { result, calls } = runBrowser(args, env.home, { stdout: '{}', exit: 0 });
+      assert.equal(result.status, 2, `${args.join(' ')}: ${result.stderr}`);
+      assert.match(result.stderr, /Missing value for option/);
+      assert.equal(calls(), null, `Runner must not spawn for: ${args.join(' ')}`);
+    }
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule sanitizes the canonical workspace when argv is relative', () => {
+  const env = tempDirs();
+  try {
+    const canonical = realpathSync(env.project);
+    const relative = path.relative(WORKSPACE_ROOT, env.project);
+    const envelope = JSON.stringify({
+      ok: false,
+      schema: 'webmcp-automation-runner/1',
+      error: { code: 'SCHEDULE_RECOVERY_REQUIRED', message: `recovery under ${canonical} needs inspection`, retryable: false },
+    });
+    const { result } = runBrowser(
+      ['project', 'schedule', 'operation', 'operation-1', '--workspace', relative, '--json'],
+      env.home,
+      { stdout: envelope, exit: 3 },
+    );
+    assert.equal(result.status, 3, result.stderr);
+    assert.ok(!result.stdout.includes(canonical), 'canonical workspace root must not leak when argv is relative');
+    assert.ok(!result.stdout.includes(env.project), 'argv workspace root must not leak when argv is relative');
+    assert.match(result.stdout, /<workspace>/);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('schedule sanitizes the canonical workspace when argv passes through a symlink', () => {
+  const env = tempDirs();
+  try {
+    const link = path.join(env.root, 'linked-project');
+    symlinkSync(env.project, link, 'dir');
+    const canonical = realpathSync(env.project);
+    const envelope = JSON.stringify({
+      ok: false,
+      schema: 'webmcp-automation-runner/1',
+      error: { code: 'SCHEDULE_RECOVERY_REQUIRED', message: `recovery under ${canonical} needs inspection`, retryable: false },
+    });
+    const { result } = runBrowser(
+      ['project', 'schedule', 'operation', 'operation-1', '--workspace', link, '--json'],
+      env.home,
+      { stdout: envelope, exit: 3 },
+    );
+    assert.equal(result.status, 3, result.stderr);
+    assert.ok(!result.stdout.includes(canonical), 'canonical workspace root must not leak when argv is a symlink');
+    assert.ok(!result.stdout.includes(link), 'symlinked argv workspace must not leak');
+    assert.match(result.stdout, /<workspace>/);
   } finally {
     env.cleanup();
   }
@@ -471,7 +552,7 @@ test('schedule sanitizes absolute paths out of error envelopes', () => {
   }
 });
 
-test('runner source-checkout fallback is refused in production and honored with the dev signal', async () => {
+test('runner source-checkout fallback is denied by default and honored only with the dev signal', async () => {
   const { getRunnerBin } = await import('../../lib/cli/component-resolver.mjs');
   const prevRunner = process.env.WEBMCP_RUNNER_BIN;
   const prevDev = process.env.WEBMCP_DEV_SOURCE_FALLBACK;
@@ -495,10 +576,11 @@ test('runner source-checkout fallback is refused in production and honored with 
     const bin = getRunnerBin();
     assert.ok(typeof bin === 'string' && bin.endsWith('bin/webmcp-automation-runner.mjs'), `dev fallback must resolve the sibling checkout, got ${bin}`);
     assert.ok(existsSync(bin));
-    // Dev/test default keeps the sibling resolution.
+    // Without the opt-in the sibling source checkout is never resolved,
+    // even outside production (default-deny).
     delete process.env.WEBMCP_DEV_SOURCE_FALLBACK;
     delete process.env.NODE_ENV;
-    assert.ok(getRunnerBin()?.endsWith('bin/webmcp-automation-runner.mjs'));
+    assert.equal(getRunnerBin(), null, 'sibling source fallback is denied without the explicit dev signal');
   } finally {
     restore();
   }
@@ -611,6 +693,8 @@ test('schedule project help advertises the lifecycle verbs and the closed apply'
   assert.match(result.stdout, /webmcp project schedule reconcile --workspace <path> \[--json\]/);
   assert.match(result.stdout, /webmcp project schedule operation <operation-id> --workspace <path> \[--json\]/);
   assert.match(result.stdout, /webmcp project schedule recover <operation-id> --workspace <path> \[--json\]/);
+  assert.match(result.stdout, /in-process/);
+  assert.match(result.stdout, /SCHEDULE_RECOVERY_REQUIRED/);
 });
 
 function writeScheduleProject(project) {

@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BIN = path.join(ROOT, 'bin', 'webmcp-browser.mjs');
 const WORKSPACE_ROOT = path.resolve(ROOT, '..');
+// Test processes opt into the dev-only sibling source checkout once here:
+// component-resolver denies it by default, so every Runner route below would
+// otherwise report SCHEDULE_RUNTIME_UNAVAILABLE / CLI-not-found in this layout.
+process.env.WEBMCP_DEV_SOURCE_FALLBACK ??= '1';
 // Vault setup in bootstrap tests invokes the owning vault package directly:
 // the aggregate `vault` route now belongs to the WebMCP CLI, not the browser.
 const VAULT_BIN = path.join(WORKSPACE_ROOT, 'webmcp-vault-kit', 'bin', 'webmcp-vault.mjs');
@@ -1809,7 +1813,7 @@ test('webmcp project delegates list, where, and attach to the runner workspace s
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-'));
   const webmcpHome = path.join(home, '.webmcp');
   const workspace = path.join(home, 'projects', 'book-affiliate');
-  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome, WEBMCP_DEV_SOURCE_FALLBACK: '1' };
 
   const created = runnerRun([
     'workspace', 'init', '--workspace', workspace, '--id', 'book-affiliate',
@@ -1864,7 +1868,7 @@ test('webmcp project attach --dry-run plans an insert for an unregistered valid 
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-attach-'));
   const webmcpHome = path.join(home, '.webmcp');
   const workspace = path.join(home, 'projects', 'standalone');
-  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome, WEBMCP_DEV_SOURCE_FALLBACK: '1' };
 
   const created = runnerRun([
     'workspace', 'init', '--workspace', workspace, '--id', 'standalone',
@@ -1890,7 +1894,7 @@ test('webmcp project attach --scan passes the scan root to the runner', () => {
   const webmcpHome = path.join(home, '.webmcp');
   const projectsRoot = path.join(home, 'projects');
   const workspace = path.join(projectsRoot, 'scan-me');
-  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome, WEBMCP_DEV_SOURCE_FALLBACK: '1' };
 
   const created = runnerRun([
     'workspace', 'init', '--workspace', workspace, '--id', 'scan-me',
@@ -1913,7 +1917,7 @@ test('webmcp project doctor chains doctor, registry audit, and attach dry-run', 
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-doctor-'));
   const webmcpHome = path.join(home, '.webmcp');
   const workspace = path.join(home, 'projects', 'doctor-me');
-  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome, WEBMCP_DEV_SOURCE_FALLBACK: '1' };
 
   const created = runnerRun([
     'workspace', 'init', '--workspace', workspace, '--id', 'doctor-me',
@@ -1937,7 +1941,7 @@ test('webmcp project where and doctor resolve the registered default without an 
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-default-'));
   const webmcpHome = path.join(home, '.webmcp');
   const workspace = path.join(home, 'projects', 'the-default');
-  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome, WEBMCP_DEV_SOURCE_FALLBACK: '1' };
 
   const created = runnerRun([
     'workspace', 'init', '--workspace', workspace, '--id', 'the-default',
@@ -1989,6 +1993,7 @@ test('webmcp project new --template creates a template-backed v3 project', () =>
   const env = {
     HOME: home,
     WEBMCP_HOME: webmcpHome,
+    WEBMCP_DEV_SOURCE_FALLBACK: '1',
     WEBMCP_AUTOMATION_STORE_ROOT: path.join(ROOT, '..', 'webmcp-automation-runner', 'tests', 'fixtures', 'bootstrap-store'),
   };
   const at = path.join(home, 'projects', 'test-music');
@@ -2066,6 +2071,7 @@ test('webmcp project new --template with an unknown template fails with a typed 
   const env = {
     HOME: home,
     WEBMCP_HOME: path.join(home, '.webmcp'),
+    WEBMCP_DEV_SOURCE_FALLBACK: '1',
     WEBMCP_AUTOMATION_STORE_ROOT: path.join(ROOT, '..', 'webmcp-automation-runner', 'tests', 'fixtures', 'bootstrap-store'),
   };
   const result = spawnSync(process.execPath, [BIN, 'project', 'new', '--template', 'nope', '--at', path.join(home, 'p')], {
@@ -2092,7 +2098,7 @@ test('webmcp project new without --template keeps the bootstrap default and stil
 test('webmcp project guide lists and stages derived guides behind the --yes gate', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'webmcp-project-guide-'));
   const webmcpHome = path.join(home, '.webmcp');
-  const env = { HOME: home, WEBMCP_HOME: webmcpHome };
+  const env = { HOME: home, WEBMCP_HOME: webmcpHome, WEBMCP_DEV_SOURCE_FALLBACK: '1' };
   const workspace = path.join(home, 'projects', 'guided');
 
   const created = runnerRun([
