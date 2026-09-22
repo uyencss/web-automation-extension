@@ -60,8 +60,8 @@ Bảng phân định rõ ràng các nhánh xử lý trong `index.mjs` và `creat
 
 Per plan §2, §5, and §6, no anonymous assignments are allowed. Placeholders below MUST be replaced with real named identities before opening the merge gate:
 
-- **Primary Shim Purge Owner:** `Uyen Uyen` (GitHub `uyencss`; also `@ttcenter` on ATLAS, `uyenuyen` on ORBIT) — Lead Maintainer / Release Captain
-- **Designated Successor (Chống SPOF):** `Hieu` (node `hieunq@100.68.79.40`, handle `hieunguyenquang2906`, SSH alias `hieu.mbf3`, DigitalOcean account `dng-hieu`) — Secondary Reviewer / Team Lead
+- **Primary Shim Purge Owner:** `Uyen Uyen` (GitHub `uyencss`) — Lead Maintainer / Release Captain
+- **Designated Successor (Chống SPOF):** `Hieu` (machine user `hieunq`; contact details are deliberately **not** recorded here — see the signature receipt in the initiative's `prep/reviews/`) — Secondary Reviewer / Team Lead
 - **Harness Retirement Owner:** `Layla` — retires `tests/fixtures/golden-project-template/` simultaneously with shim purge
 
 ---
