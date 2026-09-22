@@ -60,9 +60,9 @@ Bảng phân định rõ ràng các nhánh xử lý trong `index.mjs` và `creat
 
 Per plan §2, §5, and §6, no anonymous assignments are allowed. Placeholders below MUST be replaced with real named identities before opening the merge gate:
 
-- **Primary Shim Purge Owner:** `[ASSIGN_SHIM_PURGE_OWNER_NAME]` (e.g., Lead Maintainer / Release Captain)
-- **Designated Successor (Chống SPOF):** `[ASSIGN_SUCCESSOR_NAME]` (e.g., Secondary Reviewer / Team Lead)
-- **Harness Retirement Owner:** `[ASSIGN_HARNESS_OWNER_NAME]` (retires `tests/fixtures/golden-project-template/` simultaneously with shim purge)
+- **Primary Shim Purge Owner:** `Uyen Uyen` (GitHub `uyencss`; also `@ttcenter` on ATLAS, `uyenuyen` on ORBIT) — Lead Maintainer / Release Captain
+- **Designated Successor (Chống SPOF):** `Hieu` (node `hieunq@100.68.79.40`, handle `hieunguyenquang2906`, SSH alias `hieu.mbf3`, DigitalOcean account `dng-hieu`) — Secondary Reviewer / Team Lead
+- **Harness Retirement Owner:** `Layla` — retires `tests/fixtures/golden-project-template/` simultaneously with shim purge
 
 ---
 
@@ -117,4 +117,4 @@ The CI script verifies:
      - If receipt exists: emit notice `CI NOTICE: 30-day window passed without stable release; operating under approved 2-minor fallback policy.`
      - If receipt missing: **FAIL CI HARD** (`exit 1`) with message: `::error::Shim exceeded 30 days without stable release and no approved fallback receipt found!`.
    - If count of stable releases `≥ 1`:
-     - Emit **BLOCKING ALERT**: `::error::Shim retention window expired! Purge PR must be opened immediately by [ASSIGN_SHIM_PURGE_OWNER_NAME] or [ASSIGN_SUCCESSOR_NAME].`
+     - Emit **BLOCKING ALERT**: `::error::Shim retention window expired! Purge PR must be opened immediately by Uyen Uyen (uyencss) or Hieu (hieunq).`
