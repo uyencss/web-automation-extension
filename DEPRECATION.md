@@ -62,7 +62,7 @@ Per plan §2, §5, and §6, no anonymous assignments are allowed. Placeholders b
 
 - **Primary Shim Purge Owner:** `Uyen Uyen` (GitHub `uyencss`) — Lead Maintainer / Release Captain
 - **Designated Successor (Chống SPOF):** `Hieu` (machine user `hieunq`; contact details are deliberately **not** recorded here — see the signature receipt in the initiative's `prep/reviews/`) — Secondary Reviewer / Team Lead
-- **Harness Retirement Owner:** `Layla` — retires `tests/fixtures/golden-project-template/` simultaneously with shim purge
+- **Harness Retirement Owner:** `Hieu` (`hieu.mbf3`; same person as the Designated Successor above — see the signature receipt for why that leaves harness retirement without an independent actor) — retires `tests/fixtures/golden-project-template/` simultaneously with shim purge
 
 ---
 
