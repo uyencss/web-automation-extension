@@ -33,6 +33,8 @@ import {
   sanitizeResultReason,
   closedConfidence,
   isoOrNull,
+  REQUEST_ID_PATTERN,
+  closedRequestId,
 } from '../../lib/jev-shadow/loop.mjs';
 import { shadowEvidenceLine } from '../../lib/jev-shadow/metrics.mjs';
 
@@ -1967,7 +1969,7 @@ export const DOMAINS = {
   'browserActions': { number: true },
   'status': { closed: ['ok', 'invalid', 'fallback-required'] },
   'reason': { reason: true, nullable: true },
-  'requestId': { exempt: true },
+  'requestId': { idPattern: true, extra: ['[REDACTED]'], nullable: true },
   'agreement': { bool: true, nullable: true },
   'snapshotDigest': { sha: true, nullable: true },
   'questionSetDigest': { sha: true, nullable: true },
@@ -2027,8 +2029,10 @@ export function walkRecordAndAssertDomains(record, domains = DOMAINS) {
         return;
       }
 
-      if (domain.exempt) {
-        assert.equal(typeof val, 'string', `Path "${path}" expected string for exempt field, got ${typeof val}`);
+      if (domain.idPattern) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected string id, got ${typeof val}`);
+        if (domain.extra && domain.extra.includes(val)) return;
+        assert.ok(/^[a-zA-Z0-9_-]+(@[a-zA-Z0-9_.-]+)?$/.test(val), `Path "${path}" id "${val}" does not match id pattern`);
         return;
       }
 
@@ -2603,7 +2607,119 @@ test('17. Sol L1 round 3: fuzz toàn record (schema-path, không theo content)',
     assert.equal(recSnap.normalAgentDecision.targetRef, '[REDACTED]');
     walkRecordAndAssertDomains(recSnap, DOMAINS);
     assert.equal(shadowEvidenceLine(recSnap).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at snapshot ref`);
+
+    // 13. requestId (hostile string into requestId)
+    const hostileReqId = `${hostile}!`;
+    const recReq = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: hostileReqId,
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({ ...validResult, requestId: hostileReqId }),
+    });
+    assert.equal(recReq.requestId, '[REDACTED]');
+    walkRecordAndAssertDomains(recReq, DOMAINS);
+    assert.equal(shadowEvidenceLine(recReq).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at requestId`);
+
+    if (!REQUEST_ID_PATTERN.test(hostile)) {
+      const recRawReq = await runShadowBrowserStep({
+        snapshot: baseSnapshot,
+        goal: 'Click confirm',
+        requestId: hostile,
+        urlOrigin: 'https://example.com',
+        runId: 'run-fuzz',
+        query: async () => ({ ...validResult, requestId: hostile }),
+      });
+      assert.equal(recRawReq.requestId, '[REDACTED]');
+      walkRecordAndAssertDomains(recRawReq, DOMAINS);
+      assert.equal(shadowEvidenceLine(recRawReq).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at raw requestId`);
+    }
   }
+});
+
+test('18. Sol L1 round 4: build-failure requestId thuộc ID domain hoặc [REDACTED]', async () => {
+  const baseSnapshot = '- ref=r1 button "Confirm"';
+  const controlLineage = {
+    provider: 'typesafe',
+    model: 'jev-1.13.0',
+    skillDigest: 'sha256:' + '0'.repeat(64),
+    questionSetDigest: 'sha256:' + '1'.repeat(64),
+    stateDigest: 'sha256:' + '2'.repeat(64),
+    requestDigest: 'sha256:' + '3'.repeat(64),
+  };
+
+  // Helper unit tests
+  assert.equal(closedRequestId('run_123@step-7'), 'run_123@step-7');
+  assert.equal(closedRequestId('password-hunter22!'), '[REDACTED]');
+  assert.equal(closedRequestId('PASSWORDHUNTER22!'), '[REDACTED]');
+  assert.equal(closedRequestId(null), null);
+  assert.equal(closedRequestId(undefined), null);
+  assert.equal(closedRequestId(''), '[REDACTED]');
+  assert.equal(closedRequestId(123), '[REDACTED]');
+
+  // 1. requestId: 'password-hunter22!' ⇒ record build-failure requestId === '[REDACTED]', reason === 'BUILD_FAILED:UNKNOWN', shadowEvidenceLine(record) không chứa hunter22
+  const rec1 = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'password-hunter22!',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-r4-1',
+    query: async () => ({}),
+  });
+  assert.equal(rec1.status, 'fallback-required');
+  assert.equal(rec1.requestId, '[REDACTED]');
+  assert.equal(rec1.reason, 'BUILD_FAILED:UNKNOWN');
+  assert.equal(shadowEvidenceLine(rec1).includes('hunter22'), false);
+  walkRecordAndAssertDomains(rec1, DOMAINS);
+
+  // 2. requestId: 'PASSWORDHUNTER22!' ⇒ record build-failure requestId === '[REDACTED]', reason === 'BUILD_FAILED:UNKNOWN', shadowEvidenceLine(record) không chứa PASSWORDHUNTER22
+  const rec2 = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'PASSWORDHUNTER22!',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-r4-2',
+    query: async () => ({}),
+  });
+  assert.equal(rec2.status, 'fallback-required');
+  assert.equal(rec2.requestId, '[REDACTED]');
+  assert.equal(rec2.reason, 'BUILD_FAILED:UNKNOWN');
+  assert.equal(shadowEvidenceLine(rec2).includes('PASSWORDHUNTER22'), false);
+  walkRecordAndAssertDomains(rec2, DOMAINS);
+
+  // 3. Control: requestId: 'run_123@step-7' ⇒ record requestId === 'run_123@step-7' (pass-through, status ok)
+  const recControl = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'run_123@step-7',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-r4-ctrl',
+    query: async () => ({
+      schema: 'webmcp-jev-result/1',
+      requestId: 'run_123@step-7',
+      status: 'ok',
+      advisoryOnly: true,
+      answers: {
+        operation: {
+          type: 'choice',
+          choice: 'CLICK',
+          probabilities: { CLICK: 0.9, WAIT: 0.05, DONE: 0.03, BLOCKED: 0.02 },
+          confidence: 0.95,
+        },
+        click_target: {
+          type: 'choice',
+          choice: 'r1',
+          probabilities: { r1: 1.0 },
+          confidence: 0.99,
+        },
+      },
+      lineage: controlLineage,
+    }),
+  });
+  assert.equal(recControl.status, 'ok');
+  assert.equal(recControl.requestId, 'run_123@step-7');
+  walkRecordAndAssertDomains(recControl, DOMAINS);
 });
 
 
