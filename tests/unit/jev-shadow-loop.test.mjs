@@ -23,6 +23,7 @@ import {
   OPERATION_VALUES,
   METHOD_VALUES,
   REF_PATTERN,
+  LINEAGE_PROVIDER,
   projectLineage,
   sanitizeReasonCode,
 } from '../../lib/jev-shadow/loop.mjs';
@@ -1714,6 +1715,18 @@ test('15. Sol L1 round 2: đóng hẳn evidence fields (targetRef theo snapshot,
   assert.equal(projectNormalAgentDecision({ targetRef: null }).targetRef, null);
 
   // 4. Lineage:
+  // provider 'password-hunter22' ⇒ '[REDACTED]'
+  const badProviderLineage = {
+    provider: 'password-hunter22',
+    model: 'jev-1.13.0',
+    skillDigest: 'sha256:' + '0'.repeat(64),
+    questionSetDigest: 'sha256:' + '1'.repeat(64),
+    stateDigest: 'sha256:' + '2'.repeat(64),
+    requestDigest: 'sha256:' + '3'.repeat(64),
+  };
+  const projBadProvider = projectLineage(badProviderLineage);
+  assert.equal(projBadProvider.provider, '[REDACTED]');
+
   // model 'password-hunter22' ⇒ '[REDACTED]'
   const projBadModel = projectLineage({ model: 'password-hunter22' });
   assert.equal(projBadModel.model, '[REDACTED]');
@@ -1733,6 +1746,8 @@ test('15. Sol L1 round 2: đóng hẳn evidence fields (targetRef theo snapshot,
   };
   const projControl = projectLineage(controlLineage);
   assert.deepEqual(projControl, controlLineage);
+  assert.equal(projControl.provider, 'typesafe');
+  assert.equal(LINEAGE_PROVIDER, 'typesafe');
 
   const recGoodLineage = await runShadowBrowserStep({
     snapshot,
@@ -1772,6 +1787,44 @@ test('15. Sol L1 round 2: đóng hẳn evidence fields (targetRef theo snapshot,
   assert.equal(recBadLineage.lineage.skillDigest, '[REDACTED]');
   assert.equal(recBadLineage.lineage.provider, 'typesafe');
   assert.equal(shadowEvidenceLine(recBadLineage).includes('hunter22'), false);
+
+  // Audit toàn record (Sol ask): một ca runner với query giả trả lineage độc hại
+  // (provider/model/skillDigest = 'password-hunter22') + normalAgentDecision.targetRef='password-hunter22'
+  // + postcondition.method='password-hunter22' ⇒ shadowEvidenceLine(record) KHÔNG chứa 'hunter22';
+  // record.lineage.provider/model/skillDigest đều '[REDACTED]'.
+  const recAuditMalicious = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-audit-malicious',
+    urlOrigin: 'https://example.com',
+    runId: 'run-audit-malicious',
+    query: async () => ({
+      ...validResult,
+      lineage: {
+        provider: 'password-hunter22',
+        model: 'password-hunter22',
+        skillDigest: 'password-hunter22',
+        questionSetDigest: 'sha256:' + 'a'.repeat(64),
+        stateDigest: 'sha256:' + 'b'.repeat(64),
+        requestDigest: 'sha256:' + 'c'.repeat(64),
+      },
+    }),
+    normalAgentDecision: {
+      engine: 'normal-agent',
+      operation: 'CLICK',
+      targetRef: 'password-hunter22',
+    },
+    postcondition: {
+      verified: true,
+      method: 'password-hunter22',
+    },
+  });
+  assert.equal(recAuditMalicious.lineage.provider, '[REDACTED]');
+  assert.equal(recAuditMalicious.lineage.model, '[REDACTED]');
+  assert.equal(recAuditMalicious.lineage.skillDigest, '[REDACTED]');
+  assert.equal(recAuditMalicious.normalAgentDecision.targetRef, '[REDACTED]');
+  assert.equal(recAuditMalicious.postcondition.method, '[REDACTED]');
+  assert.equal(shadowEvidenceLine(recAuditMalicious).includes('hunter22'), false);
 
   // non-object lineage ⇒ null
   assert.equal(projectLineage(null), null);
