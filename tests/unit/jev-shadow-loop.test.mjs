@@ -19,6 +19,10 @@ import {
   scrubEvidenceText,
   projectNormalAgentDecision,
   projectPostcondition,
+  ENGINE_VALUES,
+  OPERATION_VALUES,
+  METHOD_PATTERN,
+  REF_PATTERN,
 } from '../../lib/jev-shadow/loop.mjs';
 import { shadowEvidenceLine } from '../../lib/jev-shadow/metrics.mjs';
 
@@ -1137,6 +1141,111 @@ test('12. ttl freshness: boundAt starts at snapshot build, slow query triggers T
   assert.equal(controlRecheck.ok, true);
   assert.equal(controlRecheck.stale, false);
   assert.equal(controlRecheck.fault, null);
+
+  // 5. Counterexample Sol: snapshotCapturedAt: 100000, now: () => 160000, ttlMs: 500, query instant hợp lệ
+  // ⇒ record.jevDecision.stale === true, reasons chứa TTL_EXPIRED, record.jevDecision.decidedAt === 100000, record.snapshotCapturedAt === 100000;
+  // recheckShadowTarget({decision: record.jevDecision, freshSnapshot, now: 160000, ttlMs: 500}) ⇒ fault:'expired'.
+  const solCaptureRecord = await runShadowBrowserStep({
+    snapshot,
+    snapshotCapturedAt: 100000,
+    goal: 'Click confirm',
+    requestId: 'req-ttl-sol',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+    query: async (req) => ({ ...validResult, requestId: req.requestId }),
+    now: () => 160000,
+    ttlMs: 500,
+    normalAgentDecision: { operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(solCaptureRecord.jevDecision.stale, true);
+  assert.ok(solCaptureRecord.jevDecision.reasons.includes('TTL_EXPIRED'));
+  assert.equal(solCaptureRecord.jevDecision.decidedAt, 100000);
+  assert.equal(solCaptureRecord.snapshotCapturedAt, 100000);
+
+  const solRecheck = recheckShadowTarget({
+    decision: solCaptureRecord.jevDecision,
+    freshSnapshot: snapshot,
+    now: 160000,
+    ttlMs: 500,
+  });
+  assert.equal(solRecheck.ok, false);
+  assert.equal(solRecheck.stale, true);
+  assert.equal(solRecheck.fault, 'expired');
+  assert.ok(solRecheck.reasons.includes('TTL_EXPIRED'));
+
+  // 6. Dạng object: snapshot: { snapshot: <text>, capturedAt: 100000 } + now:160000 + ttlMs:500 ⇒ stale TTL_EXPIRED, decidedAt === 100000
+  const objCaptureRecord = await runShadowBrowserStep({
+    snapshot: { snapshot, capturedAt: 100000 },
+    goal: 'Click confirm',
+    requestId: 'req-ttl-obj',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+    query: async (req) => ({ ...validResult, requestId: req.requestId }),
+    now: () => 160000,
+    ttlMs: 500,
+    normalAgentDecision: { operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(objCaptureRecord.jevDecision.stale, true);
+  assert.ok(objCaptureRecord.jevDecision.reasons.includes('TTL_EXPIRED'));
+  assert.equal(objCaptureRecord.jevDecision.decidedAt, 100000);
+  assert.equal(objCaptureRecord.snapshotCapturedAt, 100000);
+
+  // 7. Control: snapshotCapturedAt = now (cách đây < ttl) ⇒ ok, không stale
+  const freshCaptureRecord = await runShadowBrowserStep({
+    snapshot,
+    snapshotCapturedAt: 160000,
+    goal: 'Click confirm',
+    requestId: 'req-ttl-fresh',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+    query: async (req) => ({ ...validResult, requestId: req.requestId }),
+    now: () => 160000,
+    ttlMs: 500,
+    normalAgentDecision: { operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(freshCaptureRecord.status, 'ok');
+  assert.equal(freshCaptureRecord.jevDecision.stale, false);
+  assert.equal(freshCaptureRecord.jevDecision.reasons.includes('TTL_EXPIRED'), false);
+  assert.equal(freshCaptureRecord.jevDecision.decidedAt, 160000);
+  assert.equal(freshCaptureRecord.snapshotCapturedAt, 160000);
+
+  // 8. snapshotCapturedAt: 'abc' ⇒ throw REQUEST_INVALID
+  await assert.rejects(
+    runShadowBrowserStep({
+      snapshot,
+      snapshotCapturedAt: 'abc',
+      goal: 'Click confirm',
+      requestId: 'req-ttl-invalid',
+      urlOrigin: 'https://example.com',
+      runId: 'run-ttl',
+      query: async (req) => ({ ...validResult, requestId: req.requestId }),
+    }),
+    (err) => {
+      assert.equal(err.code, 'REQUEST_INVALID');
+      assert.match(err.message, /snapshotCapturedAt must be a finite epoch-ms number/);
+      return true;
+    }
+  );
+
+  // 9. Object snapshot with capturedAt: 'abc' ⇒ throw REQUEST_INVALID
+  await assert.rejects(
+    runShadowBrowserStep({
+      snapshot: { snapshot, capturedAt: 'abc' },
+      goal: 'Click confirm',
+      requestId: 'req-ttl-invalid-obj',
+      urlOrigin: 'https://example.com',
+      runId: 'run-ttl',
+      query: async () => validResult,
+    }),
+    (err) => {
+      assert.equal(err.code, 'REQUEST_INVALID');
+      assert.match(err.message, /snapshotCapturedAt must be a finite epoch-ms number/);
+      return true;
+    }
+  );
 });
 
 test('13. invalid result status: invalid validation records status "invalid" and INVALID_RESULT reason, agreement is null; NO_TARGET control stays "ok"', async () => {
@@ -1340,6 +1449,115 @@ test('14. evidence whitelist and scrub: strips secrets and unwhitelisted fields 
     targetRef: 'token=3f9a1c2b4d5e6f708192a3b4c5d6e7f8',
   });
   assert.equal(projTarget.targetRef, '[REDACTED]');
+
+  // 5. normalAgentDecision.engine === 'normal-agent password hunter22' ⇒ record engine === '[REDACTED]'; shadowEvidenceLine(record) KHÔNG chứa 'hunter22'
+  const recordBadEngine = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sec-engine',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sec-engine',
+    query: async () => validResult,
+    normalAgentDecision: {
+      engine: 'normal-agent password hunter22',
+      operation: 'CLICK',
+      targetRef: 'r3',
+    },
+  });
+  assert.equal(recordBadEngine.normalAgentDecision.engine, '[REDACTED]');
+  const lineBadEngine = shadowEvidenceLine(recordBadEngine);
+  assert.equal(lineBadEngine.includes('hunter22'), false);
+
+  // 6. postcondition.method === 'Login password hunter22' ⇒ method === '[REDACTED]'; evidence line sạch
+  const recordBadMethod = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sec-method',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sec-method',
+    query: async () => validResult,
+    postcondition: {
+      verified: true,
+      method: 'Login password hunter22',
+      satisfied: true,
+    },
+  });
+  assert.equal(recordBadMethod.postcondition.method, '[REDACTED]');
+  const lineBadMethod = shadowEvidenceLine(recordBadMethod);
+  assert.equal(lineBadMethod.includes('hunter22'), false);
+
+  // 7. Control pass-through: engine:'normal-agent', operation:'CLICK', targetRef:'r3', method:'snapshot-diff' giữ nguyên; method:'snapshot-diff' qua METHOD_PATTERN ✓
+  assert.equal(METHOD_PATTERN.test('snapshot-diff'), true);
+  const recordControlPass = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sec-control-pass',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sec-control-pass',
+    query: async () => validResult,
+    normalAgentDecision: {
+      engine: 'normal-agent',
+      operation: 'CLICK',
+      targetRef: 'r3',
+    },
+    postcondition: {
+      verified: true,
+      method: 'snapshot-diff',
+      satisfied: true,
+    },
+  });
+  assert.equal(recordControlPass.normalAgentDecision.engine, 'normal-agent');
+  assert.equal(recordControlPass.normalAgentDecision.operation, 'CLICK');
+  assert.equal(recordControlPass.normalAgentDecision.targetRef, 'r3');
+  assert.equal(recordControlPass.postcondition.method, 'snapshot-diff');
+  assert.equal(recordControlPass.postcondition.verified, true);
+  assert.equal(recordControlPass.postcondition.satisfied, true);
+
+  // 8. method:'eyJhbGciOiJIUzI1NiJ9.x.y' (JWT) ⇒ '[REDACTED]' (JWT không khớp METHOD_PATTERN, bị scrubEvidenceText chặn; kiểm cả 2 lớp)
+  const jwtMethod = 'eyJhbGciOiJIUzI1NiJ9.x.y';
+  assert.equal(METHOD_PATTERN.test(jwtMethod), false);
+  assert.equal(scrubEvidenceText(jwtMethod), '[REDACTED]');
+  const projJwt = projectPostcondition({
+    method: jwtMethod,
+  });
+  assert.equal(projJwt.method, '[REDACTED]');
+
+  const recordJwt = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sec-jwt',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sec-jwt',
+    query: async () => validResult,
+    postcondition: {
+      method: jwtMethod,
+    },
+  });
+  assert.equal(recordJwt.postcondition.method, '[REDACTED]');
+  const lineJwt = shadowEvidenceLine(recordJwt);
+  assert.equal(lineJwt.includes('eyJhbGciOiJIUzI1NiJ9'), false);
+
+  // 9. Constants and projections coverage
+  assert.ok(Object.isFrozen(ENGINE_VALUES));
+  assert.ok(Object.isFrozen(OPERATION_VALUES));
+  assert.deepEqual(ENGINE_VALUES, ['jev', 'normal-agent', 'deterministic', 'human', 'blocked', 'jev-shadow']);
+  assert.deepEqual(OPERATION_VALUES, ['CLICK', 'TYPE_TEXT', 'HOVER', 'SELECT', 'WAIT', 'DONE', 'BLOCKED']);
+
+  // engine fallback to 'normal-agent' on null or empty
+  assert.equal(projectNormalAgentDecision({ engine: null }).engine, 'normal-agent');
+  assert.equal(projectNormalAgentDecision({ engine: '' }).engine, 'normal-agent');
+  assert.equal(projectNormalAgentDecision({ engine: '   ' }).engine, 'normal-agent');
+
+  // operation invalid value -> '[REDACTED]', null -> null
+  assert.equal(projectNormalAgentDecision({ operation: 'INVALID_OP' }).operation, '[REDACTED]');
+  assert.equal(projectNormalAgentDecision({ operation: null }).operation, null);
+
+  // targetRef long (>64) -> '[REDACTED]', null -> null
+  assert.equal(projectNormalAgentDecision({ targetRef: 'r'.repeat(65) }).targetRef, '[REDACTED]');
+  assert.equal(projectNormalAgentDecision({ targetRef: null }).targetRef, null);
+
+  // postcondition method null -> null
+  assert.equal(projectPostcondition({ method: null }).method, null);
 });
 
 
