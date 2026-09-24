@@ -21,8 +21,10 @@ import {
   projectPostcondition,
   ENGINE_VALUES,
   OPERATION_VALUES,
-  METHOD_PATTERN,
+  METHOD_VALUES,
   REF_PATTERN,
+  projectLineage,
+  sanitizeReasonCode,
 } from '../../lib/jev-shadow/loop.mjs';
 import { shadowEvidenceLine } from '../../lib/jev-shadow/metrics.mjs';
 
@@ -1486,8 +1488,8 @@ test('14. evidence whitelist and scrub: strips secrets and unwhitelisted fields 
   const lineBadMethod = shadowEvidenceLine(recordBadMethod);
   assert.equal(lineBadMethod.includes('hunter22'), false);
 
-  // 7. Control pass-through: engine:'normal-agent', operation:'CLICK', targetRef:'r3', method:'snapshot-diff' giữ nguyên; method:'snapshot-diff' qua METHOD_PATTERN ✓
-  assert.equal(METHOD_PATTERN.test('snapshot-diff'), true);
+  // 7. Control pass-through: engine:'normal-agent', operation:'CLICK', targetRef:'r3', method:'snapshot-diff' giữ nguyên; method:'snapshot-diff' thuộc METHOD_VALUES ✓
+  assert.equal(METHOD_VALUES.includes('snapshot-diff'), true);
   const recordControlPass = await runShadowBrowserStep({
     snapshot,
     goal: 'Click confirm',
@@ -1513,9 +1515,9 @@ test('14. evidence whitelist and scrub: strips secrets and unwhitelisted fields 
   assert.equal(recordControlPass.postcondition.verified, true);
   assert.equal(recordControlPass.postcondition.satisfied, true);
 
-  // 8. method:'eyJhbGciOiJIUzI1NiJ9.x.y' (JWT) ⇒ '[REDACTED]' (JWT không khớp METHOD_PATTERN, bị scrubEvidenceText chặn; kiểm cả 2 lớp)
+  // 8. method:'eyJhbGciOiJIUzI1NiJ9.x.y' (JWT) ⇒ '[REDACTED]' (JWT không thuộc METHOD_VALUES, bị scrubEvidenceText chặn; kiểm cả 2 lớp)
   const jwtMethod = 'eyJhbGciOiJIUzI1NiJ9.x.y';
-  assert.equal(METHOD_PATTERN.test(jwtMethod), false);
+  assert.equal(METHOD_VALUES.includes(jwtMethod), false);
   assert.equal(scrubEvidenceText(jwtMethod), '[REDACTED]');
   const projJwt = projectPostcondition({
     method: jwtMethod,
@@ -1559,6 +1561,344 @@ test('14. evidence whitelist and scrub: strips secrets and unwhitelisted fields 
   // postcondition method null -> null
   assert.equal(projectPostcondition({ method: null }).method, null);
 });
+
+test('15. Sol L1 round 2: đóng hẳn evidence fields (targetRef theo snapshot, method closed set, lineage, reason)', async () => {
+  const snapshot = '- ref=r3 button "Confirm"\n- ref=r4 textbox "Username" value="user1"';
+
+  const validResult = {
+    schema: 'webmcp-jev-result/1',
+    requestId: 'req-l1-round2',
+    status: 'ok',
+    advisoryOnly: true,
+    answers: {
+      operation: {
+        type: 'choice',
+        choice: 'CLICK',
+        probabilities: { CLICK: 1.0 },
+        confidence: 0.95,
+      },
+      click_target: {
+        type: 'choice',
+        choice: 'r3',
+        probabilities: { r3: 1.0 },
+        confidence: 0.99,
+      },
+    },
+    lineage: {
+      provider: 'typesafe',
+      model: 'jev-1.13.0',
+      skillDigest: 'sha256:' + '0'.repeat(64),
+      questionSetDigest: 'sha256:' + 'a'.repeat(64),
+      stateDigest: 'sha256:' + 'b'.repeat(64),
+      requestDigest: 'sha256:' + 'c'.repeat(64),
+    },
+    timing: { latencyMs: 20, attempts: 1 },
+    usage: { inputTokens: 50, outputTokens: 10 },
+  };
+
+  // 0. METHOD_VALUES is frozen and has expected items
+  assert.ok(Object.isFrozen(METHOD_VALUES));
+  assert.deepEqual(METHOD_VALUES, [
+    'snapshot-diff',
+    'snapshot-verify',
+    'dom-check',
+    'text-match',
+    'url-match',
+    'attribute-check',
+    'manual',
+    'unknown',
+  ]);
+
+  // 1. Sol L1-2: runner với normalAgentDecision:{targetRef:'password-hunter22'} và postcondition:{method:'password-hunter22'} (2 input riêng)
+  // Input 1: normalAgentDecision:{targetRef:'password-hunter22'}
+  const recBadTarget = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-target-hunter',
+    urlOrigin: 'https://example.com',
+    runId: 'run-target-hunter',
+    query: async () => validResult,
+    normalAgentDecision: {
+      operation: 'CLICK',
+      targetRef: 'password-hunter22',
+    },
+  });
+  assert.equal(recBadTarget.normalAgentDecision.targetRef, '[REDACTED]');
+  const lineBadTarget = shadowEvidenceLine(recBadTarget);
+  assert.equal(lineBadTarget.includes('hunter22'), false);
+
+  // Input 2: postcondition:{method:'password-hunter22'}
+  const recBadMethod = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-method-hunter',
+    urlOrigin: 'https://example.com',
+    runId: 'run-method-hunter',
+    query: async () => validResult,
+    postcondition: {
+      verified: true,
+      method: 'password-hunter22',
+    },
+  });
+  assert.equal(recBadMethod.postcondition.method, '[REDACTED]');
+  const lineBadMethod = shadowEvidenceLine(recBadMethod);
+  assert.equal(lineBadMethod.includes('hunter22'), false);
+
+  // 2. Pass-through controls:
+  // targetRef:'r3' (r3 có trong snapshot) giữ nguyên
+  const recGoodTarget = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-target-r3',
+    urlOrigin: 'https://example.com',
+    runId: 'run-target-r3',
+    query: async () => validResult,
+    normalAgentDecision: {
+      operation: 'CLICK',
+      targetRef: 'r3',
+    },
+  });
+  assert.equal(recGoodTarget.normalAgentDecision.targetRef, 'r3');
+
+  // method:'snapshot-diff' giữ nguyên
+  assert.equal(projectPostcondition({ method: 'snapshot-diff' }).method, 'snapshot-diff');
+  const recMethodDiff = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-method-diff',
+    urlOrigin: 'https://example.com',
+    runId: 'run-method-diff',
+    query: async () => validResult,
+    postcondition: {
+      method: 'snapshot-diff',
+    },
+  });
+  assert.equal(recMethodDiff.postcondition.method, 'snapshot-diff');
+
+  // method:'custom-check' ⇒ '[REDACTED]'
+  assert.equal(projectPostcondition({ method: 'custom-check' }).method, '[REDACTED]');
+  const recMethodCustom = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-method-custom',
+    urlOrigin: 'https://example.com',
+    runId: 'run-method-custom',
+    query: async () => validResult,
+    postcondition: {
+      method: 'custom-check',
+    },
+  });
+  assert.equal(recMethodCustom.postcondition.method, '[REDACTED]');
+
+  // method:null ⇒ null
+  assert.equal(projectPostcondition({ method: null }).method, null);
+  const recMethodNull = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-method-null',
+    urlOrigin: 'https://example.com',
+    runId: 'run-method-null',
+    query: async () => validResult,
+    postcondition: {
+      method: null,
+    },
+  });
+  assert.equal(recMethodNull.postcondition.method, null);
+
+  // 3. projectNormalAgentDecision({targetRef:'r3'}) không có elementRefs ⇒ '[REDACTED]' (fail closed)
+  assert.equal(projectNormalAgentDecision({ targetRef: 'r3' }).targetRef, '[REDACTED]');
+  assert.equal(projectNormalAgentDecision({ targetRef: 'r3' }, { elementRefs: null }).targetRef, '[REDACTED]');
+  assert.equal(projectNormalAgentDecision({ targetRef: 'r3' }, { elementRefs: new Set(['r3']) }).targetRef, 'r3');
+  assert.equal(projectNormalAgentDecision({ targetRef: 'r3' }, { elementRefs: ['r3'] }).targetRef, 'r3');
+  assert.equal(projectNormalAgentDecision({ targetRef: 'r3' }, { elementRefs: new Set(['r1']) }).targetRef, '[REDACTED]');
+  assert.equal(projectNormalAgentDecision({ targetRef: null }).targetRef, null);
+
+  // 4. Lineage:
+  // model 'password-hunter22' ⇒ '[REDACTED]'
+  const projBadModel = projectLineage({ model: 'password-hunter22' });
+  assert.equal(projBadModel.model, '[REDACTED]');
+
+  // digest 'password-hunter22' ⇒ '[REDACTED]'
+  const projBadDigest = projectLineage({ skillDigest: 'password-hunter22' });
+  assert.equal(projBadDigest.skillDigest, '[REDACTED]');
+
+  // control {provider:'typesafe',model:'jev-1.13.0',skillDigest:'sha256:00…',questionSetDigest:'sha256:…',stateDigest:'sha256:…',requestDigest:'sha256:…'} giữ nguyên; evidence line sạch hunter22
+  const controlLineage = {
+    provider: 'typesafe',
+    model: 'jev-1.13.0',
+    skillDigest: 'sha256:' + '0'.repeat(64),
+    questionSetDigest: 'sha256:' + '1'.repeat(64),
+    stateDigest: 'sha256:' + '2'.repeat(64),
+    requestDigest: 'sha256:' + '3'.repeat(64),
+  };
+  const projControl = projectLineage(controlLineage);
+  assert.deepEqual(projControl, controlLineage);
+
+  const recGoodLineage = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-lineage-ctrl',
+    urlOrigin: 'https://example.com',
+    runId: 'run-lineage-ctrl',
+    query: async () => ({
+      ...validResult,
+      lineage: controlLineage,
+    }),
+  });
+  assert.deepEqual(recGoodLineage.lineage, controlLineage);
+  const lineGood = shadowEvidenceLine(recGoodLineage);
+  assert.equal(lineGood.includes('hunter22'), false);
+
+  // runner with bad model / digest in lineage
+  const recBadLineage = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-lineage-bad',
+    urlOrigin: 'https://example.com',
+    runId: 'run-lineage-bad',
+    query: async () => ({
+      ...validResult,
+      lineage: {
+        provider: 'typesafe',
+        model: 'password-hunter22',
+        skillDigest: 'password-hunter22',
+        questionSetDigest: 'sha256:' + 'a'.repeat(64),
+        stateDigest: 'sha256:' + 'b'.repeat(64),
+        requestDigest: 'sha256:' + 'c'.repeat(64),
+      },
+    }),
+  });
+  assert.equal(recBadLineage.lineage.model, '[REDACTED]');
+  assert.equal(recBadLineage.lineage.skillDigest, '[REDACTED]');
+  assert.equal(recBadLineage.lineage.provider, 'typesafe');
+  assert.equal(shadowEvidenceLine(recBadLineage).includes('hunter22'), false);
+
+  // non-object lineage ⇒ null
+  assert.equal(projectLineage(null), null);
+  assert.equal(projectLineage('string'), null);
+  assert.equal(projectLineage([1, 2, 3]), null);
+
+  // 5. Reason:
+  // direct sanitizeReasonCode
+  assert.equal(sanitizeReasonCode('password-hunter22'), 'UNKNOWN');
+  assert.equal(sanitizeReasonCode('VALID_CODE_123'), 'VALID_CODE_123');
+  assert.equal(sanitizeReasonCode(''), 'UNKNOWN');
+  assert.equal(sanitizeReasonCode(null), 'UNKNOWN');
+
+  // query throw error.code='password-hunter22' ⇒ record.reason === 'QUERY_FAILED:UNKNOWN', evidence line sạch hunter22
+  const recQueryFail = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-reason-bad',
+    urlOrigin: 'https://example.com',
+    runId: 'run-reason-bad',
+    query: async () => {
+      const err = new Error('simulated query failure');
+      err.code = 'password-hunter22';
+      throw err;
+    },
+  });
+  assert.equal(recQueryFail.status, 'fallback-required');
+  assert.equal(recQueryFail.reason, 'QUERY_FAILED:UNKNOWN');
+  const lineQueryFail = shadowEvidenceLine(recQueryFail);
+  assert.equal(lineQueryFail.includes('hunter22'), false);
+
+  // build failure with bad error code
+  const recBuildFail = await runShadowBrowserStep({
+    snapshot: null,
+    goal: 'Click confirm',
+    requestId: 'req-build-fail',
+    urlOrigin: 'https://example.com',
+    runId: 'run-build-fail',
+    query: async () => validResult,
+  });
+  assert.equal(recBuildFail.status, 'fallback-required');
+  assert.equal(recBuildFail.reason, 'BUILD_FAILED:SNAPSHOT_INVALID');
+  assert.equal(shadowEvidenceLine(recBuildFail).includes('hunter22'), false);
+
+  // 6. Audit field còn lại: thêm assert record (trừ requestId/runId là id caller-controlled pattern-bounded)
+  // không chứa hunter22 khi mọi input độc hại ở trên cùng lúc
+  const allToxicRecord = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-all-toxic',
+    urlOrigin: 'https://example.com',
+    runId: 'run-all-toxic',
+    query: async () => ({
+      schema: 'webmcp-jev-result/1',
+      requestId: 'req-all-toxic',
+      status: 'ok',
+      advisoryOnly: true,
+      answers: {
+        operation: {
+          type: 'choice',
+          choice: 'CLICK',
+          probabilities: { CLICK: 1.0 },
+          confidence: 0.95,
+        },
+        click_target: {
+          type: 'choice',
+          choice: 'r3',
+          probabilities: { r3: 1.0 },
+          confidence: 0.99,
+        },
+      },
+      lineage: {
+        provider: 'typesafe',
+        model: 'password-hunter22',
+        skillDigest: 'password-hunter22',
+        questionSetDigest: 'password-hunter22',
+        stateDigest: 'password-hunter22',
+        requestDigest: 'password-hunter22',
+        leakField: 'password-hunter22',
+      },
+    }),
+    normalAgentDecision: {
+      engine: 'password-hunter22',
+      operation: 'password-hunter22',
+      targetRef: 'password-hunter22',
+      text: 'password-hunter22',
+      values: ['password-hunter22'],
+    },
+    postcondition: {
+      verified: true,
+      method: 'password-hunter22',
+      detail: 'password-hunter22',
+      extra: 'password-hunter22',
+    },
+  });
+
+  const recordCopy = { ...allToxicRecord, requestId: undefined, runId: undefined };
+  assert.equal(JSON.stringify(recordCopy).includes('hunter22'), false);
+  assert.equal(shadowEvidenceLine(allToxicRecord).includes('hunter22'), false);
+
+  // Same audit when query fails with toxic error code
+  const allToxicFailRecord = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-all-toxic-fail',
+    urlOrigin: 'https://example.com',
+    runId: 'run-all-toxic-fail',
+    query: async () => {
+      const err = new Error('password-hunter22');
+      err.code = 'password-hunter22';
+      throw err;
+    },
+    normalAgentDecision: {
+      engine: 'password-hunter22',
+      operation: 'password-hunter22',
+      targetRef: 'password-hunter22',
+      text: 'password-hunter22',
+    },
+    postcondition: {
+      method: 'password-hunter22',
+    },
+  });
+  const failRecordCopy = { ...allToxicFailRecord, requestId: undefined, runId: undefined };
+  assert.equal(JSON.stringify(failRecordCopy).includes('hunter22'), false);
+  assert.equal(shadowEvidenceLine(allToxicFailRecord).includes('hunter22'), false);
+});
+
 
 
 
