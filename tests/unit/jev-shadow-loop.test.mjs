@@ -33,6 +33,8 @@ import {
   sanitizeResultReason,
   closedConfidence,
   isoOrNull,
+  toFiniteTime,
+  elapsedMs,
   REQUEST_ID_PATTERN,
   closedRequestId,
 } from '../../lib/jev-shadow/loop.mjs';
@@ -1224,40 +1226,32 @@ test('12. ttl freshness: boundAt starts at snapshot build, slow query triggers T
   assert.equal(freshCaptureRecord.jevDecision.decidedAt, 160000);
   assert.equal(freshCaptureRecord.snapshotCapturedAt, 160000);
 
-  // 8. snapshotCapturedAt: 'abc' ⇒ throw REQUEST_INVALID
-  await assert.rejects(
-    runShadowBrowserStep({
-      snapshot,
-      snapshotCapturedAt: 'abc',
-      goal: 'Click confirm',
-      requestId: 'req-ttl-invalid',
-      urlOrigin: 'https://example.com',
-      runId: 'run-ttl',
-      query: async (req) => ({ ...validResult, requestId: req.requestId }),
-    }),
-    (err) => {
-      assert.equal(err.code, 'REQUEST_INVALID');
-      assert.match(err.message, /snapshotCapturedAt must be a finite epoch-ms number/);
-      return true;
-    }
-  );
+  // 8. snapshotCapturedAt: 'abc' ⇒ không throw; snapshotCapturedAt === null, jevDecision.stale === true (TTL fail-closed)
+  const invCaptureRecord = await runShadowBrowserStep({
+    snapshot,
+    snapshotCapturedAt: 'abc',
+    goal: 'Click confirm',
+    requestId: 'req-ttl-invalid',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+    query: async (req) => ({ ...validResult, requestId: req.requestId }),
+  });
+  assert.equal(invCaptureRecord.snapshotCapturedAt, null);
+  assert.equal(invCaptureRecord.jevDecision.stale, true);
+  assert.ok(invCaptureRecord.jevDecision.reasons.includes('TTL_EXPIRED'));
 
-  // 9. Object snapshot with capturedAt: 'abc' ⇒ throw REQUEST_INVALID
-  await assert.rejects(
-    runShadowBrowserStep({
-      snapshot: { snapshot, capturedAt: 'abc' },
-      goal: 'Click confirm',
-      requestId: 'req-ttl-invalid-obj',
-      urlOrigin: 'https://example.com',
-      runId: 'run-ttl',
-      query: async () => validResult,
-    }),
-    (err) => {
-      assert.equal(err.code, 'REQUEST_INVALID');
-      assert.match(err.message, /snapshotCapturedAt must be a finite epoch-ms number/);
-      return true;
-    }
-  );
+  // 9. Object snapshot with capturedAt: 'abc' ⇒ không throw; snapshotCapturedAt === null, jevDecision.stale === true (TTL fail-closed)
+  const invObjCaptureRecord = await runShadowBrowserStep({
+    snapshot: { snapshot, capturedAt: 'abc' },
+    goal: 'Click confirm',
+    requestId: 'req-ttl-invalid-obj',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+    query: async (req) => ({ ...validResult, requestId: req.requestId }),
+  });
+  assert.equal(invObjCaptureRecord.snapshotCapturedAt, null);
+  assert.equal(invObjCaptureRecord.jevDecision.stale, true);
+  assert.ok(invObjCaptureRecord.jevDecision.reasons.includes('TTL_EXPIRED'));
 });
 
 test('13. invalid result status: invalid validation records status "invalid" and INVALID_RESULT reason, agreement is null; NO_TARGET control stays "ok"', async () => {
@@ -2635,6 +2629,23 @@ test('17. Sol L1 round 3: fuzz toàn record (schema-path, không theo content)',
       walkRecordAndAssertDomains(recRawReq, DOMAINS);
       assert.equal(shadowEvidenceLine(recRawReq).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at raw requestId`);
     }
+
+    // 14. clock (now() returning hostile string)
+    const recClock = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-clock',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({ ...validResult, requestId: 'req-fuzz-clock' }),
+      now: () => hostile,
+    });
+    assert.ok(recClock.snapshotCapturedAt === null || typeof recClock.snapshotCapturedAt === 'number');
+    assert.ok(recClock.jevDecision.decidedAt === null || typeof recClock.jevDecision.decidedAt === 'number');
+    assert.equal(recClock.snapshotCapturedAt, null);
+    assert.equal(recClock.jevDecision.decidedAt, null);
+    walkRecordAndAssertDomains(recClock, DOMAINS);
+    assert.equal(shadowEvidenceLine(recClock).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at clock now()`);
   }
 });
 
@@ -2720,6 +2731,124 @@ test('18. Sol L1 round 4: build-failure requestId thuộc ID domain hoặc [REDA
   assert.equal(recControl.status, 'ok');
   assert.equal(recControl.requestId, 'run_123@step-7');
   walkRecordAndAssertDomains(recControl, DOMAINS);
+});
+
+test('19. Sol L1 round 5: gate clock tại entry bằng toFiniteTime() (counterexample Sol, control, helpers)', async () => {
+  // 1. Helper unit tests for toFiniteTime and elapsedMs
+  assert.equal(toFiniteTime(1700000000000), 1700000000000);
+  assert.equal(toFiniteTime(0), 0);
+  assert.equal(toFiniteTime(-50), -50);
+  assert.equal(toFiniteTime(NaN), null);
+  assert.equal(toFiniteTime(Infinity), null);
+  assert.equal(toFiniteTime(-Infinity), null);
+  assert.equal(toFiniteTime('password-hunter22!'), null);
+  assert.equal(toFiniteTime(null), null);
+  assert.equal(toFiniteTime(undefined), null);
+  assert.equal(toFiniteTime({}), null);
+  assert.equal(toFiniteTime(() => 1000), null);
+
+  assert.equal(elapsedMs(100, 250), 150);
+  assert.equal(elapsedMs(250, 100), 0);
+  assert.equal(elapsedMs(null, 250), 0);
+  assert.equal(elapsedMs(100, null), 0);
+  assert.equal(elapsedMs(NaN, 250), 0);
+  assert.equal(elapsedMs(100, NaN), 0);
+  assert.equal(elapsedMs('foo', 'bar'), 0);
+
+  const baseSnapshot = '- ref=r1 button "Confirm"';
+  const controlLineage = {
+    provider: 'typesafe',
+    model: 'jev-1.13.0',
+    skillDigest: 'sha256:' + '0'.repeat(64),
+    questionSetDigest: 'sha256:' + '1'.repeat(64),
+    stateDigest: 'sha256:' + '2'.repeat(64),
+    requestDigest: 'sha256:' + '3'.repeat(64),
+  };
+
+  const validResult = {
+    schema: 'webmcp-jev-result/1',
+    requestId: 'req-sol-r5',
+    status: 'ok',
+    advisoryOnly: true,
+    answers: {
+      operation: {
+        type: 'choice',
+        choice: 'CLICK',
+        probabilities: { CLICK: 0.9, WAIT: 0.05, DONE: 0.03, BLOCKED: 0.02 },
+        confidence: 0.95,
+      },
+      click_target: {
+        type: 'choice',
+        choice: 'r1',
+        probabilities: { r1: 1.0 },
+        confidence: 0.99,
+      },
+    },
+    lineage: controlLineage,
+  };
+
+  // 2. Counterexample Sol L1r5: now: () => 'password-hunter22!', snapshot/goal/requestId hợp lệ, query trả result hợp lệ
+  // ⇒ record.snapshotCapturedAt === null, record.jevDecision.decidedAt === null, record.jevDecision.stale === true,
+  // reasons chứa TTL_EXPIRED; shadowEvidenceLine(record) không chứa hunter22.
+  const recSolR5 = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sol-r5',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-r5',
+    query: async (req) => ({ ...validResult, requestId: req.requestId }),
+    now: () => 'password-hunter22!',
+    normalAgentDecision: { operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(recSolR5.snapshotCapturedAt, null);
+  assert.ok(recSolR5.jevDecision);
+  assert.equal(recSolR5.jevDecision.decidedAt, null);
+  assert.equal(recSolR5.jevDecision.stale, true);
+  assert.ok(recSolR5.jevDecision.reasons.includes('TTL_EXPIRED'));
+  assert.equal(shadowEvidenceLine(recSolR5).includes('hunter22'), false);
+  walkRecordAndAssertDomains(recSolR5, DOMAINS);
+
+  // 3. Control: now hợp lệ + không có capture time ⇒ snapshotCapturedAt === t0 (số), stale: false
+  const t0 = 1700000000000;
+  const recControl = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'req-ctrl-r5',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ctrl-r5',
+    query: async (req) => ({ ...validResult, requestId: req.requestId }),
+    now: () => t0,
+    normalAgentDecision: { operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(recControl.status, 'ok');
+  assert.equal(recControl.snapshotCapturedAt, t0);
+  assert.equal(typeof recControl.snapshotCapturedAt, 'number');
+  assert.ok(recControl.jevDecision);
+  assert.equal(recControl.jevDecision.stale, false);
+  assert.equal(recControl.jevDecision.decidedAt, t0);
+  assert.equal(recControl.jevDecision.reasons.includes('TTL_EXPIRED'), false);
+  walkRecordAndAssertDomains(recControl, DOMAINS);
+
+  // 4. validateShadowDecision direct: boundAt: null fail-closed, ttlMs invalid falls back cleanly
+  const vNullBound = validateShadowDecision(validResult, {
+    request: {
+      schema: 'webmcp-jev-request/1',
+      requestId: 'req-sol-r5',
+      questions: {
+        operation: { type: 'choice', criteria: ['CLICK', 'WAIT', 'DONE', 'BLOCKED'] },
+        click_target: { type: 'choice', criteria: ['r1', 'none'] },
+      },
+    },
+    elements: [{ ref: 'r1', role: 'button', name: 'Confirm', value: '', operations: ['CLICK'], enabled: true }],
+    boundAt: null,
+    now: t0,
+    ttlMs: 'invalid-ttl',
+  });
+  assert.equal(vNullBound.stale, true);
+  assert.ok(vNullBound.reasons.includes('TTL_EXPIRED'));
+  assert.equal(vNullBound.decision.decidedAt, null);
 });
 
 
