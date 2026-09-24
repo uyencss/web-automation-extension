@@ -37,6 +37,11 @@ import {
   elapsedMs,
   REQUEST_ID_PATTERN,
   closedRequestId,
+  ID_GRAMMAR,
+  closedId,
+  projectRecentActions,
+  FAULT_VALUES,
+  STATUS_VALUES,
 } from '../../lib/jev-shadow/loop.mjs';
 import { shadowEvidenceLine } from '../../lib/jev-shadow/metrics.mjs';
 
@@ -2849,6 +2854,94 @@ test('19. Sol L1 round 5: gate clock tại entry bằng toFiniteTime() (countere
   assert.equal(vNullBound.stale, true);
   assert.ok(vNullBound.reasons.includes('TTL_EXPIRED'));
   assert.equal(vNullBound.decision.decidedAt, null);
+});
+
+test('20. Sol L1 round 6: gate runId/permitId/bounds/recentActions', () => {
+  const hostileInput = {
+    snapshot: '- ref=r1 button "Confirm"',
+    goal: 'Click confirm',
+    requestId: 'req-sol-r6',
+    urlOrigin: 'https://example.com',
+    runId: 'password-hunter22!',
+    permitId: 'password-hunter22!',
+    bounds: {
+      maxStateBytes: 'password-hunter22!',
+      maxQuestions: 1.5,
+      timeoutMs: -1,
+      maxRetries: 'x',
+      extra: 'password-hunter22!',
+    },
+    recentActions: [
+      { operation: 'CLICK', targetRef: 'r1', text: 'password-hunter22!', values: ['password-hunter22!'] },
+      { operation: 'EVIL', text: 'password-hunter22!' },
+      'password-hunter22!',
+    ],
+  };
+
+  const { request } = buildBrowserStepRequest(hostileInput);
+  assert.equal(request.caller.runId, '[REDACTED]');
+  assert.equal(request.caller.permitId, '[REDACTED]');
+  assert.deepEqual(request.bounds, {
+    maxStateBytes: 32768,
+    maxQuestions: 8,
+    timeoutMs: 2000,
+    maxRetries: 1,
+  });
+  assert.equal('extra' in request.bounds, false);
+
+  assert.equal(request.state.recentActions.length, 1);
+  assert.deepEqual(request.state.recentActions[0], {
+    operation: 'CLICK',
+    targetRef: 'r1',
+    text: '[REDACTED]',
+    values: ['[REDACTED]'],
+  });
+  assert.equal(JSON.stringify(request.state.recentActions).includes('hunter22'), false);
+
+  // Control: runId:'run_1', permitId:null, bounds hợp lệ, recentActions hợp lệ ⇒ giữ nguyên
+  const validRecentActions = [
+    { operation: 'CLICK', targetRef: 'r1', text: 'clicked', values: ['val1'] },
+  ];
+  const controlInput = {
+    snapshot: '- ref=r1 button "Confirm"',
+    goal: 'Click confirm',
+    requestId: 'req-ctrl-r6',
+    urlOrigin: 'https://example.com',
+    runId: 'run_1',
+    permitId: null,
+    bounds: {
+      maxStateBytes: 16384,
+      maxQuestions: 4,
+      timeoutMs: 5000,
+      maxRetries: 2,
+    },
+    recentActions: validRecentActions,
+  };
+
+  const { request: ctrlReq } = buildBrowserStepRequest(controlInput);
+  assert.equal(ctrlReq.caller.runId, 'run_1');
+  assert.equal(ctrlReq.caller.permitId, null);
+  assert.deepEqual(ctrlReq.bounds, {
+    maxStateBytes: 16384,
+    maxQuestions: 4,
+    timeoutMs: 5000,
+    maxRetries: 2,
+  });
+  assert.deepEqual(ctrlReq.state.recentActions, validRecentActions);
+
+  // Helpers verification
+  assert.equal(closedId('run_valid-123'), 'run_valid-123');
+  assert.equal(closedId(null), null);
+  assert.equal(closedId(undefined), null);
+  assert.equal(closedId('bad!id'), '[REDACTED]');
+  assert.equal(closedId(999), '[REDACTED]');
+  assert.equal(ID_GRAMMAR.test('a-valid_Id-64'), true);
+  assert.equal(ID_GRAMMAR.test('has space'), false);
+  assert.equal(ID_GRAMMAR.test('has!bad$char'), false);
+
+  assert.deepEqual(projectRecentActions(null), []);
+  assert.deepEqual(projectRecentActions(123), []);
+  assert.deepEqual(projectRecentActions([{ operation: 'INVALID_OP' }]), []);
 });
 
 

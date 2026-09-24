@@ -199,13 +199,17 @@ test('3. aggregateFaultResults: calculates detection percentage per fault and to
 test('4. shadowEvidenceLine: canonical and deterministic output', () => {
   const obj1 = { z: 1, a: 2, m: { b: 3, a: 4 } };
   const obj2 = { a: 2, m: { a: 4, b: 3 }, z: 1 };
+  assert.equal(canonicalJson(obj1), '{"a":2,"m":{"a":4,"b":3},"z":1}');
+  assert.equal(canonicalJson(obj1), canonicalJson(obj2));
 
-  const line1 = shadowEvidenceLine(obj1);
-  const line2 = shadowEvidenceLine(obj2);
+  const rec1 = { schema: 'webmcp-jev-shadow/1', status: 'ok', requestId: 'req-1' };
+  const rec2 = { requestId: 'req-1', status: 'ok', schema: 'webmcp-jev-shadow/1' };
+
+  const line1 = shadowEvidenceLine(rec1);
+  const line2 = shadowEvidenceLine(rec2);
 
   assert.equal(line1, line2);
   assert.ok(line1.endsWith('\n'));
-  assert.equal(line1, '{"a":2,"m":{"a":4,"b":3},"z":1}\n');
 });
 
 test('5. aggregateShadowMetrics: status counts ok, invalid, fallbackRequired', () => {
@@ -246,4 +250,93 @@ test('5. aggregateShadowMetrics: status counts ok, invalid, fallbackRequired', (
   assert.equal(metrics.status.ok, 1);
   assert.equal(metrics.status.invalid, 1);
   assert.equal(metrics.status.fallbackRequired, 0);
+});
+
+test('6. shadowEvidenceLine: gates hostile records and preserves real records round-trip', () => {
+  const hostile = {
+    reason: 'password-hunter22!',
+    requestId: 'password-hunter22!',
+    extra: 'password-hunter22!',
+  };
+  const line = shadowEvidenceLine(hostile);
+  assert.equal(line.includes('hunter22'), false);
+  const parsed = JSON.parse(line);
+  assert.equal(parsed.reason, '[REDACTED]');
+  assert.equal(parsed.requestId, '[REDACTED]');
+  assert.equal('extra' in parsed, false);
+
+  // Round-trip với record thật: jevDecision/postcondition/lineage còn nguyên
+  const realRecord = {
+    schema: 'webmcp-jev-shadow/1',
+    requestId: 'req-real-123',
+    kind: 'browser-step',
+    engine: 'jev-shadow',
+    shadow: true,
+    executed: false,
+    browserActions: 0,
+    status: 'ok',
+    reason: null,
+    jevDecision: {
+      operation: 'CLICK',
+      targetRef: 'r1',
+      confidence: 0.95,
+      snapshotDigest: 'sha256:' + 'a'.repeat(64),
+      decidedAt: 1700000000000,
+      fingerprint: 'sha256:' + 'b'.repeat(64),
+      valid: true,
+      invalid: false,
+      stale: false,
+      actionable: true,
+      reasons: [],
+    },
+    normalAgentDecision: {
+      operation: 'CLICK',
+      targetRef: 'r1',
+    },
+    agreement: true,
+    postcondition: {
+      verified: true,
+      method: 'snapshot-diff',
+      satisfied: true,
+    },
+    snapshotDigest: 'sha256:' + 'a'.repeat(64),
+    questionSetDigest: 'sha256:' + 'c'.repeat(64),
+    snapshotCapturedAt: 1700000000000,
+    lineage: {
+      provider: 'typesafe',
+      model: 'jev-1.13.0',
+      skillDigest: 'sha256:' + '0'.repeat(64),
+      questionSetDigest: 'sha256:' + '1'.repeat(64),
+      stateDigest: 'sha256:' + '2'.repeat(64),
+      requestDigest: 'sha256:' + '3'.repeat(64),
+    },
+    timing: {
+      buildMs: 2,
+      validateMs: 1,
+      queryMs: 20,
+      overheadMs: 3,
+      totalMs: 23,
+    },
+    mcpCalls: { shadow: 0, browserActions: 0, normalAgent: 3 },
+    questionCount: 2,
+    createdAt: '2026-09-24T04:00:00.000Z',
+    archetype: 'login-form',
+    freshCheck: {
+      ok: true,
+      stale: false,
+      fault: null,
+    },
+  };
+
+  const realLine = shadowEvidenceLine(realRecord);
+  const parsedReal = JSON.parse(realLine);
+
+  assert.deepEqual(parsedReal.jevDecision, realRecord.jevDecision);
+  assert.deepEqual(parsedReal.postcondition, realRecord.postcondition);
+  assert.deepEqual(parsedReal.lineage, realRecord.lineage);
+  assert.equal(parsedReal.archetype, 'login-form');
+  assert.deepEqual(parsedReal.freshCheck, { ok: true, stale: false, fault: null });
+  assert.equal(parsedReal.status, 'ok');
+  assert.equal(parsedReal.reason, null);
+  assert.equal(parsedReal.requestId, 'req-real-123');
 });

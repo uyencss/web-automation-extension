@@ -19,6 +19,7 @@ import {
   sha256hex,
   normalizeAriaSnapshot,
   recheckShadowTarget,
+  FAULT_VALUES,
 } from '../../lib/jev-shadow/loop.mjs';
 
 test('1. corpus: generator is deterministic, unique, valid syntax, and covers variants', () => {
@@ -161,6 +162,22 @@ test('3. runRehearsal nhỏ (count: 24, standalone query): metrics, lineage, fau
   const expectedCases = buildCorpus({ count: 24 });
   const expectedDigest = 'sha256:' + sha256hex(canonicalJson(expectedCases));
   assert.equal(metrics.corpusDigest, expectedDigest);
+
+  // Assert every record has closed archetype, fault, and normalAgent mcpCalls
+  for (const r of result.records) {
+    assert.ok(
+      r.archetype === '[REDACTED]' || (typeof r.archetype === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(r.archetype)),
+      `archetype invalid: ${r.archetype}`
+    );
+    assert.ok(
+      r.freshCheck?.fault === null || r.freshCheck?.fault === '[REDACTED]' || FAULT_VALUES.includes(r.freshCheck?.fault),
+      `fault invalid: ${r.freshCheck?.fault}`
+    );
+    assert.ok(
+      r.mcpCalls?.normalAgent === null || (Number.isInteger(r.mcpCalls?.normalAgent) && r.mcpCalls?.normalAgent >= 0),
+      `normalAgent mcpCalls invalid: ${r.mcpCalls?.normalAgent}`
+    );
+  }
 });
 
 test('4. applyFault: 4 faults mutate snapshots correctly and recheck reports stale + correct fault', () => {
@@ -332,6 +349,22 @@ test('8. runRehearsal full (count: 216, standalone): fallbackRequired 0, lineage
   assert.ok(metrics.decisions >= 200, `Expected decisions >= 200, got ${metrics.decisions}`);
   assert.equal(metrics.browserActions, 0);
   assert.equal(metrics.leakage.hits, 0);
+
+  // Assert every record has closed archetype, fault, and normalAgent mcpCalls
+  for (const r of result.records) {
+    assert.ok(
+      r.archetype === '[REDACTED]' || (typeof r.archetype === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(r.archetype)),
+      `archetype invalid: ${r.archetype}`
+    );
+    assert.ok(
+      r.freshCheck?.fault === null || r.freshCheck?.fault === '[REDACTED]' || FAULT_VALUES.includes(r.freshCheck?.fault),
+      `fault invalid: ${r.freshCheck?.fault}`
+    );
+    assert.ok(
+      r.mcpCalls?.normalAgent === null || (Number.isInteger(r.mcpCalls?.normalAgent) && r.mcpCalls?.normalAgent >= 0),
+      `normalAgent mcpCalls invalid: ${r.mcpCalls?.normalAgent}`
+    );
+  }
 });
 
 
