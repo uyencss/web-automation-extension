@@ -16,7 +16,11 @@ import {
   SHADOW_RECORD_SCHEMA,
   GOAL_SECRET_PATTERNS,
   goalCarriesSecret,
+  scrubEvidenceText,
+  projectNormalAgentDecision,
+  projectPostcondition,
 } from '../../lib/jev-shadow/loop.mjs';
+import { shadowEvidenceLine } from '../../lib/jev-shadow/metrics.mjs';
 
 test('1. parse/normalize: parses sample snapshot and applies normalizations', () => {
   const sample = [
@@ -341,6 +345,7 @@ test('5. validate: checks result envelope, options, probability sums, and target
   });
   assert.equal(v8.stale, true);
   assert.ok(v8.reasons.includes('TTL_EXPIRED'));
+  assert.equal(v8.decision.decidedAt, 50000);
 
   // (i) none target -> ok: true, actionable: false
   const builtUncertain = buildBrowserStepRequest({
@@ -1005,5 +1010,337 @@ test('11. fail-closed goal guard: classifies BLOCK/SAFE goals, rejects leakage, 
   assert.equal(controlRecord.jevDecision.actionable, true);
   assert.equal(controlRecord.jevDecision.targetRef, 'r1');
 });
+
+test('12. ttl freshness: boundAt starts at snapshot build, slow query triggers TTL_EXPIRED and recheck failure', async () => {
+  const T0 = 100000;
+  const ttlMs = 500;
+  const snapshot = '- ref=r1 button "Confirm"';
+
+  const built = buildBrowserStepRequest({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-ttl',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+  });
+
+  const validResult = {
+    schema: 'webmcp-jev-result/1',
+    requestId: 'req-ttl',
+    status: 'ok',
+    advisoryOnly: true,
+    answers: {
+      operation: {
+        type: 'choice',
+        choice: 'CLICK',
+        probabilities: { CLICK: 0.9, WAIT: 0.05, DONE: 0.03, BLOCKED: 0.02 },
+        confidence: 0.95,
+      },
+      click_target: {
+        type: 'choice',
+        choice: 'r1',
+        probabilities: { r1: 1.0 },
+        confidence: 0.99,
+      },
+    },
+    lineage: {
+      provider: 'typesafe',
+      model: 'jev-1.0',
+      skillDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      questionSetDigest: built.request.questionSet.digest,
+      stateDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      requestDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    },
+    timing: { latencyMs: 20, attempts: 1 },
+    usage: { inputTokens: 50, outputTokens: 10 },
+  };
+
+  // 1. unit: validateShadowDecision(result, { …, boundAt: T0, now: T0 + ttlMs + 1 })
+  const vUnit = validateShadowDecision(validResult, {
+    request: built.request,
+    elements: built.elements,
+    snapshotDigest: built.snapshotDigest,
+    boundAt: T0,
+    now: T0 + ttlMs + 1,
+    ttlMs,
+  });
+  assert.equal(vUnit.stale, true);
+  assert.ok(vUnit.reasons.includes('TTL_EXPIRED'));
+  assert.equal(vUnit.decision.decidedAt, T0);
+
+  // 2. runner: dùng now injectable trả chuỗi thời gian (let clock = T0; now = () => clock;), ttlMs: 500;
+  // query là async nhưng trước khi validate ta set clock = T0 + 60_000 (mô phỏng query 60 s).
+  let clock = T0;
+  const now = () => clock;
+
+  const slowQuery = async () => {
+    clock = T0 + 60_000;
+    return validResult;
+  };
+
+  const record = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-ttl',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+    query: slowQuery,
+    now,
+    ttlMs,
+    normalAgentDecision: { operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(record.jevDecision.stale, true);
+  assert.ok(record.jevDecision.reasons.includes('TTL_EXPIRED'));
+  assert.equal(record.jevDecision.decidedAt, T0);
+
+  // 3. recheck sau đó: recheckShadowTarget({ decision: record.jevDecision, freshSnapshot: snapshot, now: T0 + 60_000, ttlMs: 500 })
+  const recheck = recheckShadowTarget({
+    decision: record.jevDecision,
+    freshSnapshot: snapshot,
+    now: T0 + 60_000,
+    ttlMs: 500,
+  });
+  assert.equal(recheck.ok, false);
+  assert.equal(recheck.stale, true);
+  assert.equal(recheck.fault, 'expired');
+  assert.ok(recheck.reasons.includes('TTL_EXPIRED'));
+
+  // 4. Control: query nhanh (clock không đổi) + ttlMs: 500 → record ok, decidedAt === T0, recheck ok
+  clock = T0;
+  const fastQuery = async () => validResult;
+
+  const controlRecord = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-ttl',
+    urlOrigin: 'https://example.com',
+    runId: 'run-ttl',
+    query: fastQuery,
+    now,
+    ttlMs,
+    normalAgentDecision: { operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(controlRecord.status, 'ok');
+  assert.equal(controlRecord.jevDecision.valid, true);
+  assert.equal(controlRecord.jevDecision.stale, false);
+  assert.equal(controlRecord.jevDecision.reasons.includes('TTL_EXPIRED'), false);
+  assert.equal(controlRecord.jevDecision.decidedAt, T0);
+
+  const controlRecheck = recheckShadowTarget({
+    decision: controlRecord.jevDecision,
+    freshSnapshot: snapshot,
+    now: T0,
+    ttlMs: 500,
+  });
+  assert.equal(controlRecheck.ok, true);
+  assert.equal(controlRecheck.stale, false);
+  assert.equal(controlRecheck.fault, null);
+});
+
+test('13. invalid result status: invalid validation records status "invalid" and INVALID_RESULT reason, agreement is null; NO_TARGET control stays "ok"', async () => {
+  const snapshot = '- ref=r1 button "Confirm"';
+
+  // 1. Query returning invalid result (probabilities sum lệch > 0.02)
+  const invalidResult = {
+    schema: 'webmcp-jev-result/1',
+    requestId: 'req-inv-1',
+    status: 'ok',
+    advisoryOnly: true,
+    answers: {
+      operation: {
+        type: 'choice',
+        choice: 'CLICK',
+        probabilities: { CLICK: 0.95, WAIT: 0.1, DONE: 0.03, BLOCKED: 0.02 }, // sum = 1.10 > 1.02
+        confidence: 0.95,
+      },
+      click_target: {
+        type: 'choice',
+        choice: 'r1',
+        probabilities: { r1: 1.0 },
+        confidence: 0.99,
+      },
+    },
+    lineage: {
+      provider: 'typesafe',
+      model: 'jev-1.0',
+      skillDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      questionSetDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      stateDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      requestDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    },
+    timing: { latencyMs: 20, attempts: 1 },
+    usage: { inputTokens: 50, outputTokens: 10 },
+  };
+
+  const recordInvalid = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-inv-1',
+    urlOrigin: 'https://example.com',
+    runId: 'run-inv-1',
+    query: async () => invalidResult,
+    normalAgentDecision: { engine: 'normal-agent', operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(recordInvalid.status, 'invalid');
+  assert.equal(recordInvalid.reason, 'INVALID_RESULT');
+  assert.equal(recordInvalid.jevDecision.valid, false);
+  assert.equal(recordInvalid.jevDecision.invalid, true);
+  assert.equal(recordInvalid.agreement, null);
+
+  // 2. Control: NO_TARGET (ok/không actionable) vẫn status: "ok"
+  const snapshotTruncated = '- ref=r1 button "Confirm"\n- note "3 more options truncated"';
+  const noTargetResult = {
+    schema: 'webmcp-jev-result/1',
+    requestId: 'req-notarget-1',
+    status: 'ok',
+    advisoryOnly: true,
+    answers: {
+      operation: {
+        type: 'choice',
+        choice: 'CLICK',
+        probabilities: { CLICK: 0.9, WAIT: 0.05, DONE: 0.03, BLOCKED: 0.02 },
+        confidence: 0.95,
+      },
+      click_target: {
+        type: 'choice',
+        choice: 'none',
+        probabilities: { r1: 0.1, none: 0.9 },
+        confidence: 0.99,
+      },
+    },
+    lineage: {
+      provider: 'typesafe',
+      model: 'jev-1.0',
+      skillDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      questionSetDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      stateDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      requestDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    },
+    timing: { latencyMs: 20, attempts: 1 },
+    usage: { inputTokens: 50, outputTokens: 10 },
+  };
+
+  const recordNoTarget = await runShadowBrowserStep({
+    snapshot: snapshotTruncated,
+    goal: 'Click confirm',
+    requestId: 'req-notarget-1',
+    urlOrigin: 'https://example.com',
+    runId: 'run-notarget-1',
+    query: async () => noTargetResult,
+    normalAgentDecision: { engine: 'normal-agent', operation: 'CLICK', targetRef: 'r1' },
+  });
+
+  assert.equal(recordNoTarget.status, 'ok');
+  assert.equal(recordNoTarget.reason, null);
+  assert.equal(recordNoTarget.jevDecision.valid, true);
+  assert.equal(recordNoTarget.jevDecision.actionable, false);
+  assert.equal(recordNoTarget.agreement, null);
+});
+
+test('14. evidence whitelist and scrub: strips secrets and unwhitelisted fields from normalAgentDecision and postcondition', async () => {
+  const snapshot = '- ref=r3 button "Confirm"';
+
+  const validResult = {
+    schema: 'webmcp-jev-result/1',
+    requestId: 'req-sec-1',
+    status: 'ok',
+    advisoryOnly: true,
+    answers: {
+      operation: {
+        type: 'choice',
+        choice: 'CLICK',
+        probabilities: { CLICK: 0.9, WAIT: 0.05, DONE: 0.03, BLOCKED: 0.02 },
+        confidence: 0.95,
+      },
+      click_target: {
+        type: 'choice',
+        choice: 'r3',
+        probabilities: { r3: 1.0 },
+        confidence: 0.99,
+      },
+    },
+    lineage: {
+      provider: 'typesafe',
+      model: 'jev-1.0',
+      skillDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      questionSetDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      stateDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      requestDigest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    },
+    timing: { latencyMs: 20, attempts: 1 },
+    usage: { inputTokens: 50, outputTokens: 10 },
+  };
+
+  // 1. normalAgentDecision with secret in text and values
+  const normalAgentDecision = {
+    engine: 'normal-agent',
+    operation: 'CLICK',
+    targetRef: 'r3',
+    text: 'password=hunter22',
+    values: ['token=3f9a1c2b4d5e6f708192a3b4c5d6e7f8'],
+  };
+
+  const recordNormal = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sec-1',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sec-1',
+    query: async () => validResult,
+    normalAgentDecision,
+  });
+
+  assert.deepEqual(recordNormal.normalAgentDecision, {
+    engine: 'normal-agent',
+    operation: 'CLICK',
+    targetRef: 'r3',
+  });
+  const normalEvidence = shadowEvidenceLine(recordNormal);
+  assert.equal(normalEvidence.includes('hunter22'), false);
+  assert.equal(normalEvidence.includes('password='), false);
+  assert.equal(normalEvidence.includes('token='), false);
+
+  // 2. postcondition with secret in method and detail
+  const postcondition = {
+    verified: true,
+    method: 'session=abc123def456',
+    satisfied: true,
+    detail: 'Login password=hunter22',
+  };
+
+  const recordPost = await runShadowBrowserStep({
+    snapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sec-2',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sec-2',
+    query: async () => validResult,
+    postcondition,
+  });
+
+  assert.deepEqual(recordPost.postcondition, {
+    verified: true,
+    method: '[REDACTED]',
+    satisfied: true,
+  });
+  const postEvidence = shadowEvidenceLine(recordPost);
+  assert.equal(postEvidence.includes('hunter22'), false);
+  assert.equal(postEvidence.includes('password='), false);
+  assert.equal(postEvidence.includes('abc123def456'), false);
+  assert.equal(postEvidence.includes('session='), false);
+
+  // 3. scrubEvidenceText control: does not over-redact
+  assert.equal(scrubEvidenceText('Accept all cookies'), 'Accept all cookies');
+
+  // 4. projectNormalAgentDecision with secret targetRef
+  const projTarget = projectNormalAgentDecision({
+    targetRef: 'token=3f9a1c2b4d5e6f708192a3b4c5d6e7f8',
+  });
+  assert.equal(projTarget.targetRef, '[REDACTED]');
+});
+
 
 

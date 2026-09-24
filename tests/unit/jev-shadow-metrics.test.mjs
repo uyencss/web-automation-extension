@@ -129,6 +129,7 @@ test('2. aggregateShadowMetrics: correctly computes statistics from shadow recor
 
   // Status
   assert.equal(metrics.status.ok, 3);
+  assert.equal(metrics.status.invalid, 0);
   assert.equal(metrics.status.fallbackRequired, 1);
 
   // Agreement: 2 counted (records 1 and 2), 1 agree
@@ -205,4 +206,44 @@ test('4. shadowEvidenceLine: canonical and deterministic output', () => {
   assert.equal(line1, line2);
   assert.ok(line1.endsWith('\n'));
   assert.equal(line1, '{"a":2,"m":{"a":4,"b":3},"z":1}\n');
+});
+
+test('5. aggregateShadowMetrics: status counts ok, invalid, fallbackRequired', () => {
+  const validRecord = {
+    schema: 'webmcp-jev-shadow/1',
+    status: 'ok',
+    executed: false,
+    browserActions: 0,
+    agreement: true,
+    jevDecision: {
+      operation: 'CLICK',
+      targetRef: 'r1',
+      actionable: true,
+      stale: false,
+      invalid: false,
+      reasons: [],
+    },
+  };
+
+  const invalidRecord = {
+    schema: 'webmcp-jev-shadow/1',
+    status: 'invalid',
+    reason: 'INVALID_RESULT',
+    executed: false,
+    browserActions: 0,
+    agreement: null,
+    jevDecision: {
+      operation: 'CLICK',
+      targetRef: 'r1',
+      actionable: false,
+      stale: false,
+      invalid: true,
+      reasons: ['ANSWER_INVALID'],
+    },
+  };
+
+  const metrics = aggregateShadowMetrics([validRecord, invalidRecord]);
+  assert.equal(metrics.status.ok, 1);
+  assert.equal(metrics.status.invalid, 1);
+  assert.equal(metrics.status.fallbackRequired, 0);
 });
