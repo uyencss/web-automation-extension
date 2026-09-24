@@ -23,9 +23,16 @@ import {
   OPERATION_VALUES,
   METHOD_VALUES,
   REF_PATTERN,
+  CLOSED_REF_PATTERN,
+  isClosedRef,
   LINEAGE_PROVIDER,
+  FAILURE_CODES,
+  RESULT_REASONS,
   projectLineage,
   sanitizeReasonCode,
+  sanitizeResultReason,
+  closedConfidence,
+  isoOrNull,
 } from '../../lib/jev-shadow/loop.mjs';
 import { shadowEvidenceLine } from '../../lib/jev-shadow/metrics.mjs';
 
@@ -944,7 +951,7 @@ test('11. fail-closed goal guard: classifies BLOCK/SAFE goals, rejects leakage, 
     assert.equal(queryCalls, 0, 'query counter must be 0 for BLOCK goal');
     assert.equal(record.schema, SHADOW_RECORD_SCHEMA);
     assert.equal(record.status, 'fallback-required');
-    assert.equal(record.reason, 'BUILD_FAILED:REQUEST_INVALID');
+    assert.equal(record.reason, 'BUILD_FAILED:UNKNOWN');
     assert.equal(record.jevDecision, null);
     assert.equal(record.lineage, null);
     assert.equal(record.agreement, null);
@@ -1831,10 +1838,9 @@ test('15. Sol L1 round 2: đóng hẳn evidence fields (targetRef theo snapshot,
   assert.equal(projectLineage('string'), null);
   assert.equal(projectLineage([1, 2, 3]), null);
 
-  // 5. Reason:
   // direct sanitizeReasonCode
   assert.equal(sanitizeReasonCode('password-hunter22'), 'UNKNOWN');
-  assert.equal(sanitizeReasonCode('VALID_CODE_123'), 'VALID_CODE_123');
+  assert.equal(sanitizeReasonCode('VALID_CODE_123'), 'UNKNOWN');
   assert.equal(sanitizeReasonCode(''), 'UNKNOWN');
   assert.equal(sanitizeReasonCode(null), 'UNKNOWN');
 
@@ -1866,7 +1872,7 @@ test('15. Sol L1 round 2: đóng hẳn evidence fields (targetRef theo snapshot,
     query: async () => validResult,
   });
   assert.equal(recBuildFail.status, 'fallback-required');
-  assert.equal(recBuildFail.reason, 'BUILD_FAILED:SNAPSHOT_INVALID');
+  assert.equal(recBuildFail.reason, 'BUILD_FAILED:UNKNOWN');
   assert.equal(shadowEvidenceLine(recBuildFail).includes('hunter22'), false);
 
   // 6. Audit field còn lại: thêm assert record (trừ requestId/runId là id caller-controlled pattern-bounded)
@@ -1950,6 +1956,654 @@ test('15. Sol L1 round 2: đóng hẳn evidence fields (targetRef theo snapshot,
   const failRecordCopy = { ...allToxicFailRecord, requestId: undefined, runId: undefined };
   assert.equal(JSON.stringify(failRecordCopy).includes('hunter22'), false);
   assert.equal(shadowEvidenceLine(allToxicFailRecord).includes('hunter22'), false);
+});
+
+export const DOMAINS = {
+  'schema': { const: 'webmcp-jev-shadow/1' },
+  'kind': { const: 'browser-step' },
+  'engine': { const: 'jev-shadow' },
+  'shadow': { bool: true },
+  'executed': { bool: true },
+  'browserActions': { number: true },
+  'status': { closed: ['ok', 'invalid', 'fallback-required'] },
+  'reason': { reason: true, nullable: true },
+  'requestId': { exempt: true },
+  'agreement': { bool: true, nullable: true },
+  'snapshotDigest': { sha: true, nullable: true },
+  'questionSetDigest': { sha: true, nullable: true },
+  'snapshotCapturedAt': { number: true, nullable: true },
+  'questionCount': { number: true },
+  'createdAt': { iso: true, nullable: true },
+
+  'jevDecision': { nullable: true },
+  'jevDecision.operation': { closed: OPERATION_VALUES, extra: ['[REDACTED]'], nullable: true },
+  'jevDecision.targetRef': { ref: true, extra: ['[REDACTED]'], nullable: true },
+  'jevDecision.confidence': { numberRange: [0, 1], nullable: true },
+  'jevDecision.snapshotDigest': { sha: true, nullable: true },
+  'jevDecision.decidedAt': { number: true, nullable: true },
+  'jevDecision.fingerprint': { sha: true, nullable: true },
+  'jevDecision.valid': { bool: true },
+  'jevDecision.invalid': { bool: true },
+  'jevDecision.stale': { bool: true },
+  'jevDecision.actionable': { bool: true },
+  'jevDecision.reasons[*]': { closed: RESULT_REASONS },
+
+  'normalAgentDecision': { nullable: true },
+  'normalAgentDecision.engine': { closed: ENGINE_VALUES, extra: ['[REDACTED]'], nullable: true },
+  'normalAgentDecision.operation': { closed: OPERATION_VALUES, extra: ['[REDACTED]'], nullable: true },
+  'normalAgentDecision.targetRef': { ref: true, extra: ['[REDACTED]'], nullable: true },
+
+  'postcondition': { nullable: true },
+  'postcondition.verified': { bool: true, nullable: true },
+  'postcondition.method': { closed: METHOD_VALUES, extra: ['[REDACTED]'], nullable: true },
+  'postcondition.satisfied': { bool: true, nullable: true },
+
+  'lineage': { nullable: true },
+  'lineage.provider': { closed: ['typesafe', '[REDACTED]'], nullable: true },
+  'lineage.model': { model: true, nullable: true },
+  'lineage.skillDigest': { shaOrRedacted: true, nullable: true },
+  'lineage.questionSetDigest': { shaOrRedacted: true, nullable: true },
+  'lineage.stateDigest': { shaOrRedacted: true, nullable: true },
+  'lineage.requestDigest': { shaOrRedacted: true, nullable: true },
+
+  'timing.buildMs': { number: true },
+  'timing.validateMs': { number: true },
+  'timing.queryMs': { number: true },
+  'timing.overheadMs': { number: true },
+  'timing.totalMs': { number: true },
+
+  'mcpCalls.shadow': { number: true },
+  'mcpCalls.browserActions': { number: true },
+};
+
+export function walkRecordAndAssertDomains(record, domains = DOMAINS) {
+  function walk(val, path) {
+    if (val === null || typeof val !== 'object') {
+      const domain = domains[path];
+      assert.ok(domain, `Missing domain definition for path "${path}" with value ${JSON.stringify(val)}`);
+
+      if (val === null) {
+        assert.ok(domain.nullable, `Path "${path}" has null value but domain is not nullable`);
+        return;
+      }
+
+      if (domain.exempt) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected string for exempt field, got ${typeof val}`);
+        return;
+      }
+
+      if (domain.const !== undefined) {
+        assert.equal(val, domain.const, `Path "${path}" expected const ${domain.const}, got ${val}`);
+        return;
+      }
+
+      if (domain.bool) {
+        assert.equal(typeof val, 'boolean', `Path "${path}" expected boolean, got ${typeof val} (${val})`);
+        return;
+      }
+
+      if (domain.number) {
+        assert.equal(typeof val, 'number', `Path "${path}" expected number, got ${typeof val} (${val})`);
+        assert.ok(Number.isFinite(val), `Path "${path}" expected finite number, got ${val}`);
+        return;
+      }
+
+      if (domain.numberRange) {
+        assert.equal(typeof val, 'number', `Path "${path}" expected number, got ${typeof val} (${val})`);
+        assert.ok(Number.isFinite(val), `Path "${path}" expected finite number, got ${val}`);
+        const [min, max] = domain.numberRange;
+        assert.ok(val >= min && val <= max, `Path "${path}" value ${val} outside range [${min}, ${max}]`);
+        return;
+      }
+
+      if (domain.reason) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected string reason, got ${typeof val}`);
+        if (val === 'INVALID_RESULT') return;
+        const match = val.match(/^(BUILD_FAILED|QUERY_FAILED):([A-Z0-9_]+)$/);
+        assert.ok(match, `Path "${path}" reason "${val}" does not match format (BUILD_FAILED|QUERY_FAILED):<CODE>`);
+        const code = match[2];
+        assert.ok(FAILURE_CODES.includes(code), `Path "${path}" failure code "${code}" is not in FAILURE_CODES`);
+        return;
+      }
+
+      if (domain.ref) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected string ref, got ${typeof val}`);
+        if (domain.extra && domain.extra.includes(val)) return;
+        assert.ok(isClosedRef(val), `Path "${path}" ref "${val}" is not closed ref`);
+        return;
+      }
+
+      if (domain.sha) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected string sha, got ${typeof val}`);
+        assert.ok(/^sha256:[0-9a-f]{64}$/.test(val), `Path "${path}" sha "${val}" is not valid sha256`);
+        return;
+      }
+
+      if (domain.shaOrRedacted) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected string sha/redacted, got ${typeof val}`);
+        if (val === '[REDACTED]') return;
+        assert.ok(/^sha256:[0-9a-f]{64}$/.test(val), `Path "${path}" sha "${val}" is not valid sha256`);
+        return;
+      }
+
+      if (domain.model) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected string model, got ${typeof val}`);
+        if (val === '[REDACTED]') return;
+        assert.ok(/^jev-[0-9.]+$/.test(val), `Path "${path}" model "${val}" does not match LINEAGE_MODEL_PATTERN`);
+        return;
+      }
+
+      if (domain.iso) {
+        assert.equal(typeof val, 'string', `Path "${path}" expected ISO string, got ${typeof val}`);
+        assert.ok(!isNaN(Date.parse(val)), `Path "${path}" ISO string "${val}" failed to parse`);
+        return;
+      }
+
+      if (domain.closed) {
+        const allowed = [...domain.closed, ...(domain.extra || [])];
+        assert.ok(allowed.includes(val), `Path "${path}" value "${val}" not in closed set ${JSON.stringify(allowed)}`);
+        return;
+      }
+
+      assert.fail(`Path "${path}" had unrecognized domain rule`);
+      return;
+    }
+
+    if (Array.isArray(val)) {
+      val.forEach((item) => walk(item, `${path}[*]`));
+      return;
+    }
+
+    for (const [k, v] of Object.entries(val)) {
+      const childPath = path ? `${path}.${k}` : k;
+      walk(v, childPath);
+    }
+  }
+
+  walk(record, '');
+}
+
+test('16. Sol L1 round 3: năm counterexample của Sol (closed vocabulary)', async () => {
+  const baseSnapshot = '- ref=r1 button "Confirm"';
+  const controlLineage = {
+    provider: 'typesafe',
+    model: 'jev-1.13.0',
+    skillDigest: 'sha256:' + '0'.repeat(64),
+    questionSetDigest: 'sha256:' + '1'.repeat(64),
+    stateDigest: 'sha256:' + '2'.repeat(64),
+    requestDigest: 'sha256:' + '3'.repeat(64),
+  };
+
+  // 1. operation.choice 'password-hunter22' ⇒ jevDecision.operation === '[REDACTED]'
+  const rec1 = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sol-ce-1',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-1',
+    query: async () => ({
+      schema: 'webmcp-jev-result/1',
+      requestId: 'req-sol-ce-1',
+      status: 'ok',
+      advisoryOnly: true,
+      answers: {
+        operation: {
+          type: 'choice',
+          choice: 'password-hunter22',
+          probabilities: { 'password-hunter22': 1.0 },
+          confidence: 0.95,
+        },
+      },
+      lineage: controlLineage,
+    }),
+  });
+  assert.equal(rec1.jevDecision.operation, '[REDACTED]');
+  assert.equal(rec1.status, 'invalid');
+  assert.equal(rec1.reason, 'INVALID_RESULT');
+  assert.ok(rec1.jevDecision.reasons.includes('ANSWER_INVALID'));
+  const line1 = shadowEvidenceLine(rec1);
+  assert.equal(line1.includes('hunter22'), false);
+  assert.equal(line1.includes('PASSWORDHUNTER22'), false);
+  walkRecordAndAssertDomains(rec1, DOMAINS);
+
+  // 2. click_target.choice 'password-hunter22' ⇒ jevDecision.targetRef === '[REDACTED]'
+  const rec2 = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sol-ce-2',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-2',
+    query: async () => ({
+      schema: 'webmcp-jev-result/1',
+      requestId: 'req-sol-ce-2',
+      status: 'ok',
+      advisoryOnly: true,
+      answers: {
+        operation: {
+          type: 'choice',
+          choice: 'CLICK',
+          probabilities: { CLICK: 1.0 },
+          confidence: 0.95,
+        },
+        click_target: {
+          type: 'choice',
+          choice: 'password-hunter22',
+          probabilities: { 'password-hunter22': 1.0 },
+          confidence: 0.95,
+        },
+      },
+      lineage: controlLineage,
+    }),
+  });
+  assert.equal(rec2.jevDecision.targetRef, '[REDACTED]');
+  assert.equal(rec2.status, 'invalid');
+  assert.equal(rec2.reason, 'INVALID_RESULT');
+  assert.ok(rec2.jevDecision.reasons.includes('TARGET_MISSING'));
+  const line2 = shadowEvidenceLine(rec2);
+  assert.equal(line2.includes('hunter22'), false);
+  assert.equal(line2.includes('PASSWORDHUNTER22'), false);
+  walkRecordAndAssertDomains(rec2, DOMAINS);
+
+  // 3. WAIT + confidence:'PASSWORDHUNTER22' ⇒ jevDecision.confidence === null
+  const rec3 = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sol-ce-3',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-3',
+    query: async () => ({
+      schema: 'webmcp-jev-result/1',
+      requestId: 'req-sol-ce-3',
+      status: 'ok',
+      advisoryOnly: true,
+      answers: {
+        operation: {
+          type: 'choice',
+          choice: 'WAIT',
+          probabilities: { WAIT: 1.0 },
+          confidence: 'PASSWORDHUNTER22',
+        },
+      },
+      lineage: controlLineage,
+    }),
+  });
+  assert.equal(rec3.jevDecision.confidence, null);
+  const line3 = shadowEvidenceLine(rec3);
+  assert.equal(line3.includes('hunter22'), false);
+  assert.equal(line3.includes('PASSWORDHUNTER22'), false);
+  walkRecordAndAssertDomains(rec3, DOMAINS);
+
+  // 4. snapshot có - ref=password-hunter22 button "X" ⇒ normalize drop ref đó
+  // (stats.droppedRefGrammar >= 1, element không xuất hiện); normalAgentDecision.targetRef:'password-hunter22' ⇒ '[REDACTED]'
+  const toxicSnapText = '- ref=password-hunter22 button "X"\n- ref=r1 button "Confirm"';
+  const norm4 = normalizeAriaSnapshot(toxicSnapText);
+  assert.ok(norm4.stats.droppedRefGrammar >= 1);
+  assert.equal(norm4.elements.some((el) => el.ref === 'password-hunter22'), false);
+
+  const rec4 = await runShadowBrowserStep({
+    snapshot: toxicSnapText,
+    goal: 'Click confirm',
+    requestId: 'req-sol-ce-4',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-4',
+    query: async () => ({
+      schema: 'webmcp-jev-result/1',
+      requestId: 'req-sol-ce-4',
+      status: 'ok',
+      advisoryOnly: true,
+      answers: {
+        operation: {
+          type: 'choice',
+          choice: 'CLICK',
+          probabilities: { CLICK: 1.0 },
+          confidence: 0.95,
+        },
+        click_target: {
+          type: 'choice',
+          choice: 'r1',
+          probabilities: { r1: 1.0 },
+          confidence: 0.95,
+        },
+      },
+      lineage: controlLineage,
+    }),
+    normalAgentDecision: {
+      engine: 'normal-agent',
+      operation: 'CLICK',
+      targetRef: 'password-hunter22',
+    },
+  });
+  assert.equal(rec4.normalAgentDecision.targetRef, '[REDACTED]');
+  const line4 = shadowEvidenceLine(rec4);
+  assert.equal(line4.includes('hunter22'), false);
+  assert.equal(line4.includes('PASSWORDHUNTER22'), false);
+  walkRecordAndAssertDomains(rec4, DOMAINS);
+
+  // 5. query throw error.code='PASSWORDHUNTER22' ⇒ reason === 'QUERY_FAILED:UNKNOWN'
+  const rec5 = await runShadowBrowserStep({
+    snapshot: baseSnapshot,
+    goal: 'Click confirm',
+    requestId: 'req-sol-ce-5',
+    urlOrigin: 'https://example.com',
+    runId: 'run-sol-5',
+    query: async () => {
+      const err = new Error('simulated failure');
+      err.code = 'PASSWORDHUNTER22';
+      throw err;
+    },
+  });
+  assert.equal(rec5.status, 'fallback-required');
+  assert.equal(rec5.reason, 'QUERY_FAILED:UNKNOWN');
+  const line5 = shadowEvidenceLine(rec5);
+  assert.equal(line5.includes('hunter22'), false);
+  assert.equal(line5.includes('PASSWORDHUNTER22'), false);
+  walkRecordAndAssertDomains(rec5, DOMAINS);
+
+  // Enum đóng cho sanitizeReasonCode & sanitizeResultReason
+  assert.equal(sanitizeReasonCode('PASSWORDHUNTER22'), 'UNKNOWN');
+  assert.equal(sanitizeReasonCode('VALID_CODE_123'), 'UNKNOWN');
+  assert.equal(sanitizeReasonCode('JEV_RATE_LIMITED'), 'JEV_RATE_LIMITED');
+  assert.equal(sanitizeResultReason('PASSWORDHUNTER22'), 'UNKNOWN');
+  assert.equal(sanitizeResultReason('TARGET_MISSING'), 'TARGET_MISSING');
+});
+
+test('17. Sol L1 round 3: fuzz toàn record (schema-path, không theo content)', async () => {
+  const HOSTILE_STRINGS = [
+    'password-hunter22',
+    'PASSWORDHUNTER22',
+    'ｐａｓｓｗｏｒｄ',
+    'pass\u200bword',
+    'Password: hunter22',
+    '482913',
+    'token=abc',
+    'eyJhbGciOiJIUzI1NiJ9.x.y',
+    'ĐĂNG NHẬP',
+    '__proto__',
+  ];
+
+  const baseSnapshot = '- ref=r1 button "Confirm"';
+  const controlLineage = {
+    provider: 'typesafe',
+    model: 'jev-1.13.0',
+    skillDigest: 'sha256:' + '0'.repeat(64),
+    questionSetDigest: 'sha256:' + '1'.repeat(64),
+    stateDigest: 'sha256:' + '2'.repeat(64),
+    requestDigest: 'sha256:' + '3'.repeat(64),
+  };
+
+  const validResult = {
+    schema: 'webmcp-jev-result/1',
+    requestId: 'req-fuzz',
+    status: 'ok',
+    advisoryOnly: true,
+    answers: {
+      operation: {
+        type: 'choice',
+        choice: 'CLICK',
+        probabilities: { CLICK: 1.0 },
+        confidence: 0.95,
+      },
+      click_target: {
+        type: 'choice',
+        choice: 'r1',
+        probabilities: { r1: 1.0 },
+        confidence: 0.95,
+      },
+    },
+    lineage: controlLineage,
+  };
+
+  for (const hostile of HOSTILE_STRINGS) {
+    // 1. operation.choice
+    const recOp = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-op',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({
+        ...validResult,
+        requestId: 'req-fuzz-op',
+        answers: {
+          operation: {
+            type: 'choice',
+            choice: hostile,
+            probabilities: { [hostile]: 1.0 },
+            confidence: 0.9,
+          },
+        },
+      }),
+    });
+    assert.equal(recOp.jevDecision.operation, '[REDACTED]');
+    walkRecordAndAssertDomains(recOp, DOMAINS);
+    assert.equal(shadowEvidenceLine(recOp).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at operation.choice`);
+
+    // 2. click_target.choice
+    const recTarget = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-target',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({
+        ...validResult,
+        requestId: 'req-fuzz-target',
+        answers: {
+          operation: {
+            type: 'choice',
+            choice: 'CLICK',
+            probabilities: { CLICK: 1.0 },
+            confidence: 0.9,
+          },
+          click_target: {
+            type: 'choice',
+            choice: hostile,
+            probabilities: { [hostile]: 1.0 },
+            confidence: 0.9,
+          },
+        },
+      }),
+    });
+    assert.equal(recTarget.jevDecision.targetRef, '[REDACTED]');
+    walkRecordAndAssertDomains(recTarget, DOMAINS);
+    assert.equal(shadowEvidenceLine(recTarget).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at click_target.choice`);
+
+    // 3. confidence
+    const recConf = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-conf',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({
+        ...validResult,
+        requestId: 'req-fuzz-conf',
+        answers: {
+          operation: {
+            type: 'choice',
+            choice: 'WAIT',
+            probabilities: { WAIT: 1.0 },
+            confidence: hostile,
+          },
+        },
+      }),
+    });
+    assert.equal(recConf.jevDecision.confidence, null);
+    walkRecordAndAssertDomains(recConf, DOMAINS);
+    assert.equal(shadowEvidenceLine(recConf).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at confidence`);
+
+    // 4. error code
+    const recErr = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-err',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => {
+        const err = new Error('simulated query failure');
+        err.code = hostile;
+        throw err;
+      },
+    });
+    assert.equal(recErr.reason, 'QUERY_FAILED:UNKNOWN');
+    walkRecordAndAssertDomains(recErr, DOMAINS);
+    assert.equal(shadowEvidenceLine(recErr).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at error code`);
+
+    // 5. normalAgentDecision.engine
+    const recEngine = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-engine',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({ ...validResult, requestId: 'req-fuzz-engine' }),
+      normalAgentDecision: {
+        engine: hostile,
+        operation: 'CLICK',
+        targetRef: 'r1',
+      },
+    });
+    assert.equal(recEngine.normalAgentDecision.engine, '[REDACTED]');
+    walkRecordAndAssertDomains(recEngine, DOMAINS);
+    assert.equal(shadowEvidenceLine(recEngine).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at normalAgentDecision.engine`);
+
+    // 6. normalAgentDecision.operation
+    const recNormOp = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-norm-op',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({ ...validResult, requestId: 'req-fuzz-norm-op' }),
+      normalAgentDecision: {
+        engine: 'normal-agent',
+        operation: hostile,
+        targetRef: 'r1',
+      },
+    });
+    assert.equal(recNormOp.normalAgentDecision.operation, '[REDACTED]');
+    walkRecordAndAssertDomains(recNormOp, DOMAINS);
+    assert.equal(shadowEvidenceLine(recNormOp).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at normalAgentDecision.operation`);
+
+    // 7. normalAgentDecision.targetRef
+    const recNormTarget = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-norm-target',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({ ...validResult, requestId: 'req-fuzz-norm-target' }),
+      normalAgentDecision: {
+        engine: 'normal-agent',
+        operation: 'CLICK',
+        targetRef: hostile,
+      },
+    });
+    assert.equal(recNormTarget.normalAgentDecision.targetRef, '[REDACTED]');
+    walkRecordAndAssertDomains(recNormTarget, DOMAINS);
+    assert.equal(shadowEvidenceLine(recNormTarget).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at normalAgentDecision.targetRef`);
+
+    // 8. postcondition.method
+    const recPost = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-post',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({ ...validResult, requestId: 'req-fuzz-post' }),
+      postcondition: {
+        verified: true,
+        method: hostile,
+        satisfied: true,
+      },
+    });
+    assert.equal(recPost.postcondition.method, '[REDACTED]');
+    walkRecordAndAssertDomains(recPost, DOMAINS);
+    assert.equal(shadowEvidenceLine(recPost).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at postcondition.method`);
+
+    // 9. lineage.provider
+    const recProv = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-prov',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({
+        ...validResult,
+        requestId: 'req-fuzz-prov',
+        lineage: {
+          ...controlLineage,
+          provider: hostile,
+        },
+      }),
+    });
+    assert.equal(recProv.lineage.provider, '[REDACTED]');
+    walkRecordAndAssertDomains(recProv, DOMAINS);
+    assert.equal(shadowEvidenceLine(recProv).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at lineage.provider`);
+
+    // 10. lineage.model
+    const recModel = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-model',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({
+        ...validResult,
+        requestId: 'req-fuzz-model',
+        lineage: {
+          ...controlLineage,
+          model: hostile,
+        },
+      }),
+    });
+    assert.equal(recModel.lineage.model, '[REDACTED]');
+    walkRecordAndAssertDomains(recModel, DOMAINS);
+    assert.equal(shadowEvidenceLine(recModel).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at lineage.model`);
+
+    // 11. lineage.skillDigest
+    const recSkill = await runShadowBrowserStep({
+      snapshot: baseSnapshot,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-skill',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({
+        ...validResult,
+        requestId: 'req-fuzz-skill',
+        lineage: {
+          ...controlLineage,
+          skillDigest: hostile,
+        },
+      }),
+    });
+    assert.equal(recSkill.lineage.skillDigest, '[REDACTED]');
+    walkRecordAndAssertDomains(recSkill, DOMAINS);
+    assert.equal(shadowEvidenceLine(recSkill).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at lineage.skillDigest`);
+
+    // 12. ref của một element trong snapshot (ca riêng)
+    const snapHostile = `- ref=${hostile} button "Toxic Button"\n- ref=r1 button "Confirm"`;
+    const normSnap = normalizeAriaSnapshot(snapHostile);
+    assert.ok(normSnap.stats.droppedRefGrammar >= 1);
+    assert.equal(normSnap.elements.some((el) => el.ref === hostile), false);
+
+    const recSnap = await runShadowBrowserStep({
+      snapshot: snapHostile,
+      goal: 'Click confirm',
+      requestId: 'req-fuzz-snap',
+      urlOrigin: 'https://example.com',
+      runId: 'run-fuzz',
+      query: async () => ({ ...validResult, requestId: 'req-fuzz-snap' }),
+      normalAgentDecision: {
+        engine: 'normal-agent',
+        operation: 'CLICK',
+        targetRef: hostile,
+      },
+    });
+    assert.equal(recSnap.normalAgentDecision.targetRef, '[REDACTED]');
+    walkRecordAndAssertDomains(recSnap, DOMAINS);
+    assert.equal(shadowEvidenceLine(recSnap).includes(hostile), false, `Evidence line must not contain hostile string "${hostile}" at snapshot ref`);
+  }
 });
 
 
