@@ -15,6 +15,7 @@ import {
   TARGET_QUESTION_IDS,
   OPERATION_QUESTION,
   FAULT_VALUES,
+  ARCHETYPE_VALUES,
 } from '../lib/jev-shadow/loop.mjs';
 import {
   aggregateShadowMetrics,
@@ -692,7 +693,7 @@ export async function runRehearsal(options = {}) {
     });
 
     record.mcpCalls.normalAgent = Number.isInteger(caseItem.normalAgentMcpCalls) && caseItem.normalAgentMcpCalls >= 0 ? caseItem.normalAgentMcpCalls : null;
-    record.archetype = typeof caseItem.archetype === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(caseItem.archetype) ? caseItem.archetype : '[REDACTED]';
+    record.archetype = ARCHETYPE_VALUES.includes(caseItem.archetype) ? caseItem.archetype : '[REDACTED]';
 
     const freshCheck = recheckShadowTarget({
       decision: record.jevDecision,

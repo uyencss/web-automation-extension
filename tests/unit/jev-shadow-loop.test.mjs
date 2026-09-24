@@ -42,6 +42,8 @@ import {
   projectRecentActions,
   FAULT_VALUES,
   STATUS_VALUES,
+  ARCHETYPE_VALUES,
+  DEFAULT_MAX_ELEMENTS,
 } from '../../lib/jev-shadow/loop.mjs';
 import { shadowEvidenceLine } from '../../lib/jev-shadow/metrics.mjs';
 
@@ -2927,7 +2929,9 @@ test('20. Sol L1 round 6: gate runId/permitId/bounds/recentActions', () => {
     timeoutMs: 5000,
     maxRetries: 2,
   });
-  assert.deepEqual(ctrlReq.state.recentActions, validRecentActions);
+  assert.deepEqual(ctrlReq.state.recentActions, [
+    { operation: 'CLICK', targetRef: 'r1', text: '[REDACTED]', values: ['[REDACTED]'] },
+  ]);
 
   // Helpers verification
   assert.equal(closedId('run_valid-123'), 'run_valid-123');
@@ -2944,6 +2948,130 @@ test('20. Sol L1 round 6: gate runId/permitId/bounds/recentActions', () => {
   assert.deepEqual(projectRecentActions([{ operation: 'INVALID_OP' }]), []);
 });
 
+test('21. Sol L1 round 7: gate maxElements/urlOrigin/url, redact recentActions, closed archetype enum', () => {
+  // a. maxElements gate
+  const manyElementsLines = [];
+  for (let i = 1; i <= 95; i++) {
+    manyElementsLines.push(`- ref=r${i} button "Button ${i}"`);
+  }
+  const bigSnapshot = manyElementsLines.join('\n');
 
+  const baseInput = {
+    snapshot: bigSnapshot,
+    goal: 'Click button',
+    requestId: 'req-max-el-test',
+    urlOrigin: 'https://example.com',
+    runId: 'run-gate',
+  };
 
+  const defaultBuilt = buildBrowserStepRequest(baseInput);
+  assert.equal(defaultBuilt.request.state.elements.length, 80);
 
+  const req1000 = buildBrowserStepRequest({ ...baseInput, maxElements: 1000 }).request;
+  assert.equal(req1000.state.elements.length, 80);
+  assert.ok(req1000.state.elements.length <= 80);
+  assert.deepEqual(Object.keys(req1000.questions), Object.keys(defaultBuilt.request.questions));
+
+  const reqStr1000 = buildBrowserStepRequest({ ...baseInput, maxElements: '1000' }).request;
+  assert.equal(reqStr1000.state.elements.length, 80);
+  assert.ok(reqStr1000.state.elements.length <= 80);
+  assert.deepEqual(Object.keys(reqStr1000.questions), Object.keys(defaultBuilt.request.questions));
+
+  const req40 = buildBrowserStepRequest({ ...baseInput, maxElements: 40 }).request;
+  assert.ok(req40.state.elements.length <= 40);
+  assert.equal(req40.state.elements.length, 40);
+
+  // b. urlOrigin / url mandatory string
+  assert.throws(
+    () => buildBrowserStepRequest({
+      ...baseInput,
+      urlOrigin: { toString() { return 'https://e.test'; }, extra: 'password-hunter22!' },
+    }),
+    (err) => err.code === 'SNAPSHOT_INVALID' && err.message.includes('urlOrigin must be an origin-only string')
+  );
+
+  assert.throws(
+    () => buildBrowserStepRequest({
+      snapshot: '- ref=r1 button "Confirm"',
+      goal: 'Click confirm',
+      requestId: 'req-url-obj',
+      runId: 'run-1',
+      urlOrigin: null,
+      url: { toString() { return 'https://e.test/x'; } },
+    }),
+    (err) => err.code === 'SNAPSHOT_INVALID' && err.message.includes('url must be a string')
+  );
+
+  assert.throws(
+    () => deriveUrlOrigin({ toString() { return 'https://e.test/x'; } }),
+    (err) => err.code === 'SNAPSHOT_INVALID' && err.message.includes('url must be a string')
+  );
+
+  // Control string 'https://e.test' OK
+  const ctrlOrigin = buildBrowserStepRequest({
+    ...baseInput,
+    urlOrigin: 'https://e.test',
+  }).request;
+  assert.equal(ctrlOrigin.state.urlOrigin, 'https://e.test');
+
+  const ctrlUrl = buildBrowserStepRequest({
+    snapshot: '- ref=r1 button "Confirm"',
+    goal: 'Click confirm',
+    requestId: 'req-url-ctrl-ok',
+    runId: 'run-1',
+    url: 'https://e.test/checkout',
+  }).request;
+  assert.equal(ctrlUrl.state.urlOrigin, 'https://e.test');
+
+  // c. recentActions text/values redact at boundary
+  const hostileRecentActions = [
+    { operation: 'CLICK', targetRef: 'r1', text: 'PASSWORDHUNTER22', values: ['PASSWORDHUNTER22'] },
+  ];
+  const { request: hostileRecentReq } = buildBrowserStepRequest({
+    snapshot: '- ref=r1 button "Confirm"',
+    goal: 'Click confirm',
+    requestId: 'req-recent-redact',
+    urlOrigin: 'https://example.com',
+    runId: 'run-1',
+    recentActions: hostileRecentActions,
+  });
+  assert.equal(hostileRecentReq.state.recentActions[0].text, '[REDACTED]');
+  assert.equal(hostileRecentReq.state.recentActions[0].values[0], '[REDACTED]');
+  const hostileJson = JSON.stringify(hostileRecentReq);
+  assert.equal(hostileJson.includes('PASSWORDHUNTER22'), false);
+  assert.equal(hostileJson.includes('hunter22'), false);
+
+  // Empty string text/values preserved as ''
+  const emptyAction = projectRecentActions([
+    { operation: 'CLICK', targetRef: 'r1', text: '', values: [''] },
+  ]);
+  assert.equal(emptyAction[0].text, '');
+  assert.deepEqual(emptyAction[0].values, ['']);
+
+  // Non-string in values produces [REDACTED]
+  const nonStringValues = projectRecentActions([
+    { operation: 'CLICK', targetRef: 'r1', values: [123, null] },
+  ]);
+  assert.deepEqual(nonStringValues[0].values, ['[REDACTED]', '[REDACTED]']);
+
+  // d. Formatter / archetype closed enum
+  const hostileEvidence = shadowEvidenceLine({ archetype: 'password-hunter22' });
+  assert.equal(hostileEvidence.includes('hunter22'), false);
+  const parsedHostile = JSON.parse(hostileEvidence);
+  assert.equal(parsedHostile.archetype, '[REDACTED]');
+
+  const controlEvidence = shadowEvidenceLine({ archetype: 'login-form' });
+  const parsedControl = JSON.parse(controlEvidence);
+  assert.equal(parsedControl.archetype, 'login-form');
+
+  for (const arch of ARCHETYPE_VALUES) {
+    const line = shadowEvidenceLine({ archetype: arch });
+    const parsed = JSON.parse(line);
+    assert.equal(parsed.archetype, arch);
+  }
+
+  // Non-matching or invalid archetype values redacted
+  assert.equal(JSON.parse(shadowEvidenceLine({ archetype: 'unknown-form' })).archetype, '[REDACTED]');
+  assert.equal(JSON.parse(shadowEvidenceLine({ archetype: 12345 })).archetype, '[REDACTED]');
+  assert.equal(JSON.parse(shadowEvidenceLine({ archetype: null })).archetype, '[REDACTED]');
+});

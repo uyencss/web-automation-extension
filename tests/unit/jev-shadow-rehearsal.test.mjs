@@ -20,6 +20,7 @@ import {
   normalizeAriaSnapshot,
   recheckShadowTarget,
   FAULT_VALUES,
+  ARCHETYPE_VALUES,
 } from '../../lib/jev-shadow/loop.mjs';
 
 test('1. corpus: generator is deterministic, unique, valid syntax, and covers variants', () => {
@@ -166,7 +167,7 @@ test('3. runRehearsal nhỏ (count: 24, standalone query): metrics, lineage, fau
   // Assert every record has closed archetype, fault, and normalAgent mcpCalls
   for (const r of result.records) {
     assert.ok(
-      r.archetype === '[REDACTED]' || (typeof r.archetype === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(r.archetype)),
+      ARCHETYPE_VALUES.includes(r.archetype) || r.archetype === '[REDACTED]',
       `archetype invalid: ${r.archetype}`
     );
     assert.ok(
@@ -353,7 +354,7 @@ test('8. runRehearsal full (count: 216, standalone): fallbackRequired 0, lineage
   // Assert every record has closed archetype, fault, and normalAgent mcpCalls
   for (const r of result.records) {
     assert.ok(
-      r.archetype === '[REDACTED]' || (typeof r.archetype === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(r.archetype)),
+      ARCHETYPE_VALUES.includes(r.archetype) || r.archetype === '[REDACTED]',
       `archetype invalid: ${r.archetype}`
     );
     assert.ok(
