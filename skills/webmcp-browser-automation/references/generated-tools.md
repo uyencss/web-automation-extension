@@ -24,7 +24,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `getAccessibilityTree` | `{ interestingOnly?, depth?, tabId? }` | `ai-vision.js` |
 | `getActiveTab` | `{}` | `tab-management.js` |
 | `getAriaSnapshot` | `{ maxDepth?, mode?, scope?, maxNodes?, maxChars?, includeOptions?, maxOptions?, refFormat?, viewportMargin?, frameId?, tabId? }` | `aria-snapshot.js` |
-| `getCookies` | `{ tabId? }` | `full-control.js` |
+| `getCookies` | `{ urls?, url?, tabId? }` | `full-control.js` |
 | `getDOMSnapshot` | `{ computedStyles?, tabId? }` | `ai-vision.js` |
 | `getElementBounds` | `{ selector, pierceShadow?, frame?, tabId? }` | `ai-vision.js` |
 | `getExtensionInfo` | `{}` | `full-control.js` |
@@ -52,7 +52,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `scroll` | `{ deltaX?, deltaY?, x?, y?, tabId? }` | `cdp-input.js` |
 | `selectByRef` | `{ ref, values, frameId?, tabId? }` | `aria-snapshot.js` |
 | `selectOption` | `{ selector, value?, index?, text?, frame?, tabId? }` | `cdp-input.js` |
-| `setCookie` | `{ name, value, domain?, path?, tabId? }` | `full-control.js` |
+| `setCookie` | `{ name, value, url?, domain?, path?, secure?, httpOnly?, sameSite?, expires?, priority?, tabId? }` | `full-control.js` |
 | `setLocalStorage` | `{ key, value, tabId? }` | `full-control.js` |
 | `setViewport` | `{ width, height, deviceScaleFactor?, mobile?, tabId? }` | `full-control.js` |
 | `startConsoleCapture` | `{ tabId? }` | `console-capture.js` |

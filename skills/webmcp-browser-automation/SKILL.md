@@ -78,7 +78,7 @@ MCP `webmcp_invoke_tool` tool.
 ## Extension Version Compatibility
 
 > This skill assumes **extension ≥ v2.1.10**; the current bundled version is
-> **v2.1.11**.
+> **v2.1.12**.
 > The `/health` response includes `profileDetails[].extensionVersion` for each
 > connected profile — you already read this in *Mandatory Run Loop* step 1, so
 > version detection is zero-cost. If the reported version is older, some
@@ -367,8 +367,8 @@ These are background commands registered in
 | `hover` | | Real CDP hover by selector | `{ selector, tabId? }` |
 | `selectOption` | | Select an HTML `<select>` option | `{ selector, value?, index?, text?, frame?, tabId? }` |
 | **Storage & Browser** | | | |
-| `getCookies` | | Read cookies for current page | `{ tabId? }` |
-| `setCookie` | | Set a cookie | `{ name, value, domain?, path?, tabId? }` |
+| `getCookies` | v2.1.12 | Read cookies for current page or explicit URLs | `{ urls?, url?, tabId? }` |
+| `setCookie` | v2.1.12 | Set a cookie with CDP attributes | `{ name, value, url?, domain?, path?, secure?, httpOnly?, sameSite?, expires?, priority?, tabId? }` |
 | `deleteCookies` | | Delete a cookie | `{ name, domain?, url?, tabId? }` |
 | `getLocalStorage` | | Read localStorage | `{ tabId? }` |
 | `setLocalStorage` | | Write localStorage | `{ key, value, tabId? }` |
@@ -672,6 +672,33 @@ Troubleshooting:
   agent click step above) or blocked network — fail closed, do not fabricate
   a session. The artifact of a handoff is the **cookie**, never a raw
   Turnstile token (one-time/form-bound).
+
+## Local Cookie Transfer CLI (`webmcp-browser cookies copy`)
+
+When you need to copy authenticated session cookies from an existing local Chrome profile into a connected WebMCP automation target profile without manual login or browser UI automation, use the native `cookies copy` subcommand:
+
+```bash
+webmcp-browser cookies copy \
+  --source-profile <launcher-id> \
+  --target-profile <connected-extension-id> \
+  --url <site-url> \
+  [--domain <parent-domain>] \
+  [--name <cookie-name>] \
+  [--path <cookie-path>] \
+  [--include-http-only] \
+  [--dry-run] \
+  [--json]
+```
+
+### Invariants & Security Gates:
+- **Offline-Only Source (Fail-Closed)**: Reads Chrome's local SQLite cookie database directly via `node:sqlite` in read-only mode (zero external npm dependencies). Fails closed if the source profile is currently locked (`SingletonLock` via `fs.lstatSync`) or if WAL/journal files contain uncheckpointed data (`SOURCE_PROFILE_BUSY`, `SOURCE_DATABASE_WAL_ACTIVE`).
+- **Chrome Schema 24+ SHA-256 Host Binding**: For modern Chrome databases (M130+), verifies the 32-byte host digest via `crypto.timingSafeEqual`, strips it, and transfers only clean plaintext values. Rejects domain mismatches with `COOKIE_HOST_DIGEST_MISMATCH`.
+- **Symlink Containment**: Resolves filesystem paths using `fs.realpathSync`; strictly rejects paths escaping the profile directory root (`SOURCE_FILE_OUTSIDE_PROFILE`).
+- **Domain Scoping**: Exact matching to URL hostname. If `--domain` is specified, it strictly grants parent domain cookies (`.domain`) and never exposes parent host-only cookies to subdomains.
+- **Extension Capability Gate**: Requires target extension ≥ v2.1.12 (`supportsCdpCookieAttributes: true`). Outdated extensions are rejected before any writes (`TARGET_EXTENSION_UNSUPPORTED`).
+- **Preflight Collision Policy**: Fails before mutation if any candidate cookie already exists on the target (`COLLISION_DETECTED`).
+- **Read-Back Verification**: Verifies written cookies against the target profile across all candidate paths, matching values, flags (`secure`, `httpOnly`, `sameSite`, `priority`), and `expires` (within a 2-second tolerance).
+- **Zero Secrets in Public Output**: Output to stdout/JSON only contains operational status and counts. Errors use sanitized, fixed messages from `ERROR_MESSAGES`.
 
 ## Safety And Reliability
 

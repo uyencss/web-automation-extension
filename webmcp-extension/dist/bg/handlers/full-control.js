@@ -5,22 +5,58 @@ import { attachedTabs } from '../state.js';
 export const fullControlHandlers = {
   async getCookies(params) {
     const tabId = await resolveTabId(params);
-    const tab = await chrome.tabs.get(tabId);
-    const result = await sendCDPCommand(tabId, 'Network.getCookies', {
-      urls: [tab.url],
-    });
-    return { tabId, cookies: result.cookies };
+    const cdpParams = {};
+    if (params?.urls && Array.isArray(params.urls)) {
+      cdpParams.urls = params.urls;
+    } else if (params?.url) {
+      cdpParams.urls = [params.url];
+    } else {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab?.url) cdpParams.urls = [tab.url];
+    }
+    const result = await sendCDPCommand(tabId, 'Network.getCookies', cdpParams);
+    return { tabId, cookies: result.cookies, supportsCdpCookieAttributes: true };
   },
 
   async setCookie(params) {
-    const { name, value, domain, path = '/' } = params;
+    const {
+      name,
+      value,
+      url,
+      domain,
+      path = '/',
+      secure,
+      httpOnly,
+      sameSite,
+      expires,
+      priority,
+      sameParty,
+      sourceScheme,
+      sourcePort,
+      partitionKey,
+    } = params;
     if (!name || value === undefined) throw new Error('Missing required params: name, value');
     const tabId = await resolveTabId(params);
 
-    const result = await sendCDPCommand(tabId, 'Network.setCookie', {
-      name, value, domain, path,
-    });
-    return { tabId, success: result.success };
+    const cdpParams = {
+      name,
+      value,
+      path,
+    };
+    if (url) cdpParams.url = url;
+    if (domain) cdpParams.domain = domain;
+    if (secure !== undefined) cdpParams.secure = Boolean(secure);
+    if (httpOnly !== undefined) cdpParams.httpOnly = Boolean(httpOnly);
+    if (sameSite) cdpParams.sameSite = sameSite;
+    if (expires !== undefined && expires !== null) cdpParams.expires = Number(expires);
+    if (priority) cdpParams.priority = priority;
+    if (sameParty !== undefined) cdpParams.sameParty = Boolean(sameParty);
+    if (sourceScheme) cdpParams.sourceScheme = sourceScheme;
+    if (sourcePort !== undefined) cdpParams.sourcePort = Number(sourcePort);
+    if (partitionKey) cdpParams.partitionKey = partitionKey;
+
+    const result = await sendCDPCommand(tabId, 'Network.setCookie', cdpParams);
+    return { tabId, success: Boolean(result?.success), supportsCdpCookieAttributes: true };
   },
 
   async deleteCookies(params) {
