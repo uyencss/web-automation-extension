@@ -42,7 +42,17 @@ export const tabHandlers = {
   },
 
   async newTab(params) {
-    const tab = await chrome.tabs.create({ url: params.url || 'about:blank', active: true });
+    let tab;
+    try {
+      tab = await chrome.tabs.create({ url: params.url || 'about:blank', active: true });
+    } catch (err) {
+      if (err?.message?.includes('No current window') || err?.message?.includes('No window')) {
+        const win = await chrome.windows.create({ url: params.url || 'about:blank', focused: true });
+        tab = win.tabs?.[0] || (await chrome.tabs.query({ windowId: win.id, active: true }))[0];
+      } else {
+        throw err;
+      }
+    }
     if (params.url && params.url !== 'about:blank') {
       // Wait for load
       await new Promise((resolve) => {
