@@ -229,3 +229,20 @@ For the source-derived command and page-tool list, use
 ```bash
 npm run tools:generate
 ```
+
+## ARIA Snapshot Optimization & Error Handling
+
+### Parameters
+- `forceFresh`: `boolean` (optional, default `false`) — bypasses unchanged-snapshot cache to force a fresh capture.
+- `mode`: `"auto" | "fast" | "native"` (optional, default `"auto"`) — `"auto"` uses fast content-script snapshot first and falls back to native CDP accessibility tree if degenerate/empty; `"fast"` uses fast content-script snapshot only; `"native"` uses Chromium's native CDP accessibility tree (`Accessibility.getFullAXTree`) directly.
+
+### Status & Error Handling
+1. **`[SNAPSHOT_UNCHANGED]` Short-Circuit:**
+   - When the URL and elements have not changed since the last step, `getAriaSnapshot` returns:
+     `[SNAPSHOT_UNCHANGED: URL=<url>, elements unchanged since last step]` with `unchanged: true`.
+   - **Guidance:** Do not poll `getAriaSnapshot` in a tight loop. Continue using refs from the previous snapshot for subsequent actions. If DOM mutation is expected (e.g. slow network response), wait briefly then call `getAriaSnapshot({ forceFresh: true })`.
+
+2. **`STALE_ELEMENT_REFERENCE` Fail-Fast:**
+   - If an action (`clickByRef`, `typeByRef`, `hoverByRef`, `selectByRef`) fails with:
+     `STALE_ELEMENT_REFERENCE: Element <ref> was detached from DOM (page re-rendered). Please take a fresh getAriaSnapshot.`
+   - **Guidance:** The target DOM node was detached during a re-render. Do not retry the stale ref. Immediately invoke `getAriaSnapshot({ forceFresh: true })` to obtain updated refs, then retry with the new ref.

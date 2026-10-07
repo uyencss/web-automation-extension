@@ -179,6 +179,7 @@ export const ariaSnapshotHandlers = {
       refFormat = 'compact',
       viewportMargin = 32,
       waitStable = false,
+      forceFresh = false,
     } = params;
     const frameId = getChromeFrameId(params);
 
@@ -202,9 +203,22 @@ export const ariaSnapshotHandlers = {
           includeText,
           maxTextLength,
           viewportMargin,
+          forceFresh,
         }, frameId);
 
         let fastSnapshot = await runFast(scope);
+
+        if (fastSnapshot.unchanged && (mode === 'fast' || fastSnapshot.nodeCount > 1)) {
+          fastSnapshot.snapshot = qualifyFastRefs(fastSnapshot.snapshot, frameId, refFormat);
+          rememberFastRefs(tabId, frameId, fastSnapshot.snapshot);
+          return {
+            tabId,
+            frameId,
+            ...fastSnapshot,
+            refFormat,
+            usage: 'Use ref values (e.g. ref=r1, ref=f3r1, or native ref=S1) with clickByRef, typeByRef, hoverByRef, or selectByRef. Re-run getAriaSnapshot if a ref is stale.',
+          };
+        }
 
         // Smart escalation: a viewport-scoped pass on a heavy SPA can come back
         // essentially empty — the meaningful content sits just below the fold or

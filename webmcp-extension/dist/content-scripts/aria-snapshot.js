@@ -30,6 +30,9 @@
   const refMetadata = new Map();
   let nextRefId = 1;
 
+  let lastSnapshotText = '';
+  let lastSnapshotUrl = '';
+
   const interactiveRoles = new Set([
     'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
     'menuitem', 'tab', 'option', 'searchbox', 'switch', 'slider',
@@ -457,6 +460,36 @@
       };
     }
 
+    const currentUrl = (window.location && window.location.href) || location.href;
+    const unchangedMarker = `[SNAPSHOT_UNCHANGED: URL=${currentUrl}, elements unchanged since last step]`;
+    if (currentUrl === lastSnapshotUrl && snapshot === lastSnapshotText && !params.forceFresh) {
+      return {
+        source: 'content-script',
+        documentId,
+        url: currentUrl,
+        title: document.title,
+        scope,
+        snapshot,
+        text: unchangedMarker,
+        unchanged: true,
+        refCount: refToElement.size,
+        nodeCount: visibleEntries.length + 1,
+        totalCandidates: entries.length + 1,
+        actualChars,
+        visited,
+        truncated,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          scrollX: Math.round(window.scrollX),
+          scrollY: Math.round(window.scrollY),
+        },
+      };
+    }
+
+    lastSnapshotUrl = currentUrl;
+    lastSnapshotText = snapshot;
+
     return {
       source: 'content-script',
       documentId,
@@ -479,15 +512,24 @@
     };
   }
 
-  function resolveRef(ref) {
-    const weakElement = refToElement.get(ref);
-    const element = weakElement?.deref();
-    if (!element || !element.isConnected) {
+  function getElementByRef(ref) {
+    const weak = refToElement.get(ref);
+    const el = weak?.deref();
+    if (!el) {
       refToElement.delete(ref);
       refMetadata.delete(ref);
-      return null;
+      throw new Error(`REF_EXPIRED: Ref ${ref} no longer exists in memory.`);
     }
-    return element;
+    if (!el.isConnected) {
+      refToElement.delete(ref);
+      refMetadata.delete(ref);
+      throw new Error(`STALE_ELEMENT_REFERENCE: Element ${ref} was detached from DOM (page re-rendered). Please take a fresh getAriaSnapshot.`);
+    }
+    return el;
+  }
+
+  function resolveRef(ref) {
+    return getElementByRef(ref);
   }
 
   function assertActionable(element) {
@@ -525,7 +567,17 @@
     const { action, ref } = params;
     if (!ref) return { success: false, error: 'Missing ref.' };
 
-    const element = resolveRef(ref);
+    let element;
+    try {
+      element = resolveRef(ref);
+    } catch (err) {
+      const msg = err?.message || String(err);
+      if (msg.startsWith('REF_EXPIRED:') || msg.startsWith('STALE_ELEMENT_REFERENCE:')) {
+        return { success: false, stale: true, error: `Ref "${ref}" is stale. Run getAriaSnapshot again.` };
+      }
+      throw err;
+    }
+
     if (!element) {
       return { success: false, stale: true, error: `Ref "${ref}" is stale. Run getAriaSnapshot again.` };
     }
@@ -624,4 +676,20 @@
 
     return false;
   });
+
+  if (typeof window !== 'undefined') {
+    window.__WEBMCP_FAST_ARIA_API__ = {
+      getElementByRef,
+      resolveRef,
+      buildSnapshot,
+      runRefAction,
+      refToElement,
+      refMetadata,
+      ensureRef,
+      resetCache: () => {
+        lastSnapshotText = '';
+        lastSnapshotUrl = '';
+      },
+    };
+  }
 })();

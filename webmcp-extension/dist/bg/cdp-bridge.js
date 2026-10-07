@@ -618,3 +618,25 @@ export async function getFrameViewportOffset(tabId, frameSpec) {
     y: Math.round(y),
   };
 }
+
+function formatCDPAXNodes(nodes = []) {
+  const lines = [];
+  let refCounter = 1;
+  for (const node of nodes) {
+    if (node.ignored || !node.role?.value) continue;
+    const role = node.role.value;
+    const nameVal = node.name?.value;
+    const name = nameVal ? ` "${String(nameVal).replace(/"/g, '\\"')}"` : '';
+    const ref = `C${refCounter++}`;
+    lines.push(`- ref=${ref} ${role}${name}`);
+  }
+  return lines.join('\n');
+}
+
+export async function getCDPAriaSnapshot(tabId) {
+  await ensureDebuggerAttached(tabId);
+  const result = await sendCDPCommand(tabId, 'Accessibility.getFullAXTree', {});
+  return formatCDPAXNodes(result?.nodes || []);
+}
+
+getCDPAriaSnapshot.formatNodes = formatCDPAXNodes;
