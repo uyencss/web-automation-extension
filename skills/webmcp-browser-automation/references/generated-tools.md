@@ -4,7 +4,7 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (54)
+## Extension Commands (55)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
@@ -47,6 +47,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `querySelectorAll` | `{ selector, limit?, offset?, fields?, textMaxLength?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
 | `readConsoleMessages` | `{ level?, pattern?, limit?, since?, clear?, tabId? }` | `console-capture.js` |
 | `readPage` | `{ url?, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
+| `renameTab` | `{ title?, tabId? }` | `tab-management.js` |
 | `resetViewport` | `{ tabId? }` | `full-control.js` |
 | `screenshot` | `{ fullPage?, tabId? }` | `cdp-actions.js` |
 | `scroll` | `{ deltaX?, deltaY?, x?, y?, tabId? }` | `cdp-input.js` |
@@ -92,17 +93,17 @@ First-class MCP tool counts per preset. Every preset also always includes `brows
 
 | Preset | First-class tools | Hidden (via `browser_raw_command`) |
 |---|---|---|
-| `minimal` (default) | 30 | 30 |
-| `core` | 52 | 8 |
-| `full` | 60 | 0 |
+| `minimal` (default) | 31 | 30 |
+| `core` | 53 | 8 |
+| `full` | 61 | 0 |
 
 - `core` hides: `click`, `getAccessibilityTree`, `getDOMSnapshot`, `getInteractiveElements`, `getPageContent`, `hover`, `selectOption`, `type`
 - `minimal` hides (superset of `core`): `clearConsoleMessages`, `clearDownloadEvents`, `click`, `createWindow`, `deleteCookies`, `executeCDP`, `getAccessibilityTree`, `getCookies`, `getDOMSnapshot`, `getExtensionInfo`, `getInteractiveElements`, `getLocalStorage`, `getPageContent`, `hover`, `listDownloadEvents`, `listFrames`, `listWindows`, `moveMouse`, `pageFetch`, `ping`, `readConsoleMessages`, `resetViewport`, `selectOption`, `setCookie`, `setLocalStorage`, `setViewport`, `startConsoleCapture`, `stopConsoleCapture`, `type`, `typeText`
 
 ## Capability Announcement Check
 
-- Announced capabilities: 54
-- Commands with handlers: 54
+- Announced capabilities: 55
+- Commands with handlers: 55
 - Announced without handler: none
 - Handler not announced: none
 

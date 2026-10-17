@@ -4,14 +4,29 @@ import { resolveTabId } from '../utils.js';
 export const tabHandlers = {
   async listTabs() {
     const tabs = await chrome.tabs.query({});
+    let sessionData = {};
+    try {
+      if (chrome.storage?.session) {
+        sessionData = (await chrome.storage.session.get(null)) || {};
+      }
+    } catch {
+      sessionData = {};
+    }
     return {
-      tabs: tabs.map((t) => ({
-        id: t.id,
-        url: t.url,
-        title: t.title,
-        active: t.active,
-        windowId: t.windowId,
-      })),
+      tabs: tabs.map((t) => {
+        const item = {
+          id: t.id,
+          url: t.url,
+          title: t.title,
+          active: t.active,
+          windowId: t.windowId,
+        };
+        const custom = sessionData['title:' + t.id];
+        if (custom !== undefined && custom !== null) {
+          item.customTitle = custom;
+        }
+        return item;
+      }),
     };
   },
 
@@ -103,5 +118,44 @@ export const tabHandlers = {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) throw new Error('No active tab');
     return { tabId: tab.id, url: tab.url, title: tab.title, windowId: tab.windowId };
+  },
+
+  async renameTab(params = {}) {
+    const tabId = await resolveTabId(params);
+    const customTitle = typeof params.title === 'string' ? params.title.trim().slice(0, 256) : '';
+    const key = 'title:' + tabId;
+    try {
+      if (chrome.storage?.session) {
+        if (customTitle) {
+          await chrome.storage.session.set({ [key]: customTitle });
+        } else {
+          await chrome.storage.session.remove(key);
+        }
+      }
+    } catch {
+      // ignore session storage error in stub environments
+    }
+
+    let applied = false;
+    let currentTitle = customTitle;
+    try {
+      const res = await chrome.tabs.sendMessage(
+        tabId,
+        { type: 'WEBMCP_TAB_TITLE', title: customTitle || null },
+        { frameId: 0 }
+      );
+      applied = Boolean(res?.ok);
+      if (res?.title !== undefined) currentTitle = res.title;
+    } catch {
+      applied = false;
+    }
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    return {
+      tabId,
+      title: currentTitle || tab?.title || '',
+      customTitle: customTitle || null,
+      applied,
+      ...(applied ? {} : { reason: 'reload-required' }),
+    };
   }
 };

@@ -21,6 +21,7 @@ const COMMAND_PARAM_HINTS = {
   ping: '{}',
   getExtensionInfo: '{}',
   getActiveTab: '{}',
+  renameTab: '{ title?, tabId? }',
   listTabs: '{}',
   newTab: '{ url? }',
   navigate: '{ url, tabId? }',

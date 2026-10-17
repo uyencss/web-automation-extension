@@ -61,14 +61,21 @@ export async function ensureDebuggerAttached(tabId) {
   }
 }
 
+function cleanupDetachedTab(tabId) {
+  attachedTabs.delete(tabId);
+  pageEnabledTabs.delete(tabId);
+  runtimeEnabledTabs.delete(tabId);
+  mainWorldContexts.delete(tabId);
+  invalidateFrameCaches(tabId);
+}
+
 export async function detachDebugger(tabId) {
   try {
     await chrome.debugger.detach({ tabId });
   } catch {
     // ignore
   }
-  attachedTabs.delete(tabId);
-  invalidateFrameCaches(tabId);
+  cleanupDetachedTab(tabId);
 }
 
 export async function sendCDPCommand(tabId, method, commandParams = {}) {
@@ -92,11 +99,7 @@ export async function sendCDPCommand(tabId, method, commandParams = {}) {
 // Clean up when debugger detaches
 chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId) {
-    attachedTabs.delete(source.tabId);
-    pageEnabledTabs.delete(source.tabId);
-    runtimeEnabledTabs.delete(source.tabId);
-    mainWorldContexts.delete(source.tabId);
-    invalidateFrameCaches(source.tabId);
+    cleanupDetachedTab(source.tabId);
   }
 });
 

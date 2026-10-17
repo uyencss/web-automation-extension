@@ -46,7 +46,7 @@ const TOOL_TO_ACTION = new Map([
 // Raw execution is an escape hatch for catalogued leaf commands only. A
 // syntactically valid but unknown raw name must remain fail-closed.
 const KNOWN_RAW_METHODS = new Set([
-  'listTabs', 'navigate', 'newTab', 'closeTab', 'activateTab', 'getActiveTab',
+  'listTabs', 'navigate', 'newTab', 'closeTab', 'activateTab', 'getActiveTab', 'renameTab',
   'listFrames', 'click', 'type', 'waitForSelector', 'getPageContent', 'getPageText',
   'readPage', 'querySelectorAll', 'getWindowVariable', 'findByText', 'pageFetch',
   'evaluateJS', 'executeCDP', 'screenshot', 'webmcp.listTools', 'webmcp.invokeTool',

@@ -23,7 +23,10 @@ export function connectWebSocket() {
     return;
   }
 
+  const socket = ws;
+
   ws.onopen = async () => {
+    if (ws !== socket) return;
     isConnecting = false;
     reconnectAttempt = 0;
     clearReconnectTimer();
@@ -42,7 +45,7 @@ export function connectWebSocket() {
       profileName: profile.name,
       capabilities: [
         // Tab management
-        'listTabs', 'navigate', 'newTab', 'closeTab', 'activateTab', 'getActiveTab',
+        'listTabs', 'navigate', 'newTab', 'closeTab', 'activateTab', 'getActiveTab', 'renameTab',
         // Page interaction (JS-based)
         'listFrames',
         'evaluateJS', 'executeCDP', 'screenshot',
@@ -72,6 +75,7 @@ export function connectWebSocket() {
   };
 
   ws.onmessage = async (event) => {
+    if (ws !== socket) return;
     let msg;
     try {
       msg = JSON.parse(event.data);
@@ -90,9 +94,7 @@ export function connectWebSocket() {
         await chrome.storage.local.set({ webmcp_profile_name: name });
         sendResult(msg.id, { success: true });
         // Trigger a reconnect so the gateway receives the new profile name in the handshake
-        setTimeout(() => {
-          if (ws) ws.close();
-        }, 500);
+        setTimeout(() => reconnectNow(), 500);
       } catch (err) {
         sendError(msg.id, -32603, err.message);
       }
@@ -103,6 +105,7 @@ export function connectWebSocket() {
   };
 
   ws.onclose = (event) => {
+    if (ws !== socket) return;
     isConnecting = false;
     ws = null;
     console.log(`[WS] ✗ Disconnected (code=${event.code}). Reconnecting in ${RECONNECT_INTERVAL_MS}ms...`);
@@ -110,6 +113,7 @@ export function connectWebSocket() {
   };
 
   ws.onerror = (err) => {
+    if (ws !== socket) return;
     isConnecting = false;
     // onclose will fire after this, which handles reconnect
   };
@@ -135,6 +139,30 @@ function clearReconnectTimer() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+}
+
+export function reconnectNow() {
+  clearReconnectTimer();
+  reconnectAttempt = 0;
+  isConnecting = false;
+  if (ws) {
+    const old = ws;
+    ws = null;
+    old.onopen = old.onmessage = old.onerror = old.onclose = null;
+    try { old.close(); } catch {}
+  }
+  connectWebSocket();
+}
+
+export async function applyProfileName(name) {
+  const trimmed = typeof name === 'string' ? name.trim() : '';
+  if (trimmed) {
+    await chrome.storage.local.set({ webmcp_profile_name: trimmed });
+  } else {
+    await chrome.storage.local.remove('webmcp_profile_name');
+  }
+  setTimeout(() => reconnectNow(), 100);
+  return { success: true, profileName: trimmed || null };
 }
 
 export function sendMessage(msg) {
