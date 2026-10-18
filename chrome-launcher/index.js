@@ -5,4 +5,5 @@ module.exports = {
   ...require('./sessions'),
   ...require('./profiles'),
   ...require('./launcher'),
+  ...require('./profile-harmonizer'),
 };

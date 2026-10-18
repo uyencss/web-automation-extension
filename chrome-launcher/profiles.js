@@ -51,8 +51,34 @@ function readBrowserProfiles(browser, userDataDir) {
   }
 
   return Object.entries(cache).map(([dir, info]) => {
-    const name = info.name || dir;
-    const email = info.user_name || '';
+    let name = info.name || dir;
+    let email = info.user_name || '';
+    let gaiaName = info.gaia_name || info.gaia_given_name || '';
+    let avatarUrl = '';
+
+    const isDefaultOrGarbageName = !name || /^Person \d+$/i.test(name) || name === 'Your Chrome' || name === 'Default';
+    if (!email || !gaiaName || isDefaultOrGarbageName) {
+      const prefPath = path.join(userDataDir, dir, 'Preferences');
+      try {
+        if (fs.existsSync(prefPath)) {
+          const pref = JSON.parse(fs.readFileSync(prefPath, 'utf8'));
+          const accs = pref.account_info;
+          if (Array.isArray(accs) && accs.length > 0) {
+            const acc = accs[0];
+            if (!email && acc.email) email = acc.email;
+            if (!gaiaName && (acc.full_name || acc.given_name)) gaiaName = acc.full_name || acc.given_name;
+            if (acc.picture_url) avatarUrl = acc.picture_url;
+            if (isDefaultOrGarbageName) {
+              if (email) name = email.split('@')[0];
+              else if (acc.full_name) name = acc.full_name;
+            }
+          }
+        }
+      } catch {
+        // Safe read fallback: ignore JSON or filesystem errors
+      }
+    }
+
     return {
       kind: 'existing',
       browser,
@@ -61,8 +87,9 @@ function readBrowserProfiles(browser, userDataDir) {
       id: `${browser}:${dir}`,
       name,
       email,
-      gaiaName: info.gaia_name || info.gaia_given_name || '',
-      initials: initialsFromName(info.gaia_name || name, email),
+      gaiaName,
+      avatarUrl,
+      initials: initialsFromName(gaiaName || name, email),
       isSupervised: Boolean(info.is_supervised),
       lastUsed: typeof info.active_time === 'number' ? info.active_time : null,
     };
@@ -89,7 +116,27 @@ function readManagedProfiles(options = {}) {
         // Profiles created before metadata support are still valid.
       }
 
-      const name = meta.name || entry.name;
+      let name = meta.name || entry.name;
+      let email = '';
+      let gaiaName = '';
+      let avatarUrl = '';
+
+      const prefFile = path.join(userDataDir, 'Default', 'Preferences');
+      try {
+        if (fs.existsSync(prefFile)) {
+          const pref = JSON.parse(fs.readFileSync(prefFile, 'utf8'));
+          const accs = pref.account_info;
+          if (Array.isArray(accs) && accs.length > 0) {
+            const acc = accs[0];
+            if (acc.email) email = acc.email;
+            if (acc.full_name || acc.given_name) gaiaName = acc.full_name || acc.given_name;
+            if (acc.picture_url) avatarUrl = acc.picture_url;
+          }
+        }
+      } catch {
+        // Safe fallback
+      }
+
       return {
         kind: 'managed',
         browser: 'Managed',
@@ -97,9 +144,10 @@ function readManagedProfiles(options = {}) {
         profileDir: 'Default',
         id: `managed:${entry.name}`,
         name,
-        email: '',
-        gaiaName: '',
-        initials: initialsFromName(name, ''),
+        email,
+        gaiaName,
+        avatarUrl,
+        initials: initialsFromName(gaiaName || name, email),
         isSupervised: false,
         lastUsed: meta.createdAt || null,
       };
