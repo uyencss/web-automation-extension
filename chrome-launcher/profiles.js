@@ -56,7 +56,7 @@ function readBrowserProfiles(browser, userDataDir) {
     let gaiaName = info.gaia_name || info.gaia_given_name || '';
     let avatarUrl = '';
 
-    const isDefaultOrGarbageName = !name || /^Person \d+$/i.test(name) || name === 'Your Chrome' || name === 'Default';
+    const isDefaultOrGarbageName = !name || /^Person \d+$/i.test(name) || name === 'Your Chrome' || name === 'Default' || name.includes('@');
     if (!email || !gaiaName || isDefaultOrGarbageName) {
       const prefPath = path.join(userDataDir, dir, 'Preferences');
       try {
