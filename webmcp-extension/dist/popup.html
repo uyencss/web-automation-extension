@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebMCP Control</title>
+  <title>WebMCP Tools Provider</title>
   <style>
     * {
       box-sizing: border-box;
@@ -11,29 +10,22 @@
       padding: 0;
     }
     body {
-      width: 300px;
-      padding: 12px;
+      width: 340px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       font-size: 12px;
-      background-color: #18181b;
+      background-color: #09090b;
       color: #f4f4f5;
+      padding: 12px;
       user-select: none;
-    }
-    .section {
-      margin-bottom: 12px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid #27272a;
-    }
-    .section:last-child {
-      margin-bottom: 0;
-      padding-bottom: 0;
-      border-bottom: none;
+      -webkit-font-smoothing: antialiased;
     }
     .header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 8px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #1f1f26;
+      margin-bottom: 10px;
     }
     .title-row {
       display: flex;
@@ -41,71 +33,167 @@
       gap: 6px;
     }
     .app-title {
-      font-weight: 600;
       font-size: 13px;
-      color: #fafafa;
+      font-weight: 600;
+      color: #ffffff;
+      letter-spacing: -0.01em;
     }
     .app-version {
       font-size: 10px;
       color: #71717a;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     }
-    .status-badge {
-      font-size: 10px;
+    .status-strip {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .status-pill {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
       font-weight: 500;
-      padding: 2px 6px;
-      border-radius: 9999px;
-      background: #27272a;
+      background: #121215;
+      border: 1px solid #22222a;
+      color: #e4e4e7;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .status-open { color: #4ade80; }
-    .status-connecting { color: #facc15; }
-    .status-closed { color: #f87171; }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: inline-block;
+    }
+    .dot-green {
+      background-color: #10b981;
+      box-shadow: 0 0 6px rgba(16, 185, 129, 0.45);
+    }
+    .dot-yellow {
+      background-color: #f59e0b;
+      box-shadow: 0 0 6px rgba(245, 158, 11, 0.45);
+    }
+    .dot-red {
+      background-color: #f43f5e;
+      box-shadow: 0 0 6px rgba(244, 63, 94, 0.4);
+    }
+    .segmented-nav {
+      display: flex;
+      background: #121215;
+      border: 1px solid #22222a;
+      border-radius: 7px;
+      padding: 2px;
+      margin-bottom: 10px;
+      gap: 2px;
+    }
+    .segmented-btn {
+      flex: 1;
+      background: transparent;
+      border: 1px solid transparent;
+      color: #a1a1aa;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 5px 8px;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.15s, color 0.15s;
+    }
+    .segmented-btn:hover {
+      color: #f4f4f5;
+      background: transparent;
+      border-color: transparent;
+    }
+    .segmented-btn.active {
+      background: #1f1f26;
+      color: #ffffff;
+      border-color: #2e2e38;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    }
+    .card {
+      background: #121215;
+      border: 1px solid #22222a;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+    .card:last-child {
+      margin-bottom: 0;
+    }
     .row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 6px;
-      margin-top: 6px;
     }
     .label {
-      color: #a1a1aa;
       font-size: 11px;
+      color: #a1a1aa;
+      font-weight: 500;
+    }
+    .label-above {
+      display: block;
+      font-size: 10.5px;
+      color: #a1a1aa;
+      font-weight: 500;
+      margin-bottom: 4px;
     }
     .val {
-      color: #e4e4e7;
-      font-family: monospace;
       font-size: 11px;
+      color: #e4e4e7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-variant-numeric: tabular-nums;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      max-width: 195px;
     }
     input[type="text"] {
       width: 100%;
-      background: #27272a;
-      border: 1px solid #3f3f46;
-      border-radius: 4px;
-      color: #fafafa;
+      background: #09090b;
+      border: 1px solid #27272a;
+      border-radius: 6px;
+      color: #f4f4f5;
       padding: 6px 8px;
       font-size: 12px;
       outline: none;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
     }
     input[type="text"]:focus {
-      border-color: #3b82f6;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 1px #2563eb;
     }
     button {
-      background: #27272a;
+      background: #1c1c22;
       color: #e4e4e7;
-      border: 1px solid #3f3f46;
-      border-radius: 4px;
-      padding: 4px 8px;
+      border: 1px solid #2a2a35;
+      border-radius: 6px;
+      padding: 5px 8px;
       font-size: 11px;
+      font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
-      transition: background-color 0.15s, border-color 0.15s;
+      transition: background-color 0.15s, border-color 0.15s, transform 0.05s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
     }
     button:hover {
-      background: #3f3f46;
-      border-color: #52525b;
+      background: #252530;
+      border-color: #383848;
+      color: #ffffff;
+    }
+    button:active {
+      transform: scale(0.98);
     }
     button.primary {
       background: #2563eb;
@@ -115,21 +203,27 @@
     }
     button.primary:hover {
       background: #1d4ed8;
+      border-color: #2563eb;
     }
     button.danger {
-      background: #7f1d1d;
-      border-color: #991b1b;
-      color: #fca5a5;
+      background: #3b1219;
+      border-color: #5f1d28;
+      color: #fda4af;
     }
     button.danger:hover {
-      background: #991b1b;
+      background: #4c1620;
+      border-color: #7f1d2d;
+    }
+    button:disabled, input:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
     .notice {
       margin-top: 6px;
       font-size: 11px;
       color: #facc15;
       display: none;
-      line-height: 1.3;
+      line-height: 1.35;
     }
     .actions {
       display: flex;
@@ -140,67 +234,108 @@
     .subtext {
       font-size: 10px;
       color: #71717a;
-      margin-top: 2px;
+      margin-top: 3px;
       word-break: break-all;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, button, input {
+        transition: none !important;
+        transform: none !important;
+      }
     }
   </style>
 </head>
 <body>
-  <!-- Header: Gateway Status -->
-  <div class="section">
-    <div class="header">
-      <div class="title-row">
-        <span class="app-title">WebMCP Control</span>
-        <span class="app-version" id="appVersion">v2.1.13</span>
+  <!-- Header -->
+  <div class="header">
+    <div class="title-row">
+      <span class="app-title">WebMCP Control</span>
+      <span class="app-version" id="appVersion">v2.1.14</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <button id="btnReconnect" title="Reconnect WebSocket">Reconnect</button>
+    </div>
+  </div>
+
+  <!-- Gateway Status Strip -->
+  <div class="status-strip">
+    <div id="wsStatus" class="status-pill" title="Gateway WebSocket connection state">
+      <span class="dot dot-red"></span><span>Gateway :7865 · Offline</span>
+    </div>
+  </div>
+
+  <!-- Segmented Tab Bar -->
+  <div class="segmented-nav" role="tablist" aria-label="Popup Views">
+    <button id="tabBtnControl" class="segmented-btn active" type="button" role="tab" aria-selected="true">Control</button>
+    <button id="tabBtnGateway" class="segmented-btn" type="button" role="tab" aria-selected="false">Gateway</button>
+  </div>
+
+  <!-- VIEW 1: Control (Tab Rename, Profile, CDP) -->
+  <div id="viewControl" role="tabpanel">
+    <!-- Rename Tab Card -->
+    <div class="card">
+      <div class="row" style="margin-bottom: 6px;">
+        <span class="label" id="tabLabel">Tab: Active</span>
+        <button id="btnCopyJson" title="Copy tab JSON for agent commands">Copy JSON</button>
       </div>
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span id="wsStatus" class="status-badge status-closed">🔴 Disconnected</span>
-        <button id="btnReconnect" title="Reconnect WebSocket">Reconnect</button>
+      <div>
+        <label for="titleInput" class="label-above">Custom Tab Title</label>
+        <input type="text" id="titleInput" placeholder="Enter custom tab title..." autocomplete="off" />
+      </div>
+      <div class="subtext" id="origTitleVal" style="display: none;"></div>
+      <div id="renameNotice" class="notice"></div>
+      <div class="actions">
+        <button id="btnPrefixProfile" title="Prefix tab title with [ProfileName]">+ [Profile]</button>
+        <button id="btnResetTitle">Reset</button>
+        <button id="btnSaveTitle" class="primary">Save</button>
+      </div>
+    </div>
+
+    <!-- Profile Identity Card -->
+    <div class="card">
+      <div class="row">
+        <span class="label">Profile Identity</span>
+        <span class="val" id="profileEmailVal">local</span>
+      </div>
+      <div class="subtext" id="profileIdVal">id: ...</div>
+      <div style="margin-top: 6px;">
+        <label for="profileNameInput" class="label-above">Profile Display Name</label>
+        <div style="display: flex; gap: 6px;">
+          <input type="text" id="profileNameInput" placeholder="Profile name..." style="flex: 1;" />
+          <button id="btnSaveProfile">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CDP Debugger Card -->
+    <div class="card">
+      <div class="row">
+        <span class="label">CDP Debugger</span>
+        <span class="val" id="cdpStatusVal">Idle</span>
+      </div>
+      <div class="row" style="margin-top: 6px;">
+        <span class="label">Attached Tabs: <span id="attachedCountVal" class="val">0</span></span>
+        <div style="display: flex; gap: 4px;">
+          <button id="btnDetachTab">Detach Tab</button>
+          <button id="btnDetachAll" class="danger">Detach All</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Rename Tab (Primary Area) -->
-  <div class="section">
-    <div class="row">
-      <span class="label" id="tabLabel">Tab: Active</span>
-      <button id="btnCopyJson" title="Copy tab JSON for agent commands">📋 Copy JSON</button>
+  <!-- VIEW 2: Gateway (Dynamic WebSocket Endpoint) -->
+  <div id="viewGateway" role="tabpanel" style="display: none;">
+    <div class="card">
+      <label for="gatewayUrlInput" class="label-above">Gateway WebSocket URL</label>
+      <input type="text" id="gatewayUrlInput" placeholder="ws://localhost:7865" spellcheck="false" autocomplete="off" />
+      <div class="subtext">Default: ws://localhost:7865</div>
     </div>
-    <div style="margin-top: 6px;">
-      <input type="text" id="titleInput" placeholder="Enter custom tab title..." autocomplete="off" />
-    </div>
-    <div id="renameNotice" class="notice"></div>
+
+    <div id="settingsNotice" class="notice"></div>
+
     <div class="actions">
-      <button id="btnResetTitle">Reset</button>
-      <button id="btnSaveTitle" class="primary">Save</button>
-    </div>
-  </div>
-
-  <!-- Profile Identity -->
-  <div class="section">
-    <div class="row">
-      <span class="label">Profile Identity</span>
-      <span class="val" id="profileEmailVal">local</span>
-    </div>
-    <div class="subtext" id="profileIdVal">id: ...</div>
-    <div class="row" style="margin-top: 6px;">
-      <input type="text" id="profileNameInput" placeholder="Profile name..." style="flex: 1;" />
-      <button id="btnSaveProfile">Save</button>
-    </div>
-  </div>
-
-  <!-- CDP Debugger -->
-  <div class="section">
-    <div class="row">
-      <span class="label">CDP Debugger</span>
-      <span class="val" id="cdpStatusVal">Idle</span>
-    </div>
-    <div class="row">
-      <span class="label">Attached Tabs: <span id="attachedCountVal" class="val">0</span></span>
-      <div style="display: flex; gap: 4px;">
-        <button id="btnDetachTab">Detach Tab</button>
-        <button id="btnDetachAll" class="danger">Detach All</button>
-      </div>
+      <button id="btnResetSettings" type="button">Defaults</button>
+      <button id="btnSaveSettings" class="primary" type="button">Save &amp; Reconnect</button>
     </div>
   </div>
 

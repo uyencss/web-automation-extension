@@ -20,7 +20,19 @@ const WEBMCP_EXTENSION_ID = 'lbodkmkjbcemodklopcfdmpjomdoapae';
 const WEBMCP_EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/webmcp-tools-provider/${WEBMCP_EXTENSION_ID}`;
 
 function defaultExtensionPath() {
-  return path.resolve(__dirname, '..', 'webmcp-extension', 'dist');
+  const browserExt = path.resolve(__dirname, '..', 'webmcp-extension', 'dist');
+  const vaultExt = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    'webmcp-vault-kit',
+    'webmcp-vault-extension',
+    'dist'
+  );
+  if (fs.existsSync(path.join(vaultExt, 'manifest.json'))) {
+    return `${browserExt},${vaultExt}`;
+  }
+  return browserExt;
 }
 
 function chromeCandidates() {
@@ -294,8 +306,17 @@ function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode,
 }
 
 function validateExtensionPath(extensionPath) {
-  if (!extensionPath || !fs.existsSync(extensionPath)) {
-    throw new Error(`Extension dist not found at ${extensionPath || '(empty)'}.`);
+  const parts = String(extensionPath || '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) {
+    throw new Error('Extension dist not found at (empty).');
+  }
+  for (const p of parts) {
+    if (!fs.existsSync(p)) {
+      throw new Error(`Extension dist not found at ${p}.`);
+    }
   }
 }
 

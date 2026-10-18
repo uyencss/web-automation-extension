@@ -138,6 +138,7 @@ export const tabHandlers = {
 
     let applied = false;
     let currentTitle = customTitle;
+    let pageTitle = null;
     try {
       const res = await chrome.tabs.sendMessage(
         tabId,
@@ -146,6 +147,7 @@ export const tabHandlers = {
       );
       applied = Boolean(res?.ok);
       if (res?.title !== undefined) currentTitle = res.title;
+      if (res?.pageTitle) pageTitle = res.pageTitle;
     } catch {
       applied = false;
     }
@@ -156,6 +158,7 @@ export const tabHandlers = {
       customTitle: customTitle || null,
       applied,
       ...(applied ? {} : { reason: 'reload-required' }),
+      ...(pageTitle ? { pageTitle } : {}),
     };
   }
 };

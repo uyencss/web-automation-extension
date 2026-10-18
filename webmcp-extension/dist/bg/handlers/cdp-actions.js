@@ -32,6 +32,9 @@ export const cdpActionHandlers = {
   async executeCDP(params) {
     const { method } = params;
     if (!method) throw new Error('Missing required param: method');
+    if (/^WebAuthn\./i.test(String(method).trim())) {
+      throw new Error('Direct WebAuthn.* CDP commands are forbidden; use the Vault Passkey Broker.');
+    }
     const tabId = await resolveTabId(params);
     const result = await sendCDPCommand(tabId, method, params.params || {});
     return { tabId, result };

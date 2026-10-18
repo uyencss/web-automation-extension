@@ -6,12 +6,21 @@
 // and Background Service Worker.
 // ============================================================
 
+const ALLOWED_BG_METHODS = new Set([
+  'start_network_capture',
+  'stop_network_capture',
+  'wait_for_network_response',
+  'get_captured_requests',
+]);
+
 window.addEventListener('message', (event) => {
   // Only accept messages from our own window
   if (event.source !== window) return;
 
   const data = event.data;
   if (!data || data.type !== 'WEBMCP_BG_REQUEST') return;
+  const method = data.payload?.method;
+  if (!ALLOWED_BG_METHODS.has(method)) return;
 
   // Forward to background script
   chrome.runtime.sendMessage(data.payload, (response) => {
@@ -96,12 +105,29 @@ if (window.top === window) {
         document.title = pageTitle;
       }
     }
-    return { ok: true, title: document.title, customTitle: lockedTitle };
+    return {
+      ok: true,
+      title: document.title,
+      customTitle: lockedTitle,
+      pageTitle: hasCapturedPageTitle ? pageTitle : document.title,
+    };
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (!msg || msg.type !== 'WEBMCP_TAB_TITLE') return false;
-    sendResponse(applyLockedTitle(msg.title || null));
+    if (!msg) return false;
+    if (msg.type === 'WEBMCP_TAB_TITLE') {
+      sendResponse(applyLockedTitle(msg.title || null));
+      return false;
+    }
+    if (msg.type === 'WEBMCP_GET_TAB_TITLE') {
+      sendResponse({
+        ok: true,
+        title: document.title,
+        customTitle: lockedTitle,
+        pageTitle: hasCapturedPageTitle ? pageTitle : document.title,
+      });
+      return false;
+    }
     return false;
   });
 

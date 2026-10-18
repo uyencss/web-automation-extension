@@ -1,4 +1,4 @@
-import { ensureDebuggerAttached, sendCDPCommand } from '../cdp-bridge.js';
+import { ensureDebuggerAttached, sendCDPCommand, disableRuntime, onTabDetached, registerActiveCaptureChecker } from '../cdp-bridge.js';
 import { resolveTabId } from '../utils.js';
 
 const MAX_MESSAGES_PER_SESSION = 500;
@@ -156,7 +156,7 @@ export async function stopConsoleCapture(tabId) {
 
   consoleSessions.delete(tabId);
   try {
-    await sendCDPCommand(tabId, 'Runtime.disable', {});
+    await disableRuntime(tabId);
   } catch {
     // The tab or debugger session may already be gone.
   }
@@ -257,11 +257,15 @@ chrome.debugger.onEvent.addListener((source, method, params = {}) => {
   }
 });
 
-chrome.debugger.onDetach.addListener((source) => {
-  if (source.tabId !== undefined && source.tabId !== null) {
-    consoleSessions.delete(source.tabId);
+function cleanupConsoleSession(tabId) {
+  if (tabId !== undefined && tabId !== null) {
+    consoleSessions.delete(tabId);
   }
-});
+}
+
+onTabDetached(cleanupConsoleSession);
+registerActiveCaptureChecker((tabId) => consoleSessions.has(tabId));
+
 
 export const consoleCaptureHandlers = {
   async startConsoleCapture(params) {

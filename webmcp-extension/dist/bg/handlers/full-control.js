@@ -1,6 +1,7 @@
 import { resolveTabId } from '../utils.js';
 import { evaluateInTab, sendCDPCommand } from '../cdp-bridge.js';
 import { attachedTabs } from '../state.js';
+import { getCurrentGatewayUrl } from '../ws-client.js';
 
 export const fullControlHandlers = {
   async getCookies(params) {
@@ -145,7 +146,7 @@ export const fullControlHandlers = {
       version: manifest.version,
       manifestVersion: manifest.manifest_version,
       attachedDebuggerTabs: Array.from(attachedTabs),
-      websocketUrl: 'ws://localhost:7865',
+      websocketUrl: getCurrentGatewayUrl(),
     };
   }
 };

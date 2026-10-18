@@ -1,4 +1,4 @@
-import { ensureDebuggerAttached, sendCDPCommand } from '../cdp-bridge.js';
+import { ensureDebuggerAttached, sendCDPCommand, onTabDetached, registerActiveCaptureChecker } from '../cdp-bridge.js';
 
 // ─────────────────────────────────────────────────────────────
 // Best-in-class network capture
@@ -275,13 +275,17 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   }
 });
 
-// Clean up capture state if the debugger detaches from a tab.
-chrome.debugger.onDetach.addListener((source) => {
-  const session = captureSessions.get(source.tabId);
+function cleanupNetworkSession(tabId) {
+  const session = captureSessions.get(tabId);
   if (!session) return;
   for (const w of session.waiters) {
     clearTimeout(w.timer);
     w.resolve({ error: 'Debugger detached during capture.' });
   }
-  captureSessions.delete(source.tabId);
-});
+  captureSessions.delete(tabId);
+}
+
+onTabDetached(cleanupNetworkSession);
+registerActiveCaptureChecker((tabId) => captureSessions.has(tabId));
+
+

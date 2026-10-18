@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "WebMCP Tools Provider",
-  "version": "2.1.13",
-  "description": "Browser automation extension with WebSocket bridge. Exposes custom tools via WebMCP and accepts commands from external AI programs.",
+  "version": "2.1.14",
+  "description": "Browser automation extension with WebSocket bridge, WebMCP tools, and session/tab management for AI agents.",
   "permissions": [
     "alarms",
     "debugger",
@@ -17,7 +17,7 @@
     "<all_urls>"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*;"
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' ws: wss:;"
   },
   "content_scripts": [
     {
@@ -37,6 +37,7 @@
         "<all_urls>"
       ],
       "js": [
+        "content-scripts/webmcp-polyfill.js",
         "content-scripts/register-tools.js"
       ],
       "run_at": "document_start",
@@ -56,7 +57,7 @@
       "128": "icons/icon128.png"
     },
     "default_popup": "popup.html",
-    "default_title": "WebMCP Control & Rename Tab"
+    "default_title": "WebMCP Tools Provider"
   },
   "commands": {
     "_execute_action": {

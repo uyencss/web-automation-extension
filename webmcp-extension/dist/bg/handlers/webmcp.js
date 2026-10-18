@@ -22,9 +22,12 @@ export const webmcpHandlers = {
     const tabId = await resolveTabId(params);
     const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
     const tools = await evaluate(`
-      (() => {
-        if (!navigator.modelContext) return { error: 'navigator.modelContext not found' };
-        return navigator.modelContext.tools;
+      (async () => {
+        const ctx = document.modelContext || navigator.modelContext;
+        if (!ctx) return { error: 'navigator.modelContext not found' };
+        if (Array.isArray(ctx.tools)) return ctx.tools;
+        if (typeof ctx.getTools === 'function') return await ctx.getTools();
+        return [];
       })()
     `);
     return {
@@ -42,8 +45,12 @@ export const webmcpHandlers = {
 
     const result = await evaluate(`
       (async () => {
-        if (!navigator.modelContext) throw new Error('navigator.modelContext not found');
-        return await navigator.modelContext.invokeTool(
+        const ctx = document.modelContext || navigator.modelContext;
+        if (!ctx) throw new Error('navigator.modelContext not found');
+        const fn = typeof ctx.invokeTool === 'function' ? ctx.invokeTool : ctx.executeTool;
+        if (typeof fn !== 'function') throw new Error('modelContext.invokeTool not found');
+        return await fn.call(
+          ctx,
           ${JSON.stringify(toolName)},
           ${JSON.stringify(input)}
         );

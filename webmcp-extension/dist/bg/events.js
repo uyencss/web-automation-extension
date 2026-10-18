@@ -1,21 +1,9 @@
-import { sendNotification, ws, reconnectNow, applyProfileName } from './ws-client.js';
+import { sendNotification, ws, reconnectNow, applyProfileName, getServiceUrls, saveServiceUrls } from './ws-client.js';
 import { attachedTabs } from './state.js';
-import { detachDebugger } from './cdp-bridge.js';
+import { detachDebugger, cleanupDetachedTab } from './cdp-bridge.js';
 import { getProfileInfo } from './profile-id.js';
 import { tabHandlers } from './handlers/tab-management.js';
 import { startNetworkCapture, stopNetworkCapture, waitForNetworkResponse, getCapturedRequests } from './handlers/network-intercept.js';
-
-// ────────────────────────────────────────────────────────────
-// CDP Event Forwarding
-// ────────────────────────────────────────────────────────────
-chrome.debugger.onEvent.addListener((source, method, params) => {
-  // Forward CDP events to the WebSocket server
-  sendNotification('cdpEvent', {
-    tabId: source.tabId,
-    method,
-    params,
-  });
-});
 
 // ────────────────────────────────────────────────────────────
 // Tab Events Forwarding
@@ -32,7 +20,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  attachedTabs.delete(tabId);
+  cleanupDetachedTab(tabId);
   if (chrome.storage?.session) {
     chrome.storage.session.remove('title:' + tabId).catch(() => {});
   }
@@ -123,11 +111,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           case 'status': {
             const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
             const profile = await getProfileInfo();
+            const urls = await getServiceUrls();
             let customTitle = null;
             if (activeTab?.id && chrome.storage?.session) {
               try {
                 const data = await chrome.storage.session.get('title:' + activeTab.id);
                 customTitle = data?.['title:' + activeTab.id] || null;
+              } catch {}
+            }
+            let pageTitle = activeTab?.title || '';
+            if (activeTab?.id && chrome.tabs?.sendMessage) {
+              try {
+                const titleRes = await chrome.tabs.sendMessage(
+                  activeTab.id,
+                  { type: 'WEBMCP_GET_TAB_TITLE' },
+                  { frameId: 0 }
+                );
+                if (titleRes?.pageTitle) pageTitle = titleRes.pageTitle;
               } catch {}
             }
             const wsState = !ws
@@ -142,17 +142,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               ok: true,
               wsState,
               profile,
+              gatewayUrl: urls.gatewayUrl,
+              defaultGatewayUrl: urls.defaultGatewayUrl,
               tab: activeTab
                 ? {
                     id: activeTab.id,
                     url: activeTab.url,
                     title: activeTab.title,
                     customTitle,
+                    pageTitle,
                     cdpAttached: attachedTabs.has(activeTab.id),
                   }
                 : null,
               attachedCount: attachedTabs.size,
             });
+            break;
+          }
+
+          case 'saveSettings': {
+            const urls = await saveServiceUrls(request.params || {});
+            sendResponse({ ok: true, ...urls });
             break;
           }
 
@@ -230,7 +239,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ error: err.message });
       }
     })();
-    
+
     return true; // Keep channel open for async response
   }
 });

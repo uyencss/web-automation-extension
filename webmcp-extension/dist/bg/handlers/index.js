@@ -9,6 +9,7 @@ import { ariaSnapshotHandlers } from './aria-snapshot.js';
 import { pageStabilityHandlers } from './page-stability.js';
 import { frameManagementHandlers } from './frame-management.js';
 import { consoleCaptureHandlers } from './console-capture.js';
+import { passkeyActionHandlers } from './passkey-actions.js';
 
 export const commandHandlers = {
   ...tabHandlers,
@@ -22,4 +23,5 @@ export const commandHandlers = {
   ...ariaSnapshotHandlers,
   ...pageStabilityHandlers,
   ...consoleCaptureHandlers,
+  ...passkeyActionHandlers,
 };

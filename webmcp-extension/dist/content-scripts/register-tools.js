@@ -4,313 +4,27 @@
 // This script runs in the page's own JavaScript context so that
 // navigator.modelContext is visible to the Codex extension when
 // it evaluates webmcp_list_tools / webmcp_invoke_tool.
-//
-// Architecture:
-//   1. Polyfill navigator.modelContext if the browser doesn't
-//      natively support WebMCP yet.
-//   2. Register each tool with { name, description, inputSchema,
-//      execute }.
-//   3. Codex discovers tools via navigator.modelContext.tools
-//      and invokes them via navigator.modelContext.invokeTool().
-//   4. Each execute() must return MCP-format:
-//      { content: [{ type: "text", text: "..." }] }
 // ============================================================
 
 (function () {
   'use strict';
 
-  // ────────────────────────────────────────────────────────────
-  // §1 — Polyfill navigator.modelContext
-  // ────────────────────────────────────────────────────────────
-
-  if (!('modelContext' in navigator)) {
-    const _registry = new Map();
-
-    Object.defineProperty(navigator, 'modelContext', {
-      value: Object.freeze({
-        /**
-         * Register a tool that AI agents can discover and invoke.
-         *
-         * @param {object} def
-         * @param {string} def.name         — unique identifier (snake_case)
-         * @param {string} def.description  — what the tool does (shown to AI)
-         * @param {object} def.inputSchema  — JSON Schema for the input
-         * @param {function} def.execute    — async (input) => MCP result
-         * @param {string} [def.title]      — human-readable title
-         * @param {object} [def.annotations]— MCP annotation hints
-         */
-        registerTool(def) {
-          if (!def || typeof def.name !== 'string' || !def.name.trim()) {
-            throw new TypeError('registerTool: tool must have a non-empty "name"');
-          }
-          if (typeof def.execute !== 'function') {
-            throw new TypeError(`registerTool: tool "${def.name}" must have an "execute" function`);
-          }
-          _registry.set(def.name, def);
-          console.debug(`[WebMCP] ✓ registered tool: ${def.name}`);
-        },
-
-        /** Remove a previously registered tool. */
-        unregisterTool(name) {
-          if (_registry.delete(name)) {
-            console.debug(`[WebMCP] ✗ unregistered tool: ${name}`);
-          }
-        },
-
-        /** List all registered tool descriptors (used by Codex webmcp_list_tools). */
-        get tools() {
-          return Array.from(_registry.values()).map((t) => ({
-            name: t.name,
-            ...(t.title != null ? { title: t.title } : {}),
-            ...(t.description != null ? { description: t.description } : {}),
-            input_schema: t.inputSchema || t.input_schema || {},
-            ...(t.annotations != null ? { annotations: t.annotations } : {}),
-            origin: location.origin,
-            pageUrl: location.href,
-          }));
-        },
-
-        /** Invoke a tool by name (used by Codex webmcp_invoke_tool). */
-        async invokeTool(name, input) {
-          const tool = _registry.get(name);
-          if (!tool) {
-            throw new Error(`[WebMCP] Tool "${name}" is not registered`);
-          }
-          try {
-            return await tool.execute(input || {});
-          } catch (err) {
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    error: true,
-                    message: err?.message || String(err),
-                  }),
-                },
-              ],
-            };
-          }
-        },
-      }),
-      writable: false,
-      enumerable: true,
-      configurable: false,
-    });
-
-    console.debug('[WebMCP] polyfill installed on navigator.modelContext');
-  }
+  const {
+    mcpResult,
+    mcpError,
+    invokeBackground,
+    FRAME_SELECTOR_SCHEMA,
+    FRAME_PATH_SCHEMA,
+    FRAME_TIMEOUT_SCHEMA,
+    cleanFrameParams,
+    shouldInvokeFrame,
+    invokeFrameForTool,
+    invokeIframe,
+  } = window.__webmcp_internal__;
+  try { delete window.__webmcp_internal__; } catch {}
 
   // ────────────────────────────────────────────────────────────
-  // §2 — Helper: wrap a return value in MCP response format
-  // ────────────────────────────────────────────────────────────
-
-  /**
-   * Convenience wrapper — takes any JS value and wraps it in
-   * the MCP content format that Codex expects.
-   */
-  function mcpResult(data) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: typeof data === 'string' ? data : JSON.stringify(data, null, 2),
-        },
-      ],
-    };
-  }
-
-  /**
-   * Convenience wrapper for error responses.
-   */
-  function mcpError(message) {
-    return mcpResult({ error: true, message });
-  }
-
-  // ────────────────────────────────────────────────────────────
-  // §2.5 — Bridge Communication (Background & Iframe)
-  // ────────────────────────────────────────────────────────────
-
-  let _reqId = 0;
-  async function invokeBackground(method, params) {
-    const id = ++_reqId;
-    return new Promise((resolve) => {
-      const handler = (event) => {
-        if (event.source !== window || event.data?.type !== 'WEBMCP_BG_RESPONSE' || event.data?.id !== id) return;
-        window.removeEventListener('message', handler);
-        resolve(event.data.response);
-      };
-      window.addEventListener('message', handler);
-      window.postMessage({ type: 'WEBMCP_BG_REQUEST', payload: { type: 'WEBMCP_BG_REQUEST', method, params }, id }, '*');
-    });
-  }
-
-  const FRAME_SELECTOR_SCHEMA = {
-    oneOf: [
-      { type: 'string', description: 'CSS selector for an iframe.' },
-      {
-        type: 'object',
-        properties: {
-          selector: { type: 'string', description: 'CSS selector for an iframe.' },
-          name: { type: 'string', description: 'iframe name attribute.' },
-          index: { type: 'number', description: 'Zero-based iframe index.' },
-          url: { type: 'string', description: 'Substring of iframe src URL.' },
-        },
-      },
-    ],
-    description: 'Optional iframe target. String form is treated as a CSS selector.',
-  };
-
-  const FRAME_PATH_SCHEMA = {
-    type: 'array',
-    items: FRAME_SELECTOR_SCHEMA,
-    description: 'Nested iframe path, from outer frame to inner frame.',
-  };
-
-  const FRAME_TIMEOUT_SCHEMA = {
-    type: 'number',
-    description: 'Maximum iframe bridge wait in milliseconds. Default 5000.',
-  };
-
-  function describeFrameSpec(frameSpec) {
-    if (typeof frameSpec === 'string') return frameSpec;
-    if (!frameSpec || typeof frameSpec !== 'object') return String(frameSpec);
-    return JSON.stringify(frameSpec);
-  }
-
-  function resolveFrame(frameSpec) {
-    if (typeof frameSpec === 'string') {
-      return document.querySelector(frameSpec);
-    }
-
-    if (!frameSpec || typeof frameSpec !== 'object') return null;
-
-    if (frameSpec.selector) {
-      return document.querySelector(frameSpec.selector);
-    }
-
-    const frames = Array.from(document.querySelectorAll('iframe, frame'));
-
-    if (frameSpec.name) {
-      return frames.find((frame) => frame.getAttribute('name') === frameSpec.name) || null;
-    }
-
-    if (typeof frameSpec.index === 'number') {
-      return frames[frameSpec.index] || null;
-    }
-
-    if (frameSpec.url) {
-      return frames.find((frame) => {
-        const src = frame.getAttribute('src') || frame.src || '';
-        return src.includes(frameSpec.url);
-      }) || null;
-    }
-
-    return null;
-  }
-
-  function getFrameOrigin(frame) {
-    const rawSrc = frame.getAttribute('src') || frame.src || '';
-    if (!rawSrc || rawSrc === 'about:blank' || frame.hasAttribute('srcdoc')) {
-      return '*';
-    }
-    try {
-      return new URL(rawSrc, location.href).origin;
-    } catch {
-      return '*';
-    }
-  }
-
-  function cleanFrameParams(input) {
-    const {
-      frame_selector,
-      frame_path,
-      frame_timeout_ms,
-      ...rest
-    } = input || {};
-    return rest;
-  }
-
-  function shouldInvokeFrame(input) {
-    return Boolean(
-      input?.frame_selector ||
-      (Array.isArray(input?.frame_path) && input.frame_path.length > 0)
-    );
-  }
-
-  async function invokeFrameForTool(input, cmd) {
-    const path = Array.isArray(input?.frame_path) && input.frame_path.length > 0
-      ? input.frame_path
-      : [input.frame_selector];
-    return invokeIframe(path, cmd, cleanFrameParams(input), input?.frame_timeout_ms);
-  }
-
-  async function invokeIframe(frameTarget, cmd, params, timeoutMs = 5000) {
-    const path = Array.isArray(frameTarget) ? frameTarget.filter(Boolean) : [frameTarget];
-    const [frameSpec, ...remainingPath] = path;
-    const frame = resolveFrame(frameSpec);
-    const targetDescription = describeFrameSpec(frameSpec);
-    if (!frame || !frame.contentWindow) {
-      return mcpError(`Iframe not found: ${targetDescription}`);
-    }
-
-    const id = ++_reqId;
-    return new Promise((resolve) => {
-      let settled = false;
-      let timer;
-      const done = (result) => {
-        if (settled) return;
-        settled = true;
-        if (timer) clearTimeout(timer);
-        window.removeEventListener('message', handler);
-        resolve(result);
-      };
-      const handler = (event) => {
-        if (event.source !== frame.contentWindow) return;
-        if (event.data?.type !== 'WEBMCP_IFRAME_RES' || event.data.id !== id) return;
-        done(event.data.result);
-      };
-      window.addEventListener('message', handler);
-      const targetOrigin = getFrameOrigin(frame);
-      frame.contentWindow.postMessage({
-        type: 'WEBMCP_IFRAME_CMD',
-        cmd,
-        params,
-        framePath: remainingPath,
-        timeoutMs,
-        id,
-      }, targetOrigin);
-      timer = setTimeout(() => {
-        done(mcpError(`Timeout communicating with iframe: ${targetDescription}. Note: cross-origin iframes must have register-tools.js injected via all_frames: true.`));
-      }, Number(timeoutMs) || 5000);
-    });
-  }
-
-  // Iframe command receiver (runs inside the iframe)
-  if (window !== window.top) {
-    window.addEventListener('message', async (event) => {
-      if (event.data?.type === 'WEBMCP_IFRAME_CMD') {
-        const { cmd, params, id } = event.data;
-        let result;
-        try {
-          if (Array.isArray(event.data.framePath) && event.data.framePath.length > 0) {
-            result = await invokeIframe(event.data.framePath, cmd, params, event.data.timeoutMs);
-          } else if (navigator.modelContext && navigator.modelContext.tools) {
-            // We can reuse the tools registry to execute inside iframe.
-            result = await navigator.modelContext.invokeTool(cmd, params);
-          } else {
-            result = mcpError('navigator.modelContext not available in iframe');
-          }
-        } catch (err) {
-          result = mcpError(err.message);
-        }
-        event.source.postMessage({ type: 'WEBMCP_IFRAME_RES', id, result }, event.origin || '*');
-      }
-    });
-  }
-
-  // ────────────────────────────────────────────────────────────
-  // §3 — Tool definitions
+  // Tool definitions (14 tools)
   // ────────────────────────────────────────────────────────────
 
   // ─── Tool 1: get_page_metadata ────────────────────────────
@@ -332,6 +46,9 @@
           description: 'Include all anchor links in the result.',
         },
       },
+    },
+    annotations: {
+      readOnlyHint: true,
     },
     async execute(input) {
       const meta = (name) =>
@@ -408,6 +125,9 @@
       },
       required: ['selector'],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
     async execute(input) {
       if (shouldInvokeFrame(input)) {
         return invokeFrameForTool(input, 'query_selector_all');
@@ -473,6 +193,10 @@
       },
       required: ['selector'],
     },
+    annotations: {
+      readOnlyHint: false,
+      consequentialHint: true,
+    },
     async execute(input) {
       if (shouldInvokeFrame(input)) {
         return invokeFrameForTool(input, 'click_element');
@@ -520,6 +244,10 @@
         },
       },
       required: ['selector', 'value'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      consequentialHint: true,
     },
     async execute(input) {
       if (shouldInvokeFrame(input)) {
@@ -591,6 +319,9 @@
         },
       },
     },
+    annotations: {
+      readOnlyHint: true,
+    },
     async execute(input) {
       if (shouldInvokeFrame(input)) {
         return invokeFrameForTool(input, 'extract_table_data');
@@ -646,6 +377,9 @@
         },
       },
       required: ['selector'],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
     async execute(input) {
       if (shouldInvokeFrame(input)) {
@@ -727,6 +461,9 @@
       },
       required: ['selector'],
     },
+    annotations: {
+      readOnlyHint: true,
+    },
     async execute(input) {
       if (shouldInvokeFrame(input)) {
         return invokeFrameForTool(input, 'get_computed_styles');
@@ -792,6 +529,10 @@
           description: 'Scroll behavior. Default "smooth".',
         },
       },
+    },
+    annotations: {
+      readOnlyHint: false,
+      consequentialHint: true,
     },
     async execute(input) {
       const behavior = input.behavior || 'smooth';
@@ -860,7 +601,8 @@
       },
     },
     annotations: {
-      untrustedContentHint: true,
+      readOnlyHint: false,
+      consequentialHint: true,
     },
     async execute(input) {
       const form = document.querySelector(input.form_selector || 'form');
@@ -931,6 +673,8 @@
       required: ['code'],
     },
     annotations: {
+      readOnlyHint: false,
+      consequentialHint: true,
       untrustedContentHint: true,
     },
     async execute(input) {
@@ -960,6 +704,10 @@
       },
       required: ['url_pattern'],
     },
+    annotations: {
+      readOnlyHint: false,
+      consequentialHint: true,
+    },
     async execute(input) {
       try {
         const res = await invokeBackground('start_network_capture', input);
@@ -983,6 +731,9 @@
         include_body: { type: 'boolean', description: 'Include the response body (default true).' },
       },
       required: ['url_pattern'],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
     async execute(input) {
       try {
@@ -1008,6 +759,9 @@
         limit: { type: 'number', description: 'Max requests to return (default 100).' },
       },
     },
+    annotations: {
+      readOnlyHint: true,
+    },
     async execute(input) {
       try {
         const res = await invokeBackground('get_captured_requests', input);
@@ -1029,6 +783,10 @@
         url_pattern: { type: 'string', description: 'Optional: remove only this pattern instead of stopping everything.' },
       },
     },
+    annotations: {
+      readOnlyHint: false,
+      consequentialHint: true,
+    },
     async execute(input) {
       try {
         const res = await invokeBackground('stop_network_capture', input);
@@ -1038,15 +796,5 @@
       }
     }
   });
-
-  // ────────────────────────────────────────────────────────────
-  // §4 — Startup log
-  // ────────────────────────────────────────────────────────────
-
-  const toolCount = navigator.modelContext.tools.length;
-  console.log(
-    `%c[WebMCP Tools Provider]%c ${toolCount} tools registered and ready for AI agent discovery.`,
-    'color: #22c55e; font-weight: bold;',
-    'color: inherit;'
-  );
 })();
+

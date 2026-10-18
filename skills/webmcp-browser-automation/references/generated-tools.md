@@ -4,7 +4,7 @@
 >
 > Sources: `webmcp-extension/dist/content-scripts/register-tools.js`, `webmcp-extension/dist/bg/handlers/*.js`, and `webmcp-extension/dist/bg/ws-client.js`.
 
-## Extension Commands (55)
+## Extension Commands (56)
 
 Call these as gateway/direct extension methods: `{ "method": "<command>", "params": { ... } }`.
 
@@ -42,6 +42,7 @@ Call these as gateway/direct extension methods: `{ "method": "<command>", "param
 | `navigate` | `{ url, tabId? }` | `tab-management.js` |
 | `newTab` | `{ url? }` | `tab-management.js` |
 | `pageFetch` | `{ url, method?, headers?, body?, responseType?, credentials?, maxLength?, offset?, frame?, tabId? }` | `high-level.js` |
+| `passkey.authenticateWithVirtualAuthenticator` | `{ ... }` | `passkey-actions.js` |
 | `ping` | `{}` | `full-control.js` |
 | `pressKey` | `{ key, text?, modifiers?, tabId? }` | `cdp-input.js` |
 | `querySelectorAll` | `{ selector, limit?, offset?, fields?, textMaxLength?, pierceShadow?, frame?, tabId? }` | `high-level.js` |
@@ -103,9 +104,9 @@ First-class MCP tool counts per preset. Every preset also always includes `brows
 ## Capability Announcement Check
 
 - Announced capabilities: 55
-- Commands with handlers: 55
+- Commands with handlers: 56
 - Announced without handler: none
-- Handler not announced: none
+- Handler not announced: `passkey.authenticateWithVirtualAuthenticator`
 
 ## Notes
 

@@ -39,34 +39,116 @@ function removeExecutionContext(tabId, executionContextId) {
   }
 }
 
+export const CDP_IDLE_TIMEOUT_MS = 45000;
+const attachHooks = new Set();
+const detachHooks = new Set();
+const activeCaptureCheckers = new Set();
+const idleTimers = new Map();
+const emulationOverrideTabs = new Set();
+
+export function onTabAttached(fn) {
+  if (typeof fn === 'function') attachHooks.add(fn);
+}
+
+export function onTabDetached(fn) {
+  if (typeof fn === 'function') detachHooks.add(fn);
+}
+
+export function registerActiveCaptureChecker(fn) {
+  if (typeof fn === 'function') activeCaptureCheckers.add(fn);
+}
+
+export function hasActiveCapture(tabId) {
+  if (emulationOverrideTabs.has(tabId)) return true;
+  for (const check of activeCaptureCheckers) {
+    try {
+      if (check(tabId)) return true;
+    } catch {}
+  }
+  return false;
+}
+
+function clearIdleTimer(tabId) {
+  const timer = idleTimers.get(tabId);
+  if (timer) {
+    clearTimeout(timer);
+    idleTimers.delete(tabId);
+  }
+}
+
+function resetIdleTimer(tabId) {
+  clearIdleTimer(tabId);
+  if (!attachedTabs.has(tabId)) return;
+  const timer = setTimeout(() => {
+    idleTimers.delete(tabId);
+    if (!attachedTabs.has(tabId)) return;
+    if (hasActiveCapture(tabId)) {
+      resetIdleTimer(tabId);
+      return;
+    }
+    detachDebugger(tabId).catch(() => {});
+  }, CDP_IDLE_TIMEOUT_MS);
+  if (typeof timer?.unref === 'function') timer.unref();
+  idleTimers.set(tabId, timer);
+}
+
+function markAttached(tabId) {
+  attachedTabs.add(tabId);
+  resetIdleTimer(tabId);
+  for (const fn of attachHooks) {
+    try { fn(tabId); } catch {}
+  }
+}
+
+function probeOwnDebuggerSession(tabId) {
+  if (typeof chrome.debugger?.sendCommand !== 'function') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', { expression: '1' }, () => {
+        resolve(!chrome.runtime?.lastError);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 export async function ensureDebuggerAttached(tabId) {
   if (attachedTabs.has(tabId)) return;
   try {
     await chrome.debugger.attach({ tabId }, '1.3');
-    attachedTabs.add(tabId);
+    markAttached(tabId);
   } catch (err) {
-    // Already attached (by another extension like Codex?)
-    if (err.message?.includes('Another debugger is already attached')) {
-      throw new Error(
-        `Tab ${tabId} already has a debugger attached (likely Codex). ` +
-        'Detach it first or use a different tab.'
-      );
-    }
-    // Already attached by us
-    if (err.message?.includes('already attached')) {
-      attachedTabs.add(tabId);
+    const msg = err?.message || '';
+    if (/already attached/i.test(msg)) {
+      if (await probeOwnDebuggerSession(tabId)) {
+        markAttached(tabId);
+        return;
+      }
+      if (/another debugger is already attached/i.test(msg)) {
+        throw new Error(
+          `Tab ${tabId} already has a debugger attached (likely Codex). ` +
+          'Detach it first or use a different tab.'
+        );
+      }
+      markAttached(tabId);
       return;
     }
     throw err;
   }
 }
 
-function cleanupDetachedTab(tabId) {
+export function cleanupDetachedTab(tabId) {
+  clearIdleTimer(tabId);
   attachedTabs.delete(tabId);
   pageEnabledTabs.delete(tabId);
   runtimeEnabledTabs.delete(tabId);
+  emulationOverrideTabs.delete(tabId);
   mainWorldContexts.delete(tabId);
   invalidateFrameCaches(tabId);
+  for (const fn of detachHooks) {
+    try { fn(tabId); } catch {}
+  }
 }
 
 export async function detachDebugger(tabId) {
@@ -78,8 +160,30 @@ export async function detachDebugger(tabId) {
   cleanupDetachedTab(tabId);
 }
 
+export async function disableRuntime(tabId) {
+  runtimeEnabledTabs.delete(tabId);
+  mainWorldContexts.delete(tabId);
+  if (!attachedTabs.has(tabId)) return;
+  await sendCDPCommand(tabId, 'Runtime.disable', {});
+}
+
 export async function sendCDPCommand(tabId, method, commandParams = {}) {
+  if (method === 'Runtime.disable') {
+    runtimeEnabledTabs.delete(tabId);
+    mainWorldContexts.delete(tabId);
+  } else if (method === 'Emulation.clearDeviceMetricsOverride') {
+    emulationOverrideTabs.delete(tabId);
+  }
+  if (
+    (method === 'Runtime.disable' ||
+      method === 'Network.disable' ||
+      method === 'Emulation.clearDeviceMetricsOverride') &&
+    !attachedTabs.has(tabId)
+  ) {
+    return {};
+  }
   await ensureDebuggerAttached(tabId);
+  resetIdleTimer(tabId);
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`CDP command "${method}" timed out after ${CDP_TIMEOUT_MS}ms`));
@@ -90,6 +194,9 @@ export async function sendCDPCommand(tabId, method, commandParams = {}) {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
       } else {
+        if (method === 'Emulation.setDeviceMetricsOverride') {
+          emulationOverrideTabs.add(tabId);
+        }
         resolve(result);
       }
     });

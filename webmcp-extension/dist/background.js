@@ -28,9 +28,8 @@ chrome.runtime.onStartup.addListener(() => {
 const KEEPALIVE_ALARM = 'webmcp-keepalive';
 
 chrome.alarms.create(KEEPALIVE_ALARM, {
-  // Fire every 20 seconds (minimum is ~1 min in practice, but Chrome
-  // allows sub-minute alarms for packed extensions)
-  periodInMinutes: 0.33,
+  // Fire every 30 seconds (MV3 minimum floor)
+  periodInMinutes: 0.5,
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
