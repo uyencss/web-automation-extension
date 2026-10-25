@@ -18,11 +18,10 @@ the user's current Chrome.
 webmcp gateway start
 ```
 
-   If Chrome/the extension also needs bootstrapping, initialize both with an
-   isolated managed Chrome profile instead:
+   If Chrome/the extension also needs bootstrapping, **ALWAYS prioritize launching an existing Native Chrome Profile** (`Chrome:<ProfileDir>`, inspected via `webmcp profiles --json`) using `--profile-id` rather than creating a blank managed profile in `~/.webmcp/managed-profiles` (`--name`):
 
 ```bash
-webmcp launch --name task-name --gateway --json
+webmcp launch --profile-id "Chrome:Profile 11" --gateway --json
 ```
 
 2. Parse the JSON output. Save `profileId` when present.

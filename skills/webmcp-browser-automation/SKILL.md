@@ -21,9 +21,10 @@ Every browser action must pass through the WebMCP MCP server.
    path for tab discovery, navigation, reading, and interaction. These tools
    already use the WebMCP MCP server, so do not start a duplicate server.
 2. If no usable WebMCP MCP tool is exposed, initialize the gateway first:
-   `webmcp gateway start`, or
-   `webmcp launch --name task-name --gateway --json` when Chrome/the extension
-   also needs bootstrapping.
+   `webmcp gateway start`. When Chrome/the extension also needs bootstrapping, **ALWAYS prioritize opening an existing Native Chrome Profile** (`Chrome:<ProfileDir>`) rather than a blank `managed_profiles` directory:
+   - Run `webmcp profiles --json` (or inspect `config/binding.local.json`) to resolve the target native Chrome profile.
+   - Launch with `--profile-id "Chrome:<ProfileDir>"` (for example `webmcp launch --profile-id "Chrome:Profile 11" --gateway --json` or `"Chrome:Default"`).
+   - **NEVER** default to `webmcp launch --name <slug>` (`~/.webmcp/managed-profiles`) unless the user explicitly asks for an empty sandbox.
 3. Start or connect the stdio MCP adapter with `webmcp mcp`, then
    refresh/discover the runtime tool surface and continue with
    `mcp__webmcp__*` tool calls.
@@ -112,10 +113,10 @@ webmcp gateway start
 ```
 
 If the gateway is unreachable or `/health` reports `extensionConnected: false`,
-bootstrap Chrome with the bundled extension first:
+bootstrap Chrome with the bundled extension using an existing Native Chrome Profile (`--profile-id "Chrome:<ProfileDir>"`, never default to `--name` / `managed_profiles`):
 
 ```bash
-webmcp launch --name task-name --gateway --json
+webmcp launch --profile-id "Chrome:Profile 11" --gateway --json
 ```
 
 Use the `webmcp-chrome-launcher` skill for profile selection, managed browser sessions,
