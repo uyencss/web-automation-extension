@@ -275,8 +275,56 @@ async function waitForUnlock(userDataDir, timeoutMs = 12000) {
   return !isProfileLocked(userDataDir);
 }
 
-function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun }) {
-  const args = baseArgs({ extensionPath, userDataDir, profileDir });
+/**
+ * Merge base Chrome launch args with extra args.
+ * Merges multiple comma-separated Chromium flags into single deduplicated flags:
+ *   --disable-features=, --enable-features=, --disable-blink-features=, --enable-blink-features=
+ * and deduplicates identical standalone flags while preserving their order.
+ */
+function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
+  const combined = [...(baseArgsList || []), ...(extraArgs || [])];
+  const commaFlagGroups = {
+    '--disable-features=': new Set(),
+    '--enable-features=': new Set(),
+    '--disable-blink-features=': new Set(),
+    '--enable-blink-features=': new Set(),
+  };
+  const otherArgs = [];
+  const seenArgs = new Set();
+
+  for (const arg of combined) {
+    if (typeof arg !== 'string' || !arg) continue;
+    let matchedGroup = false;
+    for (const prefix of Object.keys(commaFlagGroups)) {
+      if (arg.startsWith(prefix)) {
+        const feats = arg.slice(prefix.length).split(',').map((f) => f.trim()).filter(Boolean);
+        for (const f of feats) commaFlagGroups[prefix].add(f);
+        matchedGroup = true;
+        break;
+      }
+    }
+    if (!matchedGroup) {
+      if (!seenArgs.has(arg)) {
+        seenArgs.add(arg);
+        otherArgs.push(arg);
+      }
+    }
+  }
+
+  for (const [prefix, set] of Object.entries(commaFlagGroups)) {
+    if (set.size > 0) {
+      otherArgs.push(`${prefix}${Array.from(set).join(',')}`);
+    }
+  }
+
+  return otherArgs;
+}
+
+function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
+  const rawBase = baseArgs({ extensionPath, userDataDir, profileDir });
+  const args = mergeChromeLaunchArgs(rawBase, extraArgs);
+  const mergedEnv = env ? { ...process.env, ...env } : process.env;
+
   if (dryRun) {
     return {
       ok: true,
@@ -288,10 +336,12 @@ function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode,
       mode: mode || 'managed',
       attached: Boolean(attached),
       args,
+      env: env || null,
+      tz: env?.TZ || null,
     };
   }
 
-  const child = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
+  const child = spawn(chromePath, args, { detached: true, stdio: 'ignore', env: mergedEnv });
   child.unref();
   return {
     ok: true,
@@ -302,6 +352,8 @@ function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode,
     mode: mode || 'managed',
     attached: Boolean(attached),
     args,
+    env: env || null,
+    tz: env?.TZ || null,
   };
 }
 
@@ -361,7 +413,21 @@ async function launchChrome(options = {}) {
     const profileDir = options.profile.profileDir || 'Default';
 
     if (hasLiveManagedSession(userDataDir, sessionsFile)) {
-      return annotate(spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', attached: true, dryRun: options.dryRun }));
+      const spawnRes = spawnChrome({
+        chromePath,
+        extensionPath,
+        userDataDir,
+        profileDir,
+        mode: 'existing',
+        attached: true,
+        dryRun: options.dryRun,
+        extraArgs: options.extraArgs,
+        env: options.env,
+      });
+      if ((options.extraArgs && options.extraArgs.length > 0) || options.env?.TZ) {
+        spawnRes.attachWarning = 'Chrome is already running for this profile; extraArgs and env (TZ) require --relaunch to take effect.';
+      }
+      return annotate(spawnRes);
     }
 
     if (isProfileLocked(userDataDir)) {
@@ -389,7 +455,7 @@ async function launchChrome(options = {}) {
       }
     }
 
-    const result = spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun });
+    const result = spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, extraArgs: options.extraArgs, env: options.env });
     if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
     return annotate(result);
   }
@@ -398,14 +464,7 @@ async function launchChrome(options = {}) {
     (options.dryRun
       ? nextManagedProfileDir(options.newProfileName, managedProfilesDir)
       : createManagedProfile(options.newProfileName, { managedProfilesDir, sessionsFile }));
-  const result = spawnChrome({
-    chromePath,
-    extensionPath,
-    userDataDir,
-    profileDir: options.profile?.profileDir || 'Default',
-    mode: 'managed',
-    dryRun: options.dryRun,
-  });
+  const result = spawnChrome({ chromePath, extensionPath, userDataDir, profileDir: options.profile?.profileDir || 'Default', mode: 'managed', dryRun: options.dryRun, extraArgs: options.extraArgs, env: options.env });
   if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
   return annotate(result);
 }
@@ -531,6 +590,7 @@ module.exports = {
   nextManagedProfileDir,
   createManagedProfile,
   baseArgs,
+  mergeChromeLaunchArgs,
   detectChromeChannel,
   detectChromeInfo,
   loadExtensionSupported,
