@@ -59,6 +59,24 @@ webmcp launch --profile-id "Chrome:Default" --gateway --json
 
 Use `--name` for a new managed profile. Use `--profile-id managed:<slug>` to reopen an existing managed profile.
 
+### Forking an Existing Profile for Dedicated Proxy Isolation
+
+Because Chrome binds `--proxy-server` to the singleton `NetworkService` process per `--user-data-dir`, two profiles sharing a single `user-data-dir` cannot run concurrently with different proxies. To isolate an existing logged-in profile (`Cookies`, `Local State`, MV3 `Service Worker/ScriptCache`) into its own managed `user-data-dir` under `~/.webmcp/managed-profiles/<slug>`:
+
+```bash
+# 1. Gracefully close the source profile first (targeted SIGTERM via SingletonLock PID):
+webmcp close --profile-id "Chrome:Profile 9"
+
+# 2. Fork into ~/.webmcp/managed-profiles/<slug>:
+webmcp profiles fork --profile-id "Chrome:Profile 9" --name scum --json
+
+# 3. Bind a dedicated proxy (via webmcp-fleet-kit) and launch with fail-closed proxy gate:
+webmcp fleet proxy bind --profile-id "managed:scum" --mode mobile-5g
+webmcp launch --profile-id "managed:scum" --gateway --json
+```
+
+When launching a profile that has a `.webmcp-meta.json#proxy` binding, `webmcp launch` automatically runs the fail-closed `resolveProfileLaunchGate` check (probing the proxy endpoint and verifying carrier ISP before spawning Chrome) and injects `--proxy-server`, `--proxy-bypass-list=127.0.0.1;localhost`, `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, and `TZ=<timezone>`.
+
 ## Chrome 137+ does not auto-load the extension
 
 Stable and Beta Google Chrome removed the `--load-extension` command-line switch in **M137** (and the old `--disable-features=DisableLoadExtensionCommandLineSwitch` escape hatch no longer works). On those builds Chrome opens the profile but the WebMCP extension is not injected.
