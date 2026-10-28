@@ -121,7 +121,8 @@ function readManagedProfiles(options = {}) {
       let gaiaName = '';
       let avatarUrl = '';
 
-      const prefFile = path.join(userDataDir, 'Default', 'Preferences');
+      const profileDir = meta.profileDir || 'Default';
+      const prefFile = path.join(userDataDir, profileDir, 'Preferences');
       try {
         if (fs.existsSync(prefFile)) {
           const pref = JSON.parse(fs.readFileSync(prefFile, 'utf8'));
@@ -141,7 +142,7 @@ function readManagedProfiles(options = {}) {
         kind: 'managed',
         browser: 'Managed',
         userDataDir,
-        profileDir: 'Default',
+        profileDir,
         id: `managed:${entry.name}`,
         name,
         email,

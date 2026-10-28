@@ -6,4 +6,5 @@ module.exports = {
   ...require('./profiles'),
   ...require('./launcher'),
   ...require('./profile-harmonizer'),
+  ...require('./profile-fork'),
 };

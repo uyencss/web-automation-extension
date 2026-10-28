@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -205,4 +205,216 @@ test('webmcp profiles list --json includes managed profiles', () => {
   assert.equal(payload.managed.length, 1);
   assert.equal(payload.managed[0].id, 'managed:unit-profile');
   assert.equal(payload.managed[0].name, 'Unit Profile');
+});
+
+test('forkExistingProfile copies profile state, filters cache, and refuses locked profiles', () => {
+  const root = tempRoot();
+  const srcUserData = path.join(root, 'source-chrome');
+  const profileDir = 'Profile 9';
+  const srcProfilePath = path.join(srcUserData, profileDir);
+  mkdirSync(srcProfilePath, { recursive: true });
+  mkdirSync(path.join(srcProfilePath, 'Network'), { recursive: true });
+  mkdirSync(path.join(srcProfilePath, 'Cache'), { recursive: true });
+  mkdirSync(path.join(srcProfilePath, 'Code Cache', 'js'), { recursive: true });
+  mkdirSync(path.join(srcProfilePath, 'GPUCache'), { recursive: true });
+
+  writeFileSync(path.join(srcUserData, 'Local State'), JSON.stringify({ profile: { last_used: 'Default' } }, null, 2));
+  writeFileSync(path.join(srcProfilePath, 'Preferences'), JSON.stringify({ profile: { exit_type: 'Crashed', exited_cleanly: false } }, null, 2));
+  writeFileSync(path.join(srcProfilePath, 'Network', 'Cookies'), 'dummy-cookies-data');
+  writeFileSync(path.join(srcProfilePath, 'Cache', 'data_0'), 'cache-data');
+  writeFileSync(path.join(srcProfilePath, 'Code Cache', 'js', 'data_1'), 'code-cache-data');
+  writeFileSync(path.join(srcProfilePath, 'GPUCache', 'data_2'), 'gpu-cache-data');
+
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const srcProfile = {
+    id: 'Chrome:Profile 9',
+    browser: 'Chrome',
+    userDataDir: srcUserData,
+    profileDir: 'Profile 9',
+  };
+
+  const res = launcher.forkExistingProfile(srcProfile, 'scum', { managedProfilesDir });
+  assert.equal(res.ok, true);
+  assert.equal(res.id, 'managed:scum');
+  assert.equal(res.profileDir, 'Profile 9');
+  assert.equal(res.forkedFrom, 'Chrome:Profile 9');
+
+  // Verify Local State and Preferences mutations
+  const dstLocalState = JSON.parse(readFileSync(path.join(res.userDataDir, 'Local State'), 'utf8'));
+  assert.equal(dstLocalState.profile.last_used, 'Profile 9');
+
+  const dstPrefs = JSON.parse(readFileSync(path.join(res.userDataDir, 'Profile 9', 'Preferences'), 'utf8'));
+  assert.equal(dstPrefs.profile.exit_type, 'Normal');
+  assert.equal(dstPrefs.profile.exited_cleanly, true);
+
+  // Verify cookies copied
+  assert.equal(readFileSync(path.join(res.userDataDir, 'Profile 9', 'Network', 'Cookies'), 'utf8'), 'dummy-cookies-data');
+
+  // Verify caches filtered out
+  assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'Cache')), false);
+  assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'Code Cache')), false);
+  assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'GPUCache')), false);
+
+  // Verify .webmcp-meta.json
+  const meta = JSON.parse(readFileSync(path.join(res.userDataDir, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(meta.profileDir, 'Profile 9');
+  assert.equal(meta.forkedFrom, 'Chrome:Profile 9');
+  assert.equal(meta.fingerprintSeed, undefined);
+
+  // Verify listAllProfiles honors meta.profileDir
+  const listed = launcher.listAllProfiles({ managedProfilesDir });
+  const scumProfile = listed.managed.find((p) => p.id === 'managed:scum');
+  assert.ok(scumProfile);
+  assert.equal(scumProfile.profileDir, 'Profile 9');
+
+  // Verify locked source throws
+  const lockTarget = `host-${process.pid}`;
+  symlinkSync(lockTarget, path.join(srcUserData, 'SingletonLock'));
+  assert.throws(
+    () => launcher.forkExistingProfile(srcProfile, 'should-fail', { managedProfilesDir }),
+    /Source Chrome userDataDir is currently running/
+  );
+});
+
+test('createManagedProfile generates fingerprintSeed uint32 and launchChrome enforces channel isolation', async () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const extensionPath = fakeExtensionDir(root);
+
+  // 1. Check fingerprintSeed generation
+  const userDataDir = launcher.createManagedProfile('seeded-test', { managedProfilesDir });
+  const meta = JSON.parse(readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(typeof meta.fingerprintSeed, 'number');
+  assert.ok(meta.fingerprintSeed >= 0 && meta.fingerprintSeed < 0x100000000);
+
+  // 2. Create fake Chromium binary
+  const fakeChromium = path.join(root, 'fake-chromium.sh');
+  writeFileSync(fakeChromium, `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo "Chromium 140.0.0.0"\n  exit 0\nfi\nexit 0\n`);
+  chmodSync(fakeChromium, 0o755);
+
+  const resChromium = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { userDataDir },
+    chromePath: fakeChromium,
+    extensionPath,
+    managedProfilesDir,
+    dryRun: true,
+  });
+
+  assert.ok(resChromium.args.some((arg) => arg === `--fingerprint=${meta.fingerprintSeed}`));
+
+  // 3. Block forked profile on custom Chromium binary
+  meta.forkedFrom = 'Chrome:Profile 9';
+  writeFileSync(path.join(userDataDir, '.webmcp-meta.json'), JSON.stringify(meta, null, 2));
+
+  await assert.rejects(
+    async () => {
+      await launcher.launchChrome({
+        mode: 'managed',
+        profile: { userDataDir },
+        chromePath: fakeChromium,
+        extensionPath,
+        managedProfilesDir,
+        dryRun: true,
+      });
+    },
+    /Refusing to launch a profile forked from native Chrome on a custom Chromium binary/
+  );
+
+  // 4. Allowed when allowCrossChannelFork: true
+  const resAllowed = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { userDataDir },
+    chromePath: fakeChromium,
+    extensionPath,
+    managedProfilesDir,
+    allowCrossChannelFork: true,
+    dryRun: true,
+  });
+  assert.equal(resAllowed.ok, true);
+});
+
+test('closeChrome terminates managed session with SIGTERM and cleans lock files', async () => {
+  const root = tempRoot();
+  const sessionsFile = path.join(root, 'sessions.json');
+  const userDataDir = path.join(root, 'managed-profiles', 'close-target');
+  mkdirSync(userDataDir, { recursive: true });
+  writeFileSync(path.join(userDataDir, '.webmcp-meta.json'), JSON.stringify({ name: 'close-target' }, null, 2));
+
+  // Spawn long-running dummy child process
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+
+  symlinkSync(`host-${child.pid}`, path.join(userDataDir, 'SingletonLock'));
+
+  launcher.saveSessions({
+    version: 1,
+    managedSessions: {
+      [userDataDir]: { pid: child.pid, startedAt: new Date().toISOString() },
+    },
+    gateway: null,
+  }, sessionsFile);
+
+  assert.ok(launcher.isPidAlive(child.pid));
+  assert.equal(launcher.readLockPid(userDataDir), child.pid);
+
+  const closeRes = await launcher.closeChrome({
+    profileId: 'managed:close-target',
+    sessionsFile,
+    killTimeoutMs: 1000,
+  });
+
+  assert.equal(closeRes.ok, true);
+  assert.equal(closeRes.closedCount, 1);
+
+  // Give OS a moment to process termination
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.equal(launcher.isPidAlive(child.pid), false);
+  assert.equal(launcher.readLockPid(userDataDir), null);
+
+  const updatedSessions = launcher.loadSessions(sessionsFile);
+  assert.equal(updatedSessions.managedSessions[userDataDir], undefined);
+});
+
+test('webmcp profiles fork via CLI creates managed fork with metadata', () => {
+  const root = tempRoot();
+  const managedProfile = path.join(root, 'managed-profiles', 'source-for-cli');
+  mkdirSync(path.join(managedProfile, 'Default'), { recursive: true });
+  writeFileSync(
+    path.join(managedProfile, '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Source CLI', createdAt: 1 }, null, 2),
+  );
+  writeFileSync(
+    path.join(managedProfile, 'Default', 'Preferences'),
+    JSON.stringify({ profile: { exit_type: 'Normal', exited_cleanly: true } }, null, 2),
+  );
+
+  const result = spawnSync(process.execPath, [
+    BIN,
+    'profiles',
+    'fork',
+    '--profile-id',
+    'managed:source-for-cli',
+    '--name',
+    'cli-fork-target',
+    '--json',
+  ], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_DATA_DIR: root,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.id, 'managed:cli-fork-target');
+  assert.equal(payload.forkedFrom, 'managed:source-for-cli');
+  assert.equal(existsSync(path.join(payload.userDataDir, '.webmcp-meta.json')), true);
 });

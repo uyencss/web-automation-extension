@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile, execFileSync, spawn } = require('child_process');
 const { isPidAlive } = require('./sessions');
 const {
@@ -91,6 +92,17 @@ function cleanStaleLocks(userDataDir) {
   return removed;
 }
 
+function readLockPid(userDataDir) {
+  const lockPath = path.join(userDataDir, 'SingletonLock');
+  try {
+    const target = fs.readlinkSync(lockPath);
+    const match = target.match(/-(\d+)$/);
+    return match ? parseInt(match[1], 10) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Check whether a Chrome profile directory is locked by a live process.
  * If lock files exist but the owning PID is dead (stale locks), they are
@@ -98,28 +110,23 @@ function cleanStaleLocks(userDataDir) {
  */
 function isProfileLocked(userDataDir) {
   const lockPath = path.join(userDataDir, 'SingletonLock');
-  if (!fs.existsSync(lockPath)) {
-    return LOCK_FILES.some((f) => fs.existsSync(path.join(userDataDir, f)));
+  const pid = readLockPid(userDataDir);
+  if (pid !== null) {
+    if (!isPidAlive(pid)) {
+      cleanStaleLocks(userDataDir);
+      return false;
+    }
+    return true;
   }
-
-  // On macOS/Linux, SingletonLock is a symlink whose target is "<hostname>-<pid>".
-  // On Windows it's a regular file. Try to extract the PID.
-  try {
-    const target = fs.readlinkSync(lockPath);        // e.g. "Hieu-MBP-17703"
-    const match = target.match(/-(\d+)$/);
-    if (match) {
-      const pid = parseInt(match[1], 10);
-      if (!isPidAlive(pid)) {
-        // PID is dead → stale lock. Clean up.
-        cleanStaleLocks(userDataDir);
+  if (!fs.existsSync(lockPath)) {
+    return LOCK_FILES.some((f) => {
+      try {
+        return Boolean(fs.lstatSync(path.join(userDataDir, f)));
+      } catch {
         return false;
       }
-    }
-  } catch {
-    // readlinkSync fails if it's a regular file (Windows) or permission error.
-    // Fall through to simple existence check.
+    });
   }
-
   return true;
 }
 
@@ -146,9 +153,16 @@ function createManagedProfile(name, options = {}) {
   ensureDirs({ managedProfilesDir, sessionsFile: options.sessionsFile });
   const userDataDir = nextManagedProfileDir(name, managedProfilesDir);
   fs.mkdirSync(userDataDir, { recursive: true });
+  const meta = {
+    name: name || path.basename(userDataDir),
+    createdAt: Date.now(),
+  };
+  if (!options.skipFingerprintSeed) {
+    meta.fingerprintSeed = crypto.randomInt(0, 0x100000000);
+  }
   fs.writeFileSync(
     path.join(userDataDir, '.webmcp-meta.json'),
-    `${JSON.stringify({ name: name || path.basename(userDataDir), createdAt: Date.now() }, null, 2)}\n`,
+    `${JSON.stringify(meta, null, 2)}\n`,
   );
   return userDataDir;
 }
@@ -443,7 +457,12 @@ async function launchChrome(options = {}) {
             'Ask the user before quitting Chrome, then retry with --relaunch if approved.',
         };
       }
-      await quitChrome();
+      const lockPid = readLockPid(userDataDir);
+      if (lockPid && isPidAlive(lockPid)) {
+        try { process.kill(lockPid, 'SIGTERM'); } catch {}
+      } else {
+        await quitChrome();
+      }
       const unlocked = await waitForUnlock(userDataDir);
       if (!unlocked) {
         return {
@@ -465,7 +484,37 @@ async function launchChrome(options = {}) {
     (options.dryRun
       ? nextManagedProfileDir(options.newProfileName, managedProfilesDir)
       : createManagedProfile(options.newProfileName, { managedProfilesDir, sessionsFile }));
-  const result = spawnChrome({ chromePath, extensionPath, userDataDir, profileDir: options.profile?.profileDir || 'Default', mode: 'managed', dryRun: options.dryRun, extraArgs: options.extraArgs, env: options.env });
+
+  let meta = {};
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
+  } catch {}
+
+  if (meta.forkedFrom && !meta.forkedFrom.startsWith('managed:') && !meta.forkedFrom.startsWith('Chromium:') && chromeInfo.channel === 'chromium' && !options.allowCrossChannelFork) {
+    throw new Error(
+      'Refusing to launch a profile forked from native Chrome on a custom Chromium binary ' +
+      '(Keychain/Safe Storage mismatch would wipe encrypted cookies). Launch with native Chrome or create a fresh managed profile.'
+    );
+  }
+
+  const effectiveProfileDir = options.profile?.profileDir || meta.profileDir || 'Default';
+  const effectiveExtraArgs = [...(options.extraArgs || [])];
+  if (chromeInfo.channel === 'chromium' && typeof meta.fingerprintSeed === 'number') {
+    effectiveExtraArgs.push(`--fingerprint=${meta.fingerprintSeed}`);
+    const tz = options.env?.TZ || meta.proxy?.timezone;
+    if (tz) effectiveExtraArgs.push(`--timezone=${tz}`);
+  }
+
+  const result = spawnChrome({
+    chromePath,
+    extensionPath,
+    userDataDir,
+    profileDir: effectiveProfileDir,
+    mode: 'managed',
+    dryRun: options.dryRun,
+    extraArgs: effectiveExtraArgs,
+    env: options.env,
+  });
   if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
   return annotate(result);
 }
@@ -557,14 +606,17 @@ async function closeChrome(options = {}) {
       
       if (shouldKill && session?.pid) {
         try {
-          process.kill(session.pid, 'SIGKILL');
-          delete state.managedSessions[userDataDir];
-          changed = true;
-          closedCount++;
+          process.kill(session.pid, 'SIGTERM');
+          const unlocked = await waitForUnlock(userDataDir, options.killTimeoutMs ?? 5000);
+          if (!unlocked && isPidAlive(session.pid)) {
+            process.kill(session.pid, 'SIGKILL');
+          }
         } catch {
           // already dead or not permitted
         }
-        // Clean stale lock files left behind by the killed process
+        delete state.managedSessions[userDataDir];
+        changed = true;
+        closedCount++;
         cleanStaleLocks(userDataDir);
       }
     }
@@ -585,6 +637,7 @@ module.exports = {
   defaultExtensionPath,
   chromeCandidates,
   findChromeBinary,
+  readLockPid,
   isProfileLocked,
   cleanStaleLocks,
   slugify,
