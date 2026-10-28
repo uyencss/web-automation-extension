@@ -152,5 +152,12 @@ export const fullControlHandlers = {
       attachedDebuggerTabs: Array.from(attachedTabs),
       websocketUrl: getCurrentGatewayUrl(),
     };
+  },
+
+  async reloadExtension() {
+    setTimeout(() => {
+      try { chrome.runtime.reload(); } catch {}
+    }, 50);
+    return { reloading: true };
   }
 };
