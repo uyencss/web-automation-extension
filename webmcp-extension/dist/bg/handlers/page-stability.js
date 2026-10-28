@@ -1,9 +1,9 @@
 // ============================================================
-// WebMCP — Page Stability Detection
+// WebMCP — Page Stability Detection (Self-contained Promise IIFE)
 //
 // Inspired by Browser-MCP's page stability waiting mechanism.
 // Ensures the page has settled (DOM stable, no pending navigations)
-// before proceeding with the next action.
+// before proceeding with the next action without polluting window globals.
 // ============================================================
 
 import { resolveTabId } from '../utils.js';
@@ -28,7 +28,6 @@ const POLL_INTERVAL_MS = 150;
  * @param {string}   [options.watchSelector=null]     — only observe this subtree (CSS selector)
  * @param {string[]} [options.ignoreSelectors=[]]     — exclude these subtrees from mutation count
  * @param {boolean}  [options.ignoreCharacterData=false] — ignore text-node mutations
- *                    (useful for video pages where timestamp ticks every 250ms)
  */
 export async function waitForPageStable(tabId, options = {}) {
   const {
@@ -41,141 +40,153 @@ export async function waitForPageStable(tabId, options = {}) {
   } = options;
 
   const startTime = Date.now();
-  const deadline = startTime + maxWaitMs;
+  const rawMaxWait = Number(maxWaitMs ?? DEFAULT_MAX_WAIT_MS);
+  const effectiveMaxWaitMs = Math.max(50, Math.min(Number.isFinite(rawMaxWait) && rawMaxWait > 0 ? rawMaxWait : DEFAULT_MAX_WAIT_MS, 25000));
+  const rawMinStable = Number(minStableMs ?? DEFAULT_MIN_STABLE_MS);
+  const effectiveMinStableMs = Math.max(0, Math.min(Number.isFinite(rawMinStable) ? rawMinStable : DEFAULT_MIN_STABLE_MS, effectiveMaxWaitMs));
+
+  const runStabilityCheck = async (timeLimitMs) => {
+    const expr = `
+      (() => {
+        return new Promise((resolve) => {
+          let mutationCount = 0;
+          let stableSince = Date.now();
+          const startedAt = Date.now();
+
+          const watchSelector = ${JSON.stringify(watchSelector)};
+          const root = watchSelector
+            ? (document.querySelector(watchSelector) || document.documentElement)
+            : document.documentElement;
+
+          if (!root) {
+            resolve({ stable: true, waited: 0, reason: 'no-root' });
+            return;
+          }
+
+          const ignoreSelectors = ${JSON.stringify(ignoreSelectors)};
+          const ignoredRoots = ignoreSelectors && ignoreSelectors.length
+            ? Array.from(document.querySelectorAll(ignoreSelectors.join(',')))
+            : [];
+          const ignoreCharacterData = ${JSON.stringify(ignoreCharacterData)};
+
+          function isIgnored(node) {
+            if (!ignoredRoots.length) return false;
+            return ignoredRoots.some((r) => r.contains(node));
+          }
+
+          let observer = null;
+          let pollTimer = null;
+          let timeoutTimer = null;
+
+          function finish(result) {
+            if (observer) {
+              observer.disconnect();
+              observer = null;
+            }
+            if (pollTimer) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+            }
+            if (timeoutTimer) {
+              clearTimeout(timeoutTimer);
+              timeoutTimer = null;
+            }
+            resolve(result);
+          }
+
+          try {
+            observer = new MutationObserver((mutations) => {
+              const meaningful = mutations.filter((m) => {
+                if (m.type === 'characterData') return !ignoreCharacterData;
+                if (m.type === 'childList') {
+                  if (isIgnored(m.target)) return false;
+                  return true;
+                }
+                if (m.type === 'attributes') {
+                  if (isIgnored(m.target)) return false;
+                  const tag = m.target.tagName?.toLowerCase();
+                  return tag !== 'script' && tag !== 'style' && tag !== 'link';
+                }
+                return false;
+              });
+              if (meaningful.length > 0) {
+                mutationCount += meaningful.length;
+              }
+            });
+
+            observer.observe(root, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              characterData: !ignoreCharacterData,
+              attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'disabled', 'value', 'src', 'href'],
+            });
+          } catch (e) {
+            finish({ stable: true, waited: Date.now() - startedAt, reason: 'observer-failed' });
+            return;
+          }
+
+          pollTimer = setInterval(() => {
+            const now = Date.now();
+            const isLoading = document.readyState === 'loading';
+            const isStable = mutationCount <= ${Number(maxMutations)} && !isLoading;
+            mutationCount = 0;
+
+            if (isStable) {
+              if (now - stableSince >= ${Number(effectiveMinStableMs)}) {
+                finish({ stable: true, waited: now - startedAt });
+              }
+            } else {
+              stableSince = now;
+            }
+          }, ${POLL_INTERVAL_MS});
+
+          timeoutTimer = setTimeout(() => {
+            finish({ stable: false, waited: Date.now() - startedAt, reason: 'timeout' });
+          }, ${Number(timeLimitMs)});
+        });
+      })()
+    `;
+
+    let swTimer = null;
+    try {
+      return await Promise.race([
+        evaluateInTab(tabId, expr, true),
+        new Promise((resolve) => {
+          swTimer = setTimeout(() => {
+            resolve({ stable: false, waited: Date.now() - startTime, reason: 'timeout' });
+          }, Number(timeLimitMs) + 250);
+          if (typeof swTimer?.unref === 'function') swTimer.unref();
+        }),
+      ]);
+    } finally {
+      if (swTimer) clearTimeout(swTimer);
+    }
+  };
 
   try {
-    // Install a MutationObserver and poll for stability
-    const setupResult = await evaluateInTab(tabId, `
-      (() => {
-        // Clean up any previous observer
-        if (window.__webmcp_stability_observer) {
-          window.__webmcp_stability_observer.disconnect();
-        }
-
-        window.__webmcp_mutation_count = 0;
-        window.__webmcp_last_mutation_time = Date.now();
-
-        // Resolve watch root: full document or a specific subtree
-        const watchSelector = ${JSON.stringify(watchSelector)};
-        const root = watchSelector
-          ? (document.querySelector(watchSelector) || document.documentElement)
-          : document.documentElement;
-
-        // Build a Set of ignored subtree roots for fast containment checks
-        const ignoreSelectors = ${JSON.stringify(ignoreSelectors)};
-        const ignoredRoots = ignoreSelectors.length
-          ? Array.from(document.querySelectorAll(ignoreSelectors.join(',')))
-          : [];
-
-        const ignoreCharacterData = ${JSON.stringify(ignoreCharacterData)};
-
-        function isIgnored(node) {
-          if (!ignoredRoots.length) return false;
-          return ignoredRoots.some(r => r.contains(node));
-        }
-
-        const observer = new MutationObserver((mutations) => {
-          const meaningful = mutations.filter(m => {
-            // Optional: skip text-node changes (e.g. video timestamp tick)
-            if (m.type === 'characterData') return !ignoreCharacterData;
-            if (m.type === 'childList') {
-              if (isIgnored(m.target)) return false;
-              return true;
-            }
-            if (m.type === 'attributes') {
-              if (isIgnored(m.target)) return false;
-              const tag = m.target.tagName?.toLowerCase();
-              return tag !== 'script' && tag !== 'style' && tag !== 'link';
-            }
-            return false;
-          });
-          if (meaningful.length > 0) {
-            window.__webmcp_mutation_count += meaningful.length;
-            window.__webmcp_last_mutation_time = Date.now();
-          }
-        });
-
-        observer.observe(root, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          characterData: !ignoreCharacterData,
-          attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'disabled', 'value', 'src', 'href'],
-        });
-
-        window.__webmcp_stability_observer = observer;
-        return { installed: true, watchRoot: root.tagName || 'document', ignoredCount: ignoredRoots.length };
-      })()
-    `);
-
-    if (!setupResult?.installed) {
-      // Could not install observer (e.g., chrome:// page), just do a short wait
-      await new Promise(r => setTimeout(r, Math.min(500, maxWaitMs)));
-      return { stable: true, waited: Date.now() - startTime, reason: 'fallback' };
+    const res = await runStabilityCheck(effectiveMaxWaitMs);
+    if (res && typeof res.stable === 'boolean') {
+      return res;
     }
-
-    // Poll for stability
-    let stableSince = Date.now();
-
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-
-      const status = await evaluateInTab(tabId, `
-        (() => {
-          const count = window.__webmcp_mutation_count || 0;
-          const lastMutation = window.__webmcp_last_mutation_time || 0;
-          const isLoading = document.readyState === 'loading';
-          // Reset counter for next poll
-          window.__webmcp_mutation_count = 0;
-          return { count, lastMutation, isLoading, now: Date.now() };
-        })()
-      `);
-
-      if (!status) break; // Tab may have navigated away
-
-      const isStable = status.count <= maxMutations && !status.isLoading;
-
-      if (isStable) {
-        const quietTime = Date.now() - stableSince;
-        if (quietTime >= minStableMs) {
-          // Clean up observer
-          try {
-            await evaluateInTab(tabId, `
-              (() => {
-                if (window.__webmcp_stability_observer) {
-                  window.__webmcp_stability_observer.disconnect();
-                  delete window.__webmcp_stability_observer;
-                  delete window.__webmcp_mutation_count;
-                  delete window.__webmcp_last_mutation_time;
-                }
-              })()
-            `);
-          } catch { /* ignore */ }
-
-          return { stable: true, waited: Date.now() - startTime };
+    return { stable: true, waited: Date.now() - startTime, reason: 'fallback' };
+  } catch (err) {
+    const isNavigation = /Execution context was destroyed|Cannot find context|Inspected target navigated/i.test(
+      String(err?.message || err)
+    );
+    if (isNavigation) {
+      await new Promise((r) => setTimeout(r, 150));
+      const remainingMs = Math.max(200, effectiveMaxWaitMs - (Date.now() - startTime));
+      try {
+        const retryRes = await runStabilityCheck(remainingMs);
+        if (retryRes && typeof retryRes.stable === 'boolean') {
+          return retryRes;
         }
-      } else {
-        stableSince = Date.now();
+        return { stable: true, waited: Date.now() - startTime, reason: 'fallback' };
+      } catch {
+        return { stable: true, waited: Date.now() - startTime, reason: 'error' };
       }
     }
-
-    // Timeout — clean up and return
-    try {
-      await evaluateInTab(tabId, `
-        (() => {
-          if (window.__webmcp_stability_observer) {
-            window.__webmcp_stability_observer.disconnect();
-            delete window.__webmcp_stability_observer;
-            delete window.__webmcp_mutation_count;
-            delete window.__webmcp_last_mutation_time;
-          }
-        })()
-      `);
-    } catch { /* ignore */ }
-
-    return { stable: false, waited: Date.now() - startTime, reason: 'timeout' };
-  } catch (err) {
-    // If tab navigated or was closed, just return
     return { stable: true, waited: Date.now() - startTime, reason: 'error' };
   }
 }

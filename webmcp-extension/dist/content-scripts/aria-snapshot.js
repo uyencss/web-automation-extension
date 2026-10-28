@@ -539,8 +539,47 @@
   }
 
   function scrollToElement(element) {
-    element.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+    if (typeof element.scrollIntoView === 'function') {
+      element.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+    }
     return getBounds(element);
+  }
+
+  function resolveHitPoint(element, bounds, human = true) {
+    const cx = bounds.centerX ?? Math.round(bounds.x + bounds.width / 2);
+    const cy = bounds.centerY ?? Math.round(bounds.y + bounds.height / 2);
+    const root = typeof element.getRootNode === 'function' ? element.getRootNode() : document;
+    const docOrRoot = typeof root?.elementFromPoint === 'function' ? root : document;
+    if (typeof docOrRoot?.elementFromPoint !== 'function') {
+      return {
+        x: cx,
+        y: cy,
+        hit: false,
+        syntheticOnly: true,
+      };
+    }
+
+    const hitAt = (px, py) => {
+      const h = docOrRoot.elementFromPoint(px, py);
+      if (!h) return false;
+      if (h === element || (typeof element.contains === 'function' && element.contains(h))) return true;
+      const labels = element.labels ? Array.from(element.labels) : [];
+      return labels.some((l) => l === h || (typeof l.contains === 'function' && l.contains(h)));
+    };
+
+    if (human && bounds.width > 4 && bounds.height > 4) {
+      const rx = Math.round(bounds.x + bounds.width * (0.35 + Math.random() * 0.3));
+      const ry = Math.round(bounds.y + bounds.height * (0.35 + Math.random() * 0.3));
+      if (hitAt(rx, ry)) {
+        return { x: rx, y: ry, hit: true };
+      }
+    }
+
+    if (hitAt(cx, cy)) {
+      return { x: cx, y: cy, hit: true };
+    }
+
+    return { x: cx, y: cy, hit: false };
   }
 
   function dispatchMouseEvent(element, type, bounds) {
@@ -586,6 +625,45 @@
     if (!actionability.ok) return { success: false, error: actionability.error };
 
     const bounds = scrollToElement(element);
+
+    if (action === 'resolve') {
+      if (params.prepareType) {
+        if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) {
+          return { success: false, error: 'Element is not text-editable.' };
+        }
+        if (typeof element.focus === 'function') element.focus();
+        if (params.clear !== false) {
+          if (typeof element.select === 'function') {
+            element.select();
+          } else if (element.isContentEditable) {
+            element.ownerDocument?.getSelection?.()?.selectAllChildren?.(element);
+          }
+        }
+        const root = typeof element.getRootNode === 'function' ? element.getRootNode() : document;
+        const active = root?.activeElement || document.activeElement;
+        const focused = Boolean(active && (active === element || (typeof element.contains === 'function' && element.contains(active))));
+        return {
+          success: true,
+          ref,
+          bounds,
+          focused,
+          isContentEditable: Boolean(element.isContentEditable),
+          element: element.localName || element.tagName?.toLowerCase(),
+        };
+      }
+
+      const point = resolveHitPoint(element, bounds, params.human !== false);
+      return {
+        success: true,
+        ref,
+        bounds,
+        pointX: point.x,
+        pointY: point.y,
+        hit: point.hit,
+        syntheticOnly: Boolean(point.syntheticOnly),
+        element: element.localName || element.tagName?.toLowerCase(),
+      };
+    }
 
     if (action === 'click') {
       dispatchMouseEvent(element, 'mouseover', bounds);

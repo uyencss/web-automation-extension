@@ -8,8 +8,10 @@
 // ============================================================
 
 import { resolveTabId } from '../utils.js';
-import { sendCDPCommand } from '../cdp-bridge.js';
+import { attachedTabs } from '../state.js';
+import { ensureDebuggerAttached, getFrameViewportOffset, sendCDPCommand } from '../cdp-bridge.js';
 import { waitForPageStable } from './page-stability.js';
+import { moveTo, clickAt, typeInto } from './cdp-input.js';
 
 // ── In-memory ref map per tab ──────────────────────────────
 // Maps ref string → { backendNodeId, tabId } for resolving refs to elements.
@@ -155,6 +157,29 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   refMaps.delete(tabId);
   contentRefMaps.delete(tabId);
 });
+
+async function tryPrepareDebuggerForInput(tabId, params = {}) {
+  if (params.human === false && params.trusted === false) return false;
+  const wasAttached = attachedTabs.has(tabId);
+  try {
+    await ensureDebuggerAttached(tabId);
+    if (!wasAttached) {
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveFastFrameOffset(tabId, frameId) {
+  if (!frameId || frameId === 0) return { x: 0, y: 0 };
+  try {
+    return await getFrameViewportOffset(tabId, { frameId });
+  } catch {
+    return null;
+  }
+}
 
 export const ariaSnapshotHandlers = {
   /**
@@ -431,12 +456,42 @@ export const ariaSnapshotHandlers = {
     if (!ref) throw new Error('Missing required param: ref');
     const tabId = await resolveTabId(params);
 
-    const fastResult = await runFastRefAction(tabId, 'click', params);
-    if (fastResult) {
-      return {
-        ...fastResult,
-        element: element || fastResult.element,
-      };
+    if (parseFastRef(tabId, ref, params)) {
+      const canUseCdp = await tryPrepareDebuggerForInput(tabId, params);
+      const resolved = await runFastRefAction(tabId, 'resolve', { ...params, human: params.human !== false });
+      if (canUseCdp && resolved?.hit) {
+        const offset = await resolveFastFrameOffset(tabId, resolved.frameId);
+        if (offset !== null) {
+          const pt = await clickAt(
+            tabId,
+            { pointX: resolved.pointX + offset.x, pointY: resolved.pointY + offset.y },
+            { button: params.button || 'left', clickCount: params.clickCount || 1, human: params.human !== false }
+          );
+          await waitForPageStable(tabId);
+          return {
+            tabId,
+            ref: params.ref,
+            frameId: resolved.frameId,
+            source: 'cdp',
+            trusted: true,
+            clicked: true,
+            element: element || resolved.element,
+            coordinates: { x: pt.x, y: pt.y },
+          };
+        }
+      }
+      const fastResult = await runFastRefAction(tabId, 'click', params);
+      if (fastResult) {
+        const isSynthetic = params.human === false && params.trusted === false;
+        return {
+          ...fastResult,
+          element: element || fastResult.element,
+          trusted: false,
+          reason: isSynthetic
+            ? 'synthetic'
+            : (resolved?.syntheticOnly ? 'synthetic-env' : (!resolved?.hit ? 'occluded' : (!canUseCdp ? 'debugger-unavailable' : 'frame-offset-failed'))),
+        };
+      }
     }
 
     const refMap = getRefMap(tabId);
@@ -481,14 +536,22 @@ export const ariaSnapshotHandlers = {
 
     // content quad: [x1,y1, x2,y2, x3,y3, x4,y4]
     const quad = model.content;
-    const centerX = Math.round((quad[0] + quad[2] + quad[4] + quad[6]) / 4);
-    const centerY = Math.round((quad[1] + quad[3] + quad[5] + quad[7]) / 4);
+    const minX = Math.min(quad[0], quad[2], quad[4], quad[6]);
+    const maxX = Math.max(quad[0], quad[2], quad[4], quad[6]);
+    const minY = Math.min(quad[1], quad[3], quad[5], quad[7]);
+    const maxY = Math.max(quad[1], quad[3], quad[5], quad[7]);
+    const box = {
+      x: minX,
+      y: minY,
+      width: Math.max(0, maxX - minX),
+      height: Math.max(0, maxY - minY),
+    };
 
-    // Dispatch click via CDP Input
-    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: centerX, y: centerY });
-    await new Promise(r => setTimeout(r, 30));
-    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: centerX, y: centerY, button: 'left', clickCount: 1 });
-    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: centerX, y: centerY, button: 'left', clickCount: 1 });
+    const pt = await clickAt(tabId, box, {
+      button: params.button || 'left',
+      clickCount: params.clickCount || 1,
+      human: params.human !== false,
+    });
 
     // Wait for page to stabilize
     await waitForPageStable(tabId);
@@ -501,9 +564,11 @@ export const ariaSnapshotHandlers = {
     return {
       tabId,
       ref,
+      source: 'cdp',
+      trusted: true,
       element: element || refEntry.name || refEntry.role,
       clicked: true,
-      coordinates: { x: centerX, y: centerY },
+      coordinates: { x: pt.x, y: pt.y },
     };
   },
 
@@ -516,8 +581,48 @@ export const ariaSnapshotHandlers = {
     if (text === undefined) throw new Error('Missing required param: text');
     const tabId = await resolveTabId(params);
 
-    const fastResult = await runFastRefAction(tabId, 'type', params);
-    if (fastResult) return fastResult;
+    if (parseFastRef(tabId, ref, params)) {
+      const canUseCdp = await tryPrepareDebuggerForInput(tabId, params);
+      const resolved = canUseCdp ? await runFastRefAction(tabId, 'resolve', { ...params, prepareType: true }) : null;
+      if (canUseCdp && resolved?.focused) {
+        await typeInto(tabId, text, {
+          human: params.human !== false,
+          clearEmptyWithBackspace: text === '' && params.clear !== false,
+        });
+        if (submit) {
+          await sendCDPCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyDown', key: 'Enter', code: 'Enter',
+            windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+            text: '\r', unmodifiedText: '\r',
+          });
+          await sendCDPCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyUp', key: 'Enter', code: 'Enter',
+            windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+          });
+        }
+        await waitForPageStable(tabId);
+        return {
+          tabId,
+          ref,
+          frameId: resolved.frameId,
+          source: 'cdp',
+          trusted: true,
+          typed: text.length,
+          submitted: Boolean(submit),
+        };
+      }
+      const fastResult = await runFastRefAction(tabId, 'type', params);
+      if (fastResult) {
+        const isSynthetic = params.human === false && params.trusted === false;
+        return {
+          ...fastResult,
+          trusted: false,
+          reason: isSynthetic
+            ? 'synthetic'
+            : ((resolved?.focused === false || resolved?.success === false) ? 'not-focused' : 'debugger-unavailable'),
+        };
+      }
+    }
 
     const refMap = getRefMap(tabId);
     const refEntry = refMap.get(ref);
@@ -537,43 +642,35 @@ export const ariaSnapshotHandlers = {
       throw new Error(`Could not resolve ref "${ref}" to a DOM element.`);
     }
 
-    // Focus the element
-    try {
-      await sendCDPCommand(tabId, 'DOM.focus', {
-        backendNodeId: refEntry.backendNodeId,
-      });
-    } catch {
+    // Focus and clear if requested
+    if (params.clear !== false) {
       await sendCDPCommand(tabId, 'Runtime.callFunctionOn', {
         objectId: object.objectId,
-        functionDeclaration: 'function() { this.focus(); }',
+        functionDeclaration: `function() {
+          this.focus();
+          if (typeof this.select === 'function') {
+            this.select();
+          } else if (this.isContentEditable) {
+            this.ownerDocument?.getSelection?.()?.selectAllChildren?.(this);
+          }
+        }`,
       });
+    } else {
+      try {
+        await sendCDPCommand(tabId, 'DOM.focus', {
+          backendNodeId: refEntry.backendNodeId,
+        });
+      } catch {
+        await sendCDPCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId: object.objectId,
+          functionDeclaration: 'function() { this.focus(); }',
+        });
+      }
     }
 
-    // Clear existing value and type new text
-    await sendCDPCommand(tabId, 'Runtime.callFunctionOn', {
-      objectId: object.objectId,
-      functionDeclaration: `function() {
-        if ('value' in this) {
-          const proto = this instanceof HTMLTextAreaElement
-            ? HTMLTextAreaElement.prototype
-            : HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-          if (setter) setter.call(this, '');
-          else this.value = '';
-        }
-      }`,
-    });
-
-    // Use Input.insertText for reliable typing
-    await sendCDPCommand(tabId, 'Input.insertText', { text });
-
-    // Fire events
-    await sendCDPCommand(tabId, 'Runtime.callFunctionOn', {
-      objectId: object.objectId,
-      functionDeclaration: `function() {
-        this.dispatchEvent(new Event('input', { bubbles: true }));
-        this.dispatchEvent(new Event('change', { bubbles: true }));
-      }`,
+    await typeInto(tabId, text, {
+      human: params.human !== false,
+      clearEmptyWithBackspace: text === '' && params.clear !== false,
     });
 
     // Submit if requested (press Enter)
@@ -581,6 +678,7 @@ export const ariaSnapshotHandlers = {
       await sendCDPCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyDown', key: 'Enter', code: 'Enter',
         windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+        text: '\r', unmodifiedText: '\r',
       });
       await sendCDPCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyUp', key: 'Enter', code: 'Enter',
@@ -599,8 +697,10 @@ export const ariaSnapshotHandlers = {
     return {
       tabId,
       ref,
+      source: 'cdp',
+      trusted: true,
       typed: text.length,
-      submitted: submit,
+      submitted: Boolean(submit),
     };
   },
 
@@ -612,8 +712,36 @@ export const ariaSnapshotHandlers = {
     if (!ref) throw new Error('Missing required param: ref');
     const tabId = await resolveTabId(params);
 
-    const fastResult = await runFastRefAction(tabId, 'hover', params);
-    if (fastResult) return fastResult;
+    if (parseFastRef(tabId, ref, params)) {
+      const canUseCdp = await tryPrepareDebuggerForInput(tabId, params);
+      const resolved = await runFastRefAction(tabId, 'resolve', { ...params, human: params.human !== false });
+      if (canUseCdp && resolved?.hit) {
+        const offset = await resolveFastFrameOffset(tabId, resolved.frameId);
+        if (offset !== null) {
+          const pt = await moveTo(tabId, resolved.pointX + offset.x, resolved.pointY + offset.y, { human: params.human !== false });
+          return {
+            tabId,
+            ref: params.ref,
+            frameId: resolved.frameId,
+            source: 'cdp',
+            trusted: true,
+            hovered: true,
+            coordinates: { x: pt.x, y: pt.y },
+          };
+        }
+      }
+      const fastResult = await runFastRefAction(tabId, 'hover', params);
+      if (fastResult) {
+        const isSynthetic = params.human === false && params.trusted === false;
+        return {
+          ...fastResult,
+          trusted: false,
+          reason: isSynthetic
+            ? 'synthetic'
+            : (resolved?.syntheticOnly ? 'synthetic-env' : (!resolved?.hit ? 'occluded' : (!canUseCdp ? 'debugger-unavailable' : 'frame-offset-failed'))),
+        };
+      }
+    }
 
     const refMap = getRefMap(tabId);
     const refEntry = refMap.get(ref);
@@ -642,11 +770,9 @@ export const ariaSnapshotHandlers = {
     const centerX = Math.round((quad[0] + quad[2] + quad[4] + quad[6]) / 4);
     const centerY = Math.round((quad[1] + quad[3] + quad[5] + quad[7]) / 4);
 
-    await sendCDPCommand(tabId, 'Input.dispatchMouseEvent', {
-      type: 'mouseMoved', x: centerX, y: centerY,
-    });
+    const pt = await moveTo(tabId, centerX, centerY, { human: params.human !== false });
 
-    return { tabId, ref, coordinates: { x: centerX, y: centerY } };
+    return { tabId, ref, source: 'cdp', trusted: true, coordinates: { x: pt.x, y: pt.y } };
   },
 
   /**

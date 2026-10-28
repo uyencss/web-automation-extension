@@ -166,6 +166,7 @@ function baseArgs({ extensionPath, userDataDir, profileDir }) {
     `--load-extension=${extensionPath}`,
     '--no-first-run',
     '--no-default-browser-check',
+    '--silent-debugger-extension-api',
   ];
   if (profileDir) args.push(`--profile-directory=${profileDir}`);
   return args;

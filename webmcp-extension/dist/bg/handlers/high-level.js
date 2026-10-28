@@ -3,11 +3,13 @@ import {
   evaluateInFrameMainWorld,
   evaluateInTab,
   formatFrameTarget,
+  getFrameViewportOffset,
   resolveFrameTarget,
 } from '../cdp-bridge.js';
 import { waitForPageStable } from './page-stability.js';
 import { DOM_DEEP_HELPERS } from './dom-helpers.js';
 import { buildTextExtractionExpr } from './page-text-extract.js';
+import { clickAt, typeInto } from './cdp-input.js';
 
 async function getEvaluator(tabId, frameSpec) {
   if (!frameSpec) {
@@ -38,23 +40,99 @@ export const highLevelHandlers = {
     if (!selector) throw new Error('Missing required param: selector');
     const tabId = await resolveTabId(params);
     const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
+    const isSyntheticRequested = params.human === false && params.trusted === false;
+    const human = params.human !== false;
 
     const result = await evaluate(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) return { success: false, error: 'Element not found: ${selector}' };
-        el.scrollIntoView({ behavior: 'instant', block: 'center' });
-        el.click();
+        if (!el) return { success: false, error: 'Element not found: ' + ${JSON.stringify(selector)} };
+        if (typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+        }
+        const rect = el.getBoundingClientRect();
+        const root = typeof el.getRootNode === 'function' ? el.getRootNode() : document;
+        const docOrRoot = typeof root?.elementFromPoint === 'function' ? root : document;
+        const tag = (el.localName || el.tagName || '').toLowerCase();
+        const text = (el.textContent || '').trim().slice(0, 200);
+
+        if (typeof docOrRoot?.elementFromPoint !== 'function') {
+          el.click();
+          return { success: true, trusted: false, reason: 'synthetic', tag, text };
+        }
+
+        const hitAt = (px, py) => {
+          const h = docOrRoot.elementFromPoint(px, py);
+          if (!h) return false;
+          if (h === el || (typeof el.contains === 'function' && el.contains(h))) return true;
+          const labels = el.labels ? Array.from(el.labels) : [];
+          return labels.some((l) => l === h || (typeof l.contains === 'function' && l.contains(h)));
+        };
+
+        let pointX = Math.round(rect.x + rect.width / 2);
+        let pointY = Math.round(rect.y + rect.height / 2);
+        let hit = false;
+
+        if (${human} && rect.width > 4 && rect.height > 4) {
+          const rx = Math.round(rect.x + rect.width * (0.35 + Math.random() * 0.3));
+          const ry = Math.round(rect.y + rect.height * (0.35 + Math.random() * 0.3));
+          if (hitAt(rx, ry)) {
+            pointX = rx;
+            pointY = ry;
+            hit = true;
+          }
+        }
+
+        if (!hit && hitAt(pointX, pointY)) {
+          hit = true;
+        }
+
+        if (!hit || ${isSyntheticRequested}) {
+          el.click();
+          return {
+            success: true,
+            trusted: false,
+            reason: !hit ? 'occluded' : 'synthetic',
+            tag,
+            text,
+          };
+        }
+
         return {
           success: true,
-          tag: el.tagName.toLowerCase(),
-          text: (el.textContent || '').trim().slice(0, 200),
+          hit: true,
+          pointX,
+          pointY,
+          tag,
+          text,
         };
       })()
     `);
-    // Auto-wait for page stability after click
+
+    if (!result?.success) {
+      return { tabId, ...framePayload(frameTarget), ...result };
+    }
+
+    if (!result.hit) {
+      await waitForPageStable(tabId, { minStableMs: 500, maxWaitMs: 3000 });
+      return { tabId, ...framePayload(frameTarget), ...result };
+    }
+
+    const offset = frameTarget ? await getFrameViewportOffset(tabId, frameTarget) : { x: 0, y: 0 };
+    await clickAt(
+      tabId,
+      { pointX: result.pointX + offset.x, pointY: result.pointY + offset.y },
+      { button: params.button || 'left', clickCount: params.clickCount || 1, human: params.human !== false }
+    );
     await waitForPageStable(tabId, { minStableMs: 500, maxWaitMs: 3000 });
-    return { tabId, ...framePayload(frameTarget), ...result };
+    return {
+      tabId,
+      ...framePayload(frameTarget),
+      success: true,
+      trusted: true,
+      tag: result.tag,
+      text: result.text,
+    };
   },
 
   async type(params) {
@@ -63,26 +141,68 @@ export const highLevelHandlers = {
     if (text === undefined) throw new Error('Missing required param: text');
     const tabId = await resolveTabId(params);
     const { evaluate, frameTarget } = await getEvaluator(tabId, params.frame);
+    const isSyntheticRequested = params.human === false && params.trusted === false;
+    const shouldClear = params.clear !== false;
 
     const result = await evaluate(`
       (() => {
         const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) return { success: false, error: 'Element not found: ${selector}' };
-        el.focus();
-        const proto = el instanceof HTMLTextAreaElement
-          ? HTMLTextAreaElement.prototype
-          : HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-        if (setter) setter.call(el, ${JSON.stringify(text)});
-        else el.value = ${JSON.stringify(text)};
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        return { success: true, tag: el.tagName.toLowerCase(), name: el.name || el.id };
+        if (!el) return { success: false, error: 'Element not found: ' + ${JSON.stringify(selector)} };
+        if (typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+        }
+        if (typeof el.focus === 'function') el.focus();
+        if (${shouldClear}) {
+          if (typeof el.select === 'function') {
+            el.select();
+          } else if (el.isContentEditable) {
+            el.ownerDocument?.getSelection?.()?.selectAllChildren?.(el);
+          }
+        }
+        const root = typeof el.getRootNode === 'function' ? el.getRootNode() : document;
+        const active = root?.activeElement || document.activeElement;
+        const focused = Boolean(active && (active === el || (typeof el.contains === 'function' && el.contains(active))));
+        const tag = (el.localName || el.tagName || '').toLowerCase();
+        const name = el.name || el.id || '';
+
+        if (!focused || ${isSyntheticRequested}) {
+          const proto = el instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+          if (setter) setter.call(el, ${JSON.stringify(text)});
+          else el.value = ${JSON.stringify(text)};
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { success: true, trusted: false, tag, name };
+        }
+
+        return { success: true, focused: true, tag, name };
       })()
     `);
-    // Auto-wait for page stability after type
+
+    if (!result?.success) {
+      return { tabId, ...framePayload(frameTarget), ...result };
+    }
+
+    if (!result.focused) {
+      await waitForPageStable(tabId, { minStableMs: 300, maxWaitMs: 2000 });
+      return { tabId, ...framePayload(frameTarget), ...result };
+    }
+
+    await typeInto(tabId, text, {
+      human: params.human !== false,
+      clearEmptyWithBackspace: text === '' && params.clear !== false,
+    });
     await waitForPageStable(tabId, { minStableMs: 300, maxWaitMs: 2000 });
-    return { tabId, ...framePayload(frameTarget), ...result };
+    return {
+      tabId,
+      ...framePayload(frameTarget),
+      success: true,
+      trusted: true,
+      tag: result.tag,
+      name: result.name,
+    };
   },
 
   async waitForSelector(params) {
