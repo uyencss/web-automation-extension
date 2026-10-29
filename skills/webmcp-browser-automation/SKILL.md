@@ -746,6 +746,8 @@ webmcp-browser cookies copy \
 - Extension background command registry:
   `webmcp-extension/dist/bg/handlers/index.js`
 - HTTP gateway for agents/scripts: `server/gateway_server.js`
+- Mobile Chrome CDP Bridge (Android `reup-xm13`, `note10` without extension):
+  `webmcp-mobile-cdp/{session,aria,primitives,catalog-map,dispatch}.mjs` (connects a single Browser WS to `/devtools/browser` via dynamic `adb forward tcp:0 localabstract:chrome_devtools_remote`, runs `aria-snapshot.js` inside `Page.createIsolatedWorld`, and dispatches all 67+ catalog commands to `ws://127.0.0.1:7865` as `profileId: "mobile-<device>"`).
 - Generated source-derived command and page-tool reference:
   `references/generated-tools.md`
 - Quick reference: `references/tool-reference-card.md`
