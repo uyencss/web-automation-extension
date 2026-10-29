@@ -122,7 +122,7 @@ test('DoD-E4: aria-snapshot.js runs in IsolatedWorld without chrome.runtime', ()
 
 test('DoD-LOC & Invariants: Total lines <= 500 and zero /json/new in codebase', () => {
   const cdpDir = path.join(ROOT_DIR, 'webmcp-mobile-cdp');
-  const files = ['session.mjs', 'aria.mjs', 'primitives.mjs', 'catalog-map.mjs', 'dispatch.mjs'];
+  const files = ['session.mjs', 'aria.mjs', 'primitives.mjs', 'catalog-map.mjs', 'dispatch.mjs', 'index.mjs'];
   let totalLines = 0;
 
   for (const f of files) {
@@ -134,7 +134,7 @@ test('DoD-LOC & Invariants: Total lines <= 500 and zero /json/new in codebase', 
     assert.ok(!content.includes('/json/new'), `File ${f} must have ZERO occurrences of /json/new`);
   }
 
-  assert.ok(totalLines <= 500, `Total LOC of all 5 files (${totalLines}) must be <= 500 lines`);
+  assert.ok(totalLines <= 500, `Total LOC of all ${files.length} files (${totalLines}) must be <= 500 lines`);
 });
 
 test('DoD-E1 & LMK: session.mjs tab lifecycle, single Browser WS and auto-recovery', async () => {
@@ -176,6 +176,71 @@ test('DoD-E1 & LMK: session.mjs tab lifecycle, single Browser WS and auto-recove
   });
   assert.equal(session.sessions.has('target-1'), false, 'Crashed target must be removed from sessions pool');
   assert.equal(session.sessions.has('session-1'), false, 'Crashed sessionId must be removed');
+
+  // Verify session.on('Target.attachedToTarget', ...) and session.off(...)
+  let attachedPayload = null;
+  const offListener = session.on('Target.attachedToTarget', (params) => {
+    attachedPayload = params;
+  });
+  session.triggerEvent({
+    method: 'Target.attachedToTarget',
+    params: { targetInfo: { targetId: 'target-test', type: 'page' }, sessionId: 'session-test' }
+  });
+  assert.ok(attachedPayload, 'session.on must catch Target.attachedToTarget');
+  assert.equal(attachedPayload.sessionId, 'session-test');
+  assert.equal(attachedPayload.targetInfo.targetId, 'target-test');
+
+  attachedPayload = null;
+  offListener();
+  session.triggerEvent({
+    method: 'Target.attachedToTarget',
+    params: { targetInfo: { targetId: 'target-test2', type: 'page' }, sessionId: 'session-test2' }
+  });
+  assert.equal(attachedPayload, null, 'session.off must unsubscribe listener');
+});
+
+test('DoD-META: .webmcp-mobile-meta.json merges ports[serial].localPort schema', async () => {
+  const os = await import('node:os');
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-meta-test-'));
+  const metaPath = path.join(tempDir, '.webmcp-mobile-meta.json');
+  try {
+    fs.writeFileSync(metaPath, JSON.stringify({
+      version: 1,
+      profiles: { 'pre-existing': { vendor: 'xiaomi' } },
+      ports: {
+        'existing-serial': {
+          localPort: 9222,
+          profileId: 'prof-old',
+          targetPackage: 'com.android.chrome',
+          updatedAt: new Date().toISOString()
+        }
+      }
+    }));
+
+    const mockAdbExec = () => Buffer.from('9225\n');
+    const s = createMobileSession({
+      serial: 'reup-xm13',
+      metaDir: tempDir,
+      profileId: 'xm13-p1',
+      targetPackage: 'com.chrome.beta',
+      adbExec: mockAdbExec,
+      fetchFn: async () => { throw new Error('stop before ws'); }
+    });
+    try { await s.init(); } catch {}
+
+    const metaAfter = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    assert.equal(metaAfter.version, 1);
+    assert.ok(metaAfter.profiles['pre-existing']);
+    assert.equal(metaAfter.ports['existing-serial'].localPort, 9222);
+    assert.equal(metaAfter.ports['reup-xm13'].localPort, 9225);
+    assert.equal(metaAfter.ports['reup-xm13'].profileId, 'xm13-p1');
+    assert.equal(metaAfter.ports['reup-xm13'].targetPackage, 'com.chrome.beta');
+    assert.equal(metaAfter.serial, 'reup-xm13');
+    assert.equal(metaAfter.port, 9225);
+    assert.ok(metaAfter.updatedAt);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('DoD-E4 & Iframe: aria.mjs IsolatedWorld cache and iframe offset normalization', async () => {
@@ -324,4 +389,45 @@ test('DoD-CATALOG: CATALOG_MAP contains all 67+ commands and dispatch handles ba
   assert.equal(batchRes.results.length, 3);
   assert.equal(batchRes.results[0].ok, true);
   assert.equal(batchRes.results[0].screenshot, 'dGVzdC1zY3JlZW5zaG90');
+});
+
+test('DoD-STEALTH: createMobileSession integrates @webmcp/fingerprint-kit/mobile and fails closed on error', async () => {
+  const sent = [];
+  const s = createMobileSession({
+    transport: {
+      send(payload, handleMsg) {
+        sent.push(payload);
+        setImmediate(() => {
+          handleMsg({ id: payload.id, result: { identifier: '1' } });
+          if (payload.method === 'Target.setAutoAttach' && !payload.sessionId) {
+            handleMsg({
+              method: 'Target.attachedToTarget',
+              params: {
+                sessionId: 'sid-stealth-1',
+                targetInfo: { targetId: 'page-1', type: 'page', url: 'https://example.com' },
+                waitingForDebugger: true
+              }
+            });
+          }
+        });
+      }
+    },
+    stealthConfig: { mode: 'mobile-blueprint', blueprintId: 'android_xm13_adreno740', seed: 12345 }
+  });
+
+  await s.init();
+  await new Promise(r => setTimeout(r, 20));
+  assert.ok(sent.some(m => m.method === 'Page.addScriptToEvaluateOnNewDocument' && m.sessionId === 'sid-stealth-1'));
+  assert.ok(sent.some(m => m.method === 'Emulation.setUserAgentOverride' && m.sessionId === 'sid-stealth-1'));
+  assert.ok(sent.some(m => m.method === 'Runtime.runIfWaitingForDebugger' && m.sessionId === 'sid-stealth-1'));
+
+  const failingSession = createMobileSession({
+    transport: {
+      send(payload, handleMsg) {
+        setImmediate(() => handleMsg({ id: payload.id, error: { message: 'Stealth Target.setAutoAttach failed' } }));
+      }
+    },
+    stealthConfig: { mode: 'mobile-blueprint', blueprintId: 'android_xm13_adreno740', seed: 999 }
+  });
+  await assert.rejects(() => failingSession.init(), /Stealth Target\.setAutoAttach failed/);
 });

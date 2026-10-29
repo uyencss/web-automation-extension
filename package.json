@@ -12,12 +12,14 @@
   "license": "MIT",
   "author": "uyencss",
   "bin": {
-    "webmcp-browser": "bin/webmcp-browser.mjs"
+    "webmcp-browser": "bin/webmcp-browser.mjs",
+    "webmcp-mobile-cdp": "bin/webmcp-mobile-cdp.mjs"
   },
   "exports": {
     ".": "./bin/webmcp-browser.mjs",
     "./catalog/command-catalog.js": "./catalog/command-catalog.js",
     "./chrome-launcher": "./chrome-launcher/index.js",
+    "./mobile-cdp": "./webmcp-mobile-cdp/index.mjs",
     "./package.json": "./package.json",
     "./profile-governor": "./profile-governor/lease-service.mjs",
     "./server/gateway_server.js": "./server/gateway_server.js",
@@ -36,8 +38,10 @@
     "server/mcp-tool-catalog.mjs",
     "catalog/command-catalog.js",
     "webmcp-extension/dist/",
+    "webmcp-mobile-cdp/",
     "skills/webmcp-browser-automation/",
     "skills/webmcp-chrome-launcher/",
+    "skills/webmcp-mobile-cdp/",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -66,6 +70,14 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ws": "^8.21.0"
+  },
+  "peerDependencies": {
+    "@webmcp/fingerprint-kit": ">=2.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@webmcp/fingerprint-kit": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=18"

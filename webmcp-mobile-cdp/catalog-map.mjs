@@ -1,12 +1,11 @@
 import { tap, scroll, swipe, key, type, screenshot, cookies, emulation, upload, evalInMain } from './primitives.mjs';
 import { getSnapshot, resolveRef } from './aria.mjs';
 
-function flattenFrames(node) {
-  const list = [];
-  if (!node?.frame) return list;
-  list.push({ frameId: node.frame.id, parentId: node.frame.parentId, url: node.frame.url, name: node.frame.name });
-  for (const child of node.childFrames || []) list.push(...flattenFrames(child));
-  return list;
+function flattenFrames(node, out = []) {
+  if (!node?.frame) return out;
+  out.push({ frameId: node.frame.id, parentId: node.frame.parentId, url: node.frame.url, name: node.frame.name });
+  for (const child of node.childFrames || []) flattenFrames(child, out);
+  return out;
 }
 
 export const CATALOG_MAP = {
