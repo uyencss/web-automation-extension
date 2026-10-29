@@ -2,7 +2,7 @@
 # (`@gyga-browser/webmcp-browser-automation-kit` — Thư Mục Độc Lập `webmcp-mobile-cdp/`)
 
 **Ngày ban hành**: `2026-10-29` (Bản nâng cấp v2 sau kiểm thử thực nghiệm trực tiếp trên **Xiaomi 13 `reup-xm13`** & thẩm định `/ponytail` bởi **Claude Opus 5.5 High**)  
-**Trạng thái**: `PROPOSED (EMPIRICALLY VERIFIED ON XIAOMI 13) — Đã kiểm chứng CDP trực tiếp trên Chrome Android 156.0.8078.47 & chốt thiết kế bởi Claude Opus 5.5 High`  
+**Trạng thái**: `IMPLEMENTED & VERIFIED ON XIAOMI 13 (100% UNIT + LIVE E2E PASS)`  
 **Mục tiêu**: `/Users/ttcenter/Desktop/VIBE_CODE/webmcp-automation-kit/packages/webmcp-browser-kit/webmcp-mobile-cdp/` (kèm 1 dòng root-cause guard tại `webmcp-extension/dist/content-scripts/aria-snapshot.js:736`)  
 **Công cụ kiểm định**: Live ADB + CDP Probe trên `reup-xm13` (`100.118.203.105:5555`) + Gemini 3.8 Flash High Subagents + Claude Opus 5.5 High (`claude-opus-4-7 --effort high`)  
 **Phạm vi**: Tự động hóa toàn diện trình duyệt Chrome trên điện thoại Android qua cầu nối ADB CDP (Zero-Extension), ánh xạ đầy đủ **67 lệnh** của WebMCP Browser Kit (`minimal` / `core` / `full`) thông qua kiến trúc **Unified Table-Driven Dispatcher (`≤ 500 LOC`)**.
@@ -216,17 +216,17 @@ Dưới đây là bảng đối chiếu 1–1 cho toàn bộ **67 lệnh** trong
 > **Hướng dẫn cho AI Agent khi triển khai**: Đánh dấu `[x]` vào từng ô ngay sau khi hoàn thành và chạy pass bài kiểm thử tương ứng.
 
 ### 4.1. DoD Cho Root-Cause Fix & Kiến Trúc `/ponytail` (`≤ 500 LOC`)
-- [ ] **DoD-E4 (`aria-snapshot.js:736` Root-Cause Guard)**: Sửa dòng 736 của `webmcp-extension/dist/content-scripts/aria-snapshot.js` thêm điều kiện `if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage?.addListener)` để chạy trực tiếp trong `Page.createIsolatedWorld` trên Android Chrome mà không cần shim bên ngoài.
-- [ ] **DoD-LOC (`≤ 500 LOC` Budget)**: Toàn bộ thư mục mới `packages/webmcp-browser-kit/webmcp-mobile-cdp/` (`session.mjs`, `aria.mjs`, `primitives.mjs`, `catalog-map.mjs`, `dispatch.mjs`) có tổng dung lượng `≤ 500 LOC` và không sửa đổi `server/gateway_server.js` hay `server/mcp_server.mjs`.
+- [x] **DoD-E4 (`aria-snapshot.js:736` Root-Cause Guard)**: Sửa dòng 736 của `webmcp-extension/dist/content-scripts/aria-snapshot.js` thêm điều kiện `if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage?.addListener)` để chạy trực tiếp trong `Page.createIsolatedWorld` trên Android Chrome mà không cần shim bên ngoài.
+- [x] **DoD-LOC (`≤ 500 LOC` Budget)**: Toàn bộ thư mục mới `packages/webmcp-browser-kit/webmcp-mobile-cdp/` (`session.mjs`, `aria.mjs`, `primitives.mjs`, `catalog-map.mjs`, `dispatch.mjs`) có tổng dung lượng `≤ 500 LOC` và không sửa đổi `server/gateway_server.js` hay `server/mcp_server.mjs`.
 
 ### 4.2. DoD Cho Kết Nối Single Browser WS & Quản Lý Tab (`E1`, `E6`)
-- [ ] **DoD-E1 (Single Browser WS & Zero `/json/new`)**: Kết nối duy nhất 1 WebSocket tới `/devtools/browser` (từ `GET /json/version`), bật `Target.setAutoAttach({ autoAttach: true, flatten: true })`; tuyệt đối **0 lần gọi `PUT /json/new`**, toàn bộ `newTab` / `closeTab` / `activateTab` / `listTabs` dùng `Target.{createTarget,closeTarget,activateTarget,getTargets}`.
-- [ ] **DoD-E6 (Dynamic Ephemeral Port)**: Dùng `adb -s <serial> forward tcp:0 localabstract:chrome_devtools_remote` để lấy cổng động không đụng độ khi chạy nhiều điện thoại, lưu vào `.webmcp-mobile-meta.json`.
-- [ ] **DoD-LMK (LMK & Navigation Lifecycle)**: Tự động làm mới `executionContextId` của `IsolatedWorld` khi nhận `Page.frameNavigated` / `Runtime.executionContextDestroyed`, và tự động dọn/khôi phục session khi nhận `Target.targetCrashed` / `Target.targetDestroyed`.
+- [x] **DoD-E1 (Single Browser WS & Zero `/json/new`)**: Kết nối duy nhất 1 WebSocket tới `/devtools/browser` (từ `GET /json/version`), bật `Target.setAutoAttach({ autoAttach: true, flatten: true })`; tuyệt đối **0 lần gọi `PUT /json/new`**, toàn bộ `newTab` / `closeTab` / `activateTab` / `listTabs` dùng `Target.{createTarget,closeTarget,activateTarget,getTargets}`.
+- [x] **DoD-E6 (Dynamic Ephemeral Port)**: Dùng `adb -s <serial> forward tcp:0 localabstract:chrome_devtools_remote` để lấy cổng động không đụng độ khi chạy nhiều điện thoại, lưu vào `.webmcp-mobile-meta.json`.
+- [x] **DoD-LMK (LMK & Navigation Lifecycle)**: Tự động làm mới `executionContextId` của `IsolatedWorld` khi nhận `Page.frameNavigated` / `Runtime.executionContextDestroyed`, và tự động dọn/khôi phục session khi nhận `Target.targetCrashed` / `Target.targetDestroyed`.
 
 ### 4.3. DoD Cho Các Primitives Tương Tác Chuẩn Xác Trên Android (`E2`, `E3`, `E5`)
-- [ ] **DoD-E2 (Tap = `Input.synthesizeTapGesture`)**: Mọi thao tác `clickByRef`, `dispatchClick`, `click` đều gọi `Input.synthesizeTapGesture({ x, y, gestureSourceType: 'touch', duration: 50, tapCount })`. Bài self-check xác nhận kích hoạt đầy đủ chuỗi `pointerdown -> touchstart -> mousedown -> mouseup -> click -> pointerup -> touchend` với `event.isTrusted === true`.
-- [ ] **DoD-E3 (Scroll Momentum & Exact Mode)**: `scroll` mặc định dùng `Input.synthesizeScrollGesture({ gestureSourceType: 'touch' })` và hỗ trợ `{ exact: true }` qua chuỗi `Input.dispatchTouchEvent`.
-- [ ] **DoD-E5 (File Upload Qua ADB Push + `DOM.setFileInputFiles`)**: Hỗ trợ đẩy tệp từ máy chủ sang `/data/local/tmp/webmcp-*`, gán vào `<input type="file">` qua `DOM.setFileInputFiles`, và dọn sạch tệp tạm sau khi hoàn tất.
-- [ ] **DoD-VIEWPORT (Visual Viewport & Iframe Offset)**: Cảnh báo khi `visualViewport.scale !== 1` trước khi tap, và chuẩn hóa tọa độ `ref` nằm trong iframe về hệ quy chiếu Root Frame ngay trong `aria.mjs`.
-- [ ] **DoD-TEST (Self-Check & Unit Tests)**: Mỗi primitive (`tap`, `scroll`, `type`, `key`, `screenshot`, `cookies`, `upload`, `aria.resolve`) có ít nhất 1 `assert` kiểm chứng trong `tests/mobile-cdp/mobile-cdp-primitives.test.mjs` và đạt 100% PASS.
+- [x] **DoD-E2 (Tap = `Input.synthesizeTapGesture`)**: Mọi thao tác `clickByRef`, `dispatchClick`, `click` đều gọi `Input.synthesizeTapGesture({ x, y, gestureSourceType: 'touch', duration: 50, tapCount })`. Bài self-check xác nhận kích hoạt đầy đủ chuỗi `pointerdown -> touchstart -> mousedown -> mouseup -> click -> pointerup -> touchend` với `event.isTrusted === true`.
+- [x] **DoD-E3 (Scroll Momentum & Exact Mode)**: `scroll` mặc định dùng `Input.synthesizeScrollGesture({ gestureSourceType: 'touch' })` và hỗ trợ `{ exact: true }` qua chuỗi `Input.dispatchTouchEvent`.
+- [x] **DoD-E5 (File Upload Qua ADB Push + `DOM.setFileInputFiles`)**: Hỗ trợ đẩy tệp từ máy chủ sang `/data/local/tmp/webmcp-*`, gán vào `<input type="file">` qua `DOM.setFileInputFiles`, và dọn sạch tệp tạm sau khi hoàn tất.
+- [x] **DoD-VIEWPORT (Visual Viewport & Iframe Offset)**: Cảnh báo khi `visualViewport.scale !== 1` trước khi tap, và chuẩn hóa tọa độ `ref` nằm trong iframe về hệ quy chiếu Root Frame ngay trong `aria.mjs`.
+- [x] **DoD-TEST (Self-Check & Unit Tests)**: Mỗi primitive (`tap`, `scroll`, `type`, `key`, `screenshot`, `cookies`, `upload`, `aria.resolve`) có ít nhất 1 `assert` kiểm chứng trong `tests/mobile-cdp/mobile-cdp-primitives.test.mjs` và đạt 100% PASS.

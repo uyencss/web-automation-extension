@@ -733,7 +733,7 @@
     return { success: false, error: `Unknown ref action: ${action}` };
   }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (typeof chrome !== 'undefined' && chrome?.runtime?.onMessage?.addListener) chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || message.type !== 'WEBMCP_FAST_ARIA') return false;
 
     try {
