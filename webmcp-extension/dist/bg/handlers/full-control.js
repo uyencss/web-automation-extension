@@ -56,8 +56,13 @@ export const fullControlHandlers = {
     if (sourcePort !== undefined) cdpParams.sourcePort = Number(sourcePort);
     if (partitionKey) {
       cdpParams.partitionKey = typeof partitionKey === 'string'
-        ? { topLevelSite: partitionKey, hasCrossSiteAncestors: false }
-        : { hasCrossSiteAncestors: false, ...partitionKey };
+        ? { topLevelSite: partitionKey, hasCrossSiteAncestor: false }
+        : {
+            topLevelSite: partitionKey.topLevelSite,
+            hasCrossSiteAncestor: Boolean(
+              partitionKey.hasCrossSiteAncestor ?? partitionKey.hasCrossSiteAncestors ?? false
+            ),
+          };
     }
 
     const result = await sendCDPCommand(tabId, 'Network.setCookie', cdpParams);

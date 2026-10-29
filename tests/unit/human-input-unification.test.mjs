@@ -396,7 +396,7 @@ test('T5: waitForPageStable runs in a single self-contained Promise expression w
   assert.equal(evaluatedExpression.includes('__webmcp_mutation_count'), false, 'Must not leak __webmcp_mutation_count onto window');
 });
 
-test('CHIPS partitionKey & getExtensionInfo: setCookie normalizes partitionKey with hasCrossSiteAncestors and getExtensionInfo returns websocketUrl', async () => {
+test('CHIPS partitionKey & getExtensionInfo: setCookie normalizes partitionKey with hasCrossSiteAncestor and getExtensionInfo returns websocketUrl', async () => {
   sentCDPCommands.length = 0;
   sendCommandImpl = (_target, method, _params, callback) => {
     if (method === 'Network.setCookie') {
@@ -420,7 +420,7 @@ test('CHIPS partitionKey & getExtensionInfo: setCookie normalizes partitionKey w
       name: 'chip_obj',
       value: '2',
       url: 'https://example.com',
-      partitionKey: { topLevelSite: 'https://top.example.com', hasCrossSiteAncestors: true },
+      partitionKey: { topLevelSite: 'https://top.example.com', hasCrossSiteAncestor: true },
     });
   } finally {
     sendCommandImpl = null;
@@ -430,11 +430,11 @@ test('CHIPS partitionKey & getExtensionInfo: setCookie normalizes partitionKey w
   assert.equal(setCookieCalls.length, 2);
   assert.deepEqual(setCookieCalls[0].params.partitionKey, {
     topLevelSite: 'https://top.example.com',
-    hasCrossSiteAncestors: false,
+    hasCrossSiteAncestor: false,
   });
   assert.deepEqual(setCookieCalls[1].params.partitionKey, {
     topLevelSite: 'https://top.example.com',
-    hasCrossSiteAncestors: true,
+    hasCrossSiteAncestor: true,
   });
 
   const extInfo = await fullControlHandlers.getExtensionInfo();
