@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -684,7 +684,7 @@ test('NFD normalization matches NFC name', () => {
   assert.equal(match.id, 'managed:scum');
 });
 
-test('scripts/backup_managed_profiles.sh completes within 8s under exclusive SQLite lock and passes integrity check', async () => {
+test('scripts/backup_managed_profiles.sh completes within 3.5s under exclusive SQLite lock (30s) and passes PRAGMA integrity_check', async () => {
   const root = tempRoot();
   const webmcpHome = path.join(root, '.webmcp');
   const scumDir = path.join(webmcpHome, 'managed-profiles', 'scum', 'Profile 9');
@@ -699,10 +699,10 @@ test('scripts/backup_managed_profiles.sh completes within 8s under exclusive SQL
     `import sqlite3; c = sqlite3.connect("${cookiesDb}"); c.execute("CREATE TABLE cookies (name TEXT, value TEXT)"); c.execute("INSERT INTO cookies VALUES ('session', '123')"); c.commit(); c.close()`,
   ]);
 
-  // Hold exclusive lock in background python process
+  // Hold exclusive lock in background python process for 30s
   const lockProc = spawn('python3', [
     '-c',
-    `import sqlite3, time; c = sqlite3.connect("${cookiesDb}"); c.execute("BEGIN EXCLUSIVE"); time.sleep(6)`,
+    `import sqlite3, time; c = sqlite3.connect("${cookiesDb}"); c.execute("BEGIN EXCLUSIVE"); time.sleep(30)`,
   ]);
 
   // Give python 200ms to acquire lock
@@ -722,20 +722,22 @@ test('scripts/backup_managed_profiles.sh completes within 8s under exclusive SQL
   try { lockProc.kill(); } catch {}
 
   assert.equal(res.status, 0, `stderr: ${res.stderr}\nstdout: ${res.stdout}`);
-  assert.ok(elapsedMs < 8000, `Backup took too long: ${elapsedMs}ms`);
+  assert.ok(elapsedMs < 3500, `Backup took too long: ${elapsedMs}ms (expected < 3500ms even with 30s lock)`);
 
   const today = new Date().toISOString().slice(0, 10);
-  const backupCookies = path.join(webmcpHome, 'backups', 'profiles', today, 'scum', 'Profile 9', 'Cookies');
+  const todayDir = path.join(webmcpHome, 'backups', 'profiles', today);
+  const backupCookies = path.join(todayDir, 'scum', 'Profile 9', 'Cookies');
   assert.ok(existsSync(backupCookies), 'Backup Cookies file exists');
+  assert.ok(existsSync(path.join(todayDir, '.verified_ok')), '.verified_ok marker exists');
 
-  // Verify permissions (0600)
-  const stat = readFileSync(backupCookies);
-  assert.ok(stat.length > 0);
+  // Verify file permissions (0600 file, 0700 dir)
+  assert.equal(statSync(backupCookies).mode & 0o777, 0o600);
+  assert.equal(statSync(todayDir).mode & 0o777, 0o700);
 
-  // Verify PRAGMA quick_check passes on backup
+  // Verify PRAGMA integrity_check passes on backup
   const verifyRes = spawnSync('python3', [
     '-c',
-    `import sqlite3, sys; c = sqlite3.connect("${backupCookies}"); cur = c.cursor(); cur.execute("PRAGMA quick_check"); res = cur.fetchone()[0]; sys.exit(0 if res == "ok" else 1)`,
+    `import sqlite3, sys; c = sqlite3.connect("${backupCookies}"); cur = c.cursor(); cur.execute("PRAGMA integrity_check"); res = cur.fetchone()[0]; sys.exit(0 if res == "ok" else 1)`,
   ]);
   assert.equal(verifyRes.status, 0);
 });

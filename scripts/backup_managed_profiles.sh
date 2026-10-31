@@ -51,34 +51,48 @@ if [ ! -d "$PROFILES_DIR" ]; then
 fi
 
 TOTAL_PROFILES=0
+SUCCEEDED_PROFILES=0
 BACKUP_ERRORS=0
 
-# Helper python script to safely backup a SQLite database with hard timeout & fallback
+# Helper python script to safely backup a SQLite database with hard 1.5s timeout & fallback
 backup_cookie_db() {
   local src="$1"
   local dst="$2"
 
   python3 - "$src" "$dst" << 'PY'
-import sys, os, shutil, sqlite3
+import sys, os, shutil, sqlite3, subprocess
 
 src, dst = sys.argv[1], sys.argv[2]
 os.makedirs(os.path.dirname(dst), exist_ok=True)
 
-# Attempt 1: Online backup via Read-Only URI with short busy timeout
+# Attempt 1: Online backup in a child process with a hard 1.5s OS wall-clock timeout
 backup_ok = False
+online_code = f"""
+import sys, os, sqlite3
+uri = f"file:{{os.path.abspath('{src}')}}?mode=ro"
+sconn = sqlite3.connect(uri, uri=True, timeout=0.5)
+dconn = sqlite3.connect('{dst}')
+sconn.backup(dconn)
+dconn.close()
+sconn.close()
+"""
 try:
-    uri = f"file:{os.path.abspath(src)}?mode=ro"
-    sconn = sqlite3.connect(uri, uri=True, timeout=2.0)
-    dconn = sqlite3.connect(dst)
-    sconn.backup(dconn)
-    dconn.close()
-    sconn.close()
-    backup_ok = True
+    p = subprocess.run(
+        [sys.executable, "-c", online_code],
+        capture_output=True,
+        text=True,
+        timeout=1.5
+    )
+    if p.returncode == 0:
+        backup_ok = True
+    else:
+        sys.stderr.write(f"WARN: Online backup failed (rc={p.returncode}): {p.stderr.strip()}; falling back to snapshot copy.\n")
+except subprocess.TimeoutExpired:
+    sys.stderr.write("WARN: Online backup timed out after 1.5s (exclusive lock held); falling back to snapshot copy.\n")
 except Exception as e:
-    backup_ok = False
-    sys.stderr.write(f"WARN: SQLite online backup failed ({e}); falling back to atomic snapshot copy.\n")
+    sys.stderr.write(f"WARN: Online backup invocation failed: {e}; falling back to snapshot copy.\n")
 
-# Attempt 2: If locked or failed, atomic copy of DB + WAL + Journal
+# Attempt 2: Atomic snapshot copy of DB + WAL + Journal + SHM
 if not backup_ok:
     try:
         shutil.copy2(src, dst)
@@ -86,32 +100,38 @@ if not backup_ok:
             aux = src + ext
             if os.path.exists(aux):
                 shutil.copy2(aux, dst + ext)
-        # Checkpoint WAL into main DB copy if possible
+        # Checkpoint WAL into the destination DB file
         try:
             conn = sqlite3.connect(dst, timeout=2.0)
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             conn.close()
         except Exception:
             pass
+        # Clean up auxiliary WAL/journal files from destination after checkpoint
+        for ext in ['-wal', '-journal', '-shm']:
+            aux_dst = dst + ext
+            if os.path.exists(aux_dst):
+                try: os.remove(aux_dst)
+                except Exception: pass
     except Exception as e:
-        sys.stderr.write(f"ERROR: Atomic snapshot copy failed: {e}\n")
+        sys.stderr.write(f"ERROR: Snapshot copy failed: {e}\n")
         sys.exit(1)
 
-# Integrity verification
+# Integrity verification via PRAGMA integrity_check
 try:
     conn = sqlite3.connect(dst, timeout=3.0)
     cur = conn.cursor()
-    cur.execute("PRAGMA quick_check")
-    res = cur.fetchone()
-    if not res or res[0] != "ok":
-        sys.stderr.write(f"ERROR: Integrity check failed on {dst}: {res}\n")
+    cur.execute("PRAGMA integrity_check")
+    rows = cur.fetchall()
+    if not rows or rows[0][0] != "ok":
+        sys.stderr.write(f"ERROR: PRAGMA integrity_check failed on {dst}: {rows}\n")
         sys.exit(2)
     cur.execute("SELECT count(*) FROM cookies")
     count = cur.fetchone()[0]
     conn.close()
     sys.stdout.write(f"OK:{count}\n")
 except Exception as e:
-    sys.stderr.write(f"ERROR: DB verification error on {dst}: {e}\n")
+    sys.stderr.write(f"ERROR: Integrity verification exception on {dst}: {e}\n")
     sys.exit(3)
 PY
 }
@@ -171,6 +191,8 @@ for pdir in "$PROFILES_DIR"/*; do
     echo "  ⚠️ Profile $pname backup encountered errors; will not overwrite existing good backup." >&2
     BACKUP_ERRORS=$((BACKUP_ERRORS + 1))
     rm -rf "$pstage"
+  else
+    SUCCEEDED_PROFILES=$((SUCCEEDED_PROFILES + 1))
   fi
 done
 
@@ -185,20 +207,28 @@ for pstage in "$STAGING_DIR"/*; do
   mv "$pstage" "$FINAL_DIR/$pname"
 done
 
-# Mark this day's backup verified if at least one profile succeeded and no critical abort
-touch "$FINAL_DIR/.verified_ok"
-chmod 600 "$FINAL_DIR/.verified_ok"
+# Check exit condition: require zero errors and at least one succeeded profile
+if [ "$BACKUP_ERRORS" -eq 0 ] && [ "$SUCCEEDED_PROFILES" -gt 0 ]; then
+  # Mark this day's backup verified
+  touch "$FINAL_DIR/.verified_ok"
+  chmod 600 "$FINAL_DIR/.verified_ok"
 
-# 5. Retention: keep rolling 7 latest days with .verified_ok
-echo "[INFO] Pruning old backups (keeping rolling 7 latest verified days) in $BACKUP_ROOT..."
-VERIFIED_COUNT=0
-for d in $(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -r); do
-  [ -f "$d/.verified_ok" ] || continue
-  VERIFIED_COUNT=$((VERIFIED_COUNT + 1))
-  if [ "$VERIFIED_COUNT" -gt 7 ]; then
-    echo "  -> Removing old verified backup: $d"
-    rm -rf "$d"
-  fi
-done
-
-echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') Profile backup completed. Total: $TOTAL_PROFILES, Errors: $BACKUP_ERRORS"
+  # 5. Retention: keep rolling 7 latest days with .verified_ok
+  echo "[INFO] Pruning old backups (keeping rolling 7 latest verified days) in $BACKUP_ROOT..."
+  VERIFIED_COUNT=0
+  for d in $(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -r); do
+    [ -f "$d/.verified_ok" ] || continue
+    VERIFIED_COUNT=$((VERIFIED_COUNT + 1))
+    if [ "$VERIFIED_COUNT" -gt 7 ]; then
+      echo "  -> Removing old verified backup: $d"
+      rm -rf "$d"
+    fi
+  done
+  echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') Profile backup completed successfully. Total: $TOTAL_PROFILES, Succeeded: $SUCCEEDED_PROFILES, Errors: 0"
+  exit 0
+else
+  echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') Profile backup completed with failures. Total: $TOTAL_PROFILES, Succeeded: $SUCCEEDED_PROFILES, Errors: $BACKUP_ERRORS" >&2
+  rm -f "$FINAL_DIR/.verified_ok" 2>/dev/null || true
+  rmdir "$FINAL_DIR" 2>/dev/null || true
+  exit 1
+fi
