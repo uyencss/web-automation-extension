@@ -418,3 +418,70 @@ test('webmcp profiles fork via CLI creates managed fork with metadata', () => {
   assert.equal(payload.forkedFrom, 'managed:source-for-cli');
   assert.equal(existsSync(path.join(payload.userDataDir, '.webmcp-meta.json')), true);
 });
+
+test('webmcp launch --name reuses existing managed profile by display name and blocks rogue profile creation in bound project', () => {
+  const root = tempRoot();
+  const scumDir = path.join(root, 'managed-profiles', 'scum');
+  mkdirSync(path.join(scumDir, 'Profile 9'), { recursive: true });
+  writeFileSync(
+    path.join(scumDir, '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Lười Cày (Scum)', profileDir: 'Profile 9', createdAt: 1 }, null, 2),
+  );
+
+  // 1. Launching by Vietnamese display name must reuse existing 'scum' directory and 'Profile 9', NOT create 'l-i-c-y-scum'
+  const resReuse = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--name',
+    'Lười Cày (Scum)',
+    '--dry-run',
+    '--json',
+  ], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+    },
+  });
+
+  assert.equal(resReuse.status, 0, resReuse.stderr);
+  const payloadReuse = JSON.parse(resReuse.stdout);
+  assert.equal(payloadReuse.userDataDir, scumDir);
+  assert.equal(payloadReuse.profileDir, 'Profile 9');
+  assert.equal(existsSync(path.join(root, 'managed-profiles', 'l-i-c-y-scum')), false);
+
+  // 2. Inside a project directory with config/fb_growth_config.json, launching a rogue unknown profile name without --create is blocked
+  const projRoot = path.join(root, 'bound-project');
+  mkdirSync(path.join(projRoot, 'config'), { recursive: true });
+  writeFileSync(
+    path.join(projRoot, 'config', 'fb_growth_config.json'),
+    JSON.stringify({
+      channel_id: 'scum-story-reup',
+      managed_profile_id: 'managed:scum',
+      chrome_profile: 'Profile 9',
+      channel_display_name: 'Lười Cày (Scum)',
+    }, null, 2),
+  );
+
+  const resBlocked = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--name',
+    'Rogue Blank Profile',
+    '--dry-run',
+    '--json',
+  ], {
+    cwd: projRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+    },
+  });
+
+  assert.equal(resBlocked.status, 1);
+  assert.match(resBlocked.stderr, /\[GUARDRAIL BLOCKED\]/);
+});

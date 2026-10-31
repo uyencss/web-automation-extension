@@ -148,6 +148,30 @@ function nextManagedProfileDir(name, managedProfilesDir = MANAGED_PROFILES_DIR) 
   return dir;
 }
 
+function findExistingManagedProfileDir(name, managedProfilesDir = MANAGED_PROFILES_DIR) {
+  const raw = String(name || '').trim();
+  if (!raw || raw.toLowerCase() === 'webmcp') return null;
+  const qLower = raw.toLowerCase();
+  const qStripped = qLower.startsWith('managed:') ? qLower.slice('managed:'.length) : qLower;
+  let entries = [];
+  try {
+    entries = fs.readdirSync(managedProfilesDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(managedProfilesDir, entry.name);
+    if (entry.name.toLowerCase() === qStripped) return dir;
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, '.webmcp-meta.json'), 'utf8'));
+      const mName = String(meta.name || '').trim().toLowerCase();
+      if (mName && mName === qLower) return dir;
+    } catch {}
+  }
+  return null;
+}
+
 function createManagedProfile(name, options = {}) {
   const managedProfilesDir = options.managedProfilesDir || MANAGED_PROFILES_DIR;
   ensureDirs({ managedProfilesDir, sessionsFile: options.sessionsFile });
@@ -480,7 +504,12 @@ async function launchChrome(options = {}) {
     return annotate(result);
   }
 
+  const existingManagedDir = (!options.profile?.userDataDir && !options.forceCreate)
+    ? findExistingManagedProfileDir(options.newProfileName, managedProfilesDir)
+    : null;
+
   const userDataDir = options.profile?.userDataDir ||
+    existingManagedDir ||
     (options.dryRun
       ? nextManagedProfileDir(options.newProfileName, managedProfilesDir)
       : createManagedProfile(options.newProfileName, { managedProfilesDir, sessionsFile }));
@@ -503,6 +532,21 @@ async function launchChrome(options = {}) {
     effectiveExtraArgs.push(`--fingerprint=${meta.fingerprintSeed}`);
     const tz = options.env?.TZ || meta.proxy?.timezone;
     if (tz) effectiveExtraArgs.push(`--timezone=${tz}`);
+  }
+
+  if (hasLiveManagedSession(userDataDir, sessionsFile)) {
+    const spawnRes = spawnChrome({
+      chromePath,
+      extensionPath,
+      userDataDir,
+      profileDir: effectiveProfileDir,
+      mode: 'managed',
+      attached: true,
+      dryRun: options.dryRun,
+      extraArgs: effectiveExtraArgs,
+      env: options.env,
+    });
+    return annotate(spawnRes);
   }
 
   const result = spawnChrome({
@@ -642,6 +686,7 @@ module.exports = {
   cleanStaleLocks,
   slugify,
   nextManagedProfileDir,
+  findExistingManagedProfileDir,
   createManagedProfile,
   baseArgs,
   mergeChromeLaunchArgs,

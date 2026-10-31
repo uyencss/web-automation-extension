@@ -172,9 +172,34 @@ function listAllProfiles(options = {}) {
   };
 }
 
+function findManagedProfileByNameOrId(query, options = {}) {
+  const raw = String(query || '').trim();
+  if (!raw) return null;
+  const qLower = raw.toLowerCase();
+  const qStripped = qLower.startsWith('managed:') ? qLower.slice('managed:'.length) : qLower;
+  const managed = readManagedProfiles(options);
+  return (
+    managed.find((p) => p.id.toLowerCase() === qLower) ||
+    managed.find((p) => path.basename(p.userDataDir).toLowerCase() === qStripped) ||
+    managed.find((p) => String(p.name || '').trim().toLowerCase() === qLower) ||
+    managed.find((p) => String(p.name || '').trim().toLowerCase().includes(qLower) && qLower.length >= 4) ||
+    null
+  );
+}
+
 function findProfileById(profileId, options = {}) {
+  const raw = String(profileId || '').trim();
+  if (!raw) return null;
+  const qLower = raw.toLowerCase();
   const profiles = listAllProfiles(options);
-  return [...profiles.managed, ...profiles.existing].find((profile) => profile.id === profileId) || null;
+  const all = [...profiles.managed, ...profiles.existing];
+  return (
+    all.find((profile) => profile.id === raw) ||
+    all.find((profile) => profile.id.toLowerCase() === qLower) ||
+    findManagedProfileByNameOrId(raw, options) ||
+    all.find((profile) => String(profile.name || '').trim().toLowerCase() === qLower) ||
+    null
+  );
 }
 
 module.exports = {
@@ -183,5 +208,6 @@ module.exports = {
   readBrowserProfiles,
   readManagedProfiles,
   listAllProfiles,
+  findManagedProfileByNameOrId,
   findProfileById,
 };
