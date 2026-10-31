@@ -16,6 +16,7 @@ const {
   loadSessions,
   saveSessions,
 } = require('./sessions');
+const { norm, findManagedProfileByNameOrId } = require('./profiles');
 
 const WEBMCP_EXTENSION_ID = 'lbodkmkjbcemodklopcfdmpjomdoapae';
 const WEBMCP_EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/webmcp-tools-provider/${WEBMCP_EXTENSION_ID}`;
@@ -162,54 +163,8 @@ function nextManagedProfileDir(name, managedProfilesDir = MANAGED_PROFILES_DIR) 
   return dir;
 }
 
-function norm(s) {
-  return String(s || '').normalize('NFC').trim().toLowerCase();
-}
-
 function findExistingManagedProfileDir(name, managedProfilesDir = MANAGED_PROFILES_DIR) {
-  const raw = String(name || '').trim();
-  if (!raw) return null;
-  const qNorm = norm(raw);
-  const qStripped = qNorm.startsWith('managed:') ? qNorm.slice('managed:'.length) : qNorm;
-  let entries = [];
-  try {
-    entries = fs.readdirSync(managedProfilesDir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-
-  // 1. Direct match on directory name
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const dirNorm = norm(entry.name);
-    if (dirNorm === qStripped || dirNorm === qNorm) {
-      return path.join(managedProfilesDir, entry.name);
-    }
-  }
-
-  // 2. Exact match on meta.name
-  const nameMatches = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const dir = path.join(managedProfilesDir, entry.name);
-    try {
-      const meta = JSON.parse(fs.readFileSync(path.join(dir, '.webmcp-meta.json'), 'utf8'));
-      const mNameNorm = norm(meta.name);
-      if (mNameNorm && mNameNorm === qNorm) {
-        nameMatches.push(dir);
-      }
-    } catch {}
-  }
-
-  if (nameMatches.length > 1) {
-    const err = new Error(
-      `Ambiguous managed profile name "${name}" matches multiple profiles: ${nameMatches.map((d) => `managed:${path.basename(d)}`).join(', ')}`
-    );
-    err.code = 'AMBIGUOUS_PROFILE';
-    throw err;
-  }
-
-  return nameMatches[0] || null;
+  return findManagedProfileByNameOrId(name, { managedProfilesDir })?.userDataDir || null;
 }
 
 function createManagedProfile(name, options = {}) {
@@ -679,11 +634,9 @@ async function closeChrome(options = {}) {
       targetsToClose.push(d.profileId);
     }
   } else if (profileId) {
-    // Find matching profileId by exact id, or by email, or by name
+    const q = norm(profileId);
     for (const d of connectedDetails) {
-      if (d.profileId.toLowerCase() === profileId.toLowerCase() ||
-          (d.email && d.email.toLowerCase() === profileId.toLowerCase()) ||
-          (d.name && d.name.toLowerCase() === profileId.toLowerCase())) {
+      if (norm(d.profileId) === q || (d.email && norm(d.email) === q) || (d.name && norm(d.name) === q)) {
         targetsToClose.push(d.profileId);
         break;
       }
@@ -731,9 +684,8 @@ async function closeChrome(options = {}) {
           meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
         } catch {}
         
-        if (profileId.toLowerCase() === `managed:${baseName}`.toLowerCase() ||
-            profileId.toLowerCase() === baseName.toLowerCase() ||
-            (meta.name && meta.name.toLowerCase() === profileId.toLowerCase())) {
+        const q = norm(profileId);
+        if (q === norm(`managed:${baseName}`) || q === norm(baseName) || (meta.name && q === norm(meta.name))) {
           shouldKill = true;
         }
       }
