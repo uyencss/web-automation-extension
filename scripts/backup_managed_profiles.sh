@@ -2,6 +2,10 @@
 # ==============================================================================
 # backup_managed_profiles.sh — Production Hardened Daily Backup for Managed Profiles
 # ==============================================================================
+# Usage:
+#   Backup:  ./backup_managed_profiles.sh
+#   Restore: ./backup_managed_profiles.sh --restore <profile_name> [YYYY-MM-DD] [--force-disaster-recovery]
+#
 # Crontab setup:
 #   30 3 * * * /home/hieunq/.webmcp/scripts/backup_managed_profiles.sh >> /home/hieunq/.webmcp/backups/backup_cron.log 2>&1
 #
@@ -11,6 +15,12 @@
 #   OS Secret Service / GNOME Keyring / macOS Keychain ('Chrome Safe Storage').
 #   Always restore 'Local State' alongside 'Cookies' onto the SAME host/user profile
 #   so decrypted sessions remain valid without prompting re-login.
+#
+# ANTI-REPLAY-ATTACK GUARD (DISK DISASTER RECOVERY ONLY):
+#   Restoring stale backup cookies onto a healthy, live profile will trigger
+#   Facebook Session Replay Attack (Checkpoint 956) and LevelDB state desync.
+#   Restore is strictly reserved for disk disaster recovery (missing/corrupt DB).
+#   Use --force-disaster-recovery only if intentional recovery from disk/file loss.
 # ==============================================================================
 set -euo pipefail
 umask 077
@@ -18,13 +28,207 @@ umask 077
 WEBMCP_HOME="${WEBMCP_HOME:-$HOME/.webmcp}"
 BACKUP_ROOT="${WEBMCP_BACKUP_ROOT:-$WEBMCP_HOME/backups/profiles}"
 PROFILES_DIR="${WEBMCP_MANAGED_PROFILES_DIR:-$WEBMCP_HOME/managed-profiles}"
-TODAY="$(date +%Y-%m-%d)"
+TODAY="${WEBMCP_BACKUP_DATE:-$(date +%Y-%m-%d)}"
 STAGING_DIR="$BACKUP_ROOT/.staging_${TODAY}_$$"
 FINAL_DIR="$BACKUP_ROOT/$TODAY"
 LOCK_FILE="$BACKUP_ROOT/.backup.lock"
 
 mkdir -p "$BACKUP_ROOT"
 chmod 700 "$BACKUP_ROOT"
+
+# ── Restore Mode: Anti-Replay-Attack Guard (Disaster Recovery Only) ───────────
+if [ "${1:-}" = "--restore" ]; then
+  shift
+  if [ $# -lt 1 ]; then
+    echo "Usage: $0 --restore <profile_name> [YYYY-MM-DD] [--force-disaster-recovery]" >&2
+    exit 1
+  fi
+
+  PROFILE_NAME=""
+  RESTORE_DATE=""
+  FORCE_DISASTER_RECOVERY=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force-disaster-recovery)
+        FORCE_DISASTER_RECOVERY=1
+        ;;
+      [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+        RESTORE_DATE="$1"
+        ;;
+      *)
+        if [ -z "$PROFILE_NAME" ]; then
+          PROFILE_NAME="$1"
+        else
+          echo "[ERROR] Unknown or unexpected argument: $1" >&2
+          echo "Usage: $0 --restore <profile_name> [YYYY-MM-DD] [--force-disaster-recovery]" >&2
+          exit 1
+        fi
+        ;;
+    esac
+    shift
+  done
+
+  if [ -z "$PROFILE_NAME" ]; then
+    echo "[ERROR] Missing <profile_name> for --restore." >&2
+    exit 1
+  fi
+
+  # Concurrency lock
+  exec 9>"$LOCK_FILE"
+  if ! python3 -c '
+import fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(1)
+' 2>/dev/null; then
+    echo "[WARN] Another backup/restore process is holding the lock ($LOCK_FILE). Please retry shortly." >&2
+    exit 1
+  fi
+
+  # Resolve backup date if not specified: pick the newest verified backup for this profile
+  if [ -z "$RESTORE_DATE" ]; then
+    if [ -d "$BACKUP_ROOT" ]; then
+      while IFS= read -r day_dir; do
+        [ -n "$day_dir" ] || continue
+        day="$(basename "$day_dir")"
+        if [ -d "$day_dir/$PROFILE_NAME" ] && { [ -f "$day_dir/$PROFILE_NAME/.verified_ok" ] || [ -f "$day_dir/.verified_ok" ]; }; then
+          RESTORE_DATE="$day"
+          break
+        fi
+      done < <(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name ".*" | sort -r)
+    fi
+  fi
+
+  if [ -z "$RESTORE_DATE" ]; then
+    echo "[ERROR] No verified backup found for profile '$PROFILE_NAME' in $BACKUP_ROOT." >&2
+    exit 1
+  fi
+
+  BACKUP_SRC="$BACKUP_ROOT/$RESTORE_DATE/$PROFILE_NAME"
+  if [ ! -d "$BACKUP_SRC" ]; then
+    echo "[ERROR] Backup directory for profile '$PROFILE_NAME' at date '$RESTORE_DATE' not found in $BACKUP_ROOT." >&2
+    exit 1
+  fi
+
+  TARGET_PROFILE_DIR="$PROFILES_DIR/$PROFILE_NAME"
+
+  # ── Pre-Restore Guardrails (1. Live Process Lock + 2. Anti-Replay-Attack) ───
+  if [ -d "$TARGET_PROFILE_DIR" ]; then
+    guard_rc=0
+    python3 - "$TARGET_PROFILE_DIR" "$BACKUP_SRC" "$FORCE_DISASTER_RECOVERY" << 'PY' || guard_rc=$?
+import os, sqlite3, sys
+
+target_dir, backup_src, force = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+# 1. Live Process Lock Check (SingletonLock ->hostname-pid)
+lock_file = os.path.join(target_dir, "SingletonLock")
+if os.path.lexists(lock_file):
+    try:
+        raw = os.readlink(lock_file) if os.path.islink(lock_file) else open(lock_file, errors="ignore").read().strip()
+        pid = int(raw.rsplit("-", 1)[-1])
+        if pid > 0:
+            os.kill(pid, 0)
+            sys.exit(2)
+    except PermissionError:
+        sys.exit(2)
+    except Exception:
+        pass
+
+if force:
+    sys.exit(0)
+
+# 2. Anti-Replay-Attack Guard: block overwriting intact live DB that has >= session timestamps
+def fb_cookie_metric(db_path):
+    if not os.path.isfile(db_path) or os.path.getsize(db_path) == 0:
+        return False, None
+    try:
+        with sqlite3.connect(f"file:{os.path.abspath(db_path)}?mode=ro", uri=True, timeout=2.0) as conn:
+            if (conn.execute("PRAGMA integrity_check").fetchone() or [""])[0] != "ok":
+                return False, None
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(cookies)").fetchall()}
+            if not cols:
+                return True, None
+            hcol = "host_key" if "host_key" in cols else ("host" if "host" in cols else None)
+            where = "name IN ('xs', 'c_user')" + (f" AND {hcol} LIKE '%facebook.com%'" if hcol else "")
+            parts = [f"COALESCE(MAX({c}), 0)" for c in ("last_access_utc", "creation_utc") if c in cols] or ["1"]
+            row = conn.execute(f"SELECT COUNT(*), {', '.join(parts)} FROM cookies WHERE {where}").fetchone()
+            return True, (max(row[1:]) if row[0] > 0 else None)
+    except Exception:
+        return False, None
+
+for root, _, files in os.walk(target_dir):
+    if "Cookies" not in files:
+        continue
+    live_cookie = os.path.join(root, "Cookies")
+    ok, live_ts = fb_cookie_metric(live_cookie)
+    if not ok or live_ts is None:
+        continue
+    rel = os.path.relpath(live_cookie, target_dir)
+    b_cookie = os.path.join(backup_src, rel)
+    if not os.path.isfile(b_cookie):
+        b_cookie = next((os.path.join(r, "Cookies") for r, _, fs in os.walk(backup_src) if "Cookies" in fs), "")
+    _, b_ts = fb_cookie_metric(b_cookie)
+    if live_ts >= (b_ts or 0):
+        sys.exit(3)
+PY
+    if [ "$guard_rc" -eq 2 ]; then
+      echo "[GUARDRAIL BLOCKED] Chrome is currently running for profile '$PROFILE_NAME'. Close Chrome first before restoring." >&2
+      exit 1
+    elif [ "$guard_rc" -eq 3 ]; then
+      echo "[GUARDRAIL BLOCKED] Live Cookies DB for '$PROFILE_NAME' is intact (PRAGMA integrity_check=ok) and contains newer/active session tokens than backup. Overwriting a healthy profile with stale backup cookies risks triggering Facebook Session Replay Attack (Checkpoint 956) and LevelDB state desync! If you lost your web session, re-login directly in the browser window. Only pass --force-disaster-recovery if recovering from disk/file loss." >&2
+      exit 1
+    fi
+  fi
+
+  # ── Restore Execution ───────────────────────────────────────────────────────
+  mkdir -p "$TARGET_PROFILE_DIR"
+  chmod 700 "$TARGET_PROFILE_DIR"
+
+  # Clean up old WAL/journal/shm files in destination to avoid WAL conflict
+  find "$TARGET_PROFILE_DIR" -type f \( -name "*-wal" -o -name "*-journal" -o -name "*-shm" \) -exec rm -f {} +
+
+  # 1. Root configs: .webmcp-meta.json and Local State
+  if [ -f "$BACKUP_SRC/.webmcp-meta.json" ]; then
+    cp -p "$BACKUP_SRC/.webmcp-meta.json" "$TARGET_PROFILE_DIR/.webmcp-meta.json.tmp.$$"
+    chmod 600 "$TARGET_PROFILE_DIR/.webmcp-meta.json.tmp.$$"
+    mv "$TARGET_PROFILE_DIR/.webmcp-meta.json.tmp.$$" "$TARGET_PROFILE_DIR/.webmcp-meta.json"
+  fi
+  if [ -f "$BACKUP_SRC/Local State" ]; then
+    cp -p "$BACKUP_SRC/Local State" "$TARGET_PROFILE_DIR/Local State.tmp.$$"
+    chmod 600 "$TARGET_PROFILE_DIR/Local State.tmp.$$"
+    mv "$TARGET_PROFILE_DIR/Local State.tmp.$$" "$TARGET_PROFILE_DIR/Local State"
+  fi
+
+  # 2. Preferences files
+  while IFS= read -r -d '' pref_file; do
+    rel_path="${pref_file#$BACKUP_SRC/}"
+    dest_file="$TARGET_PROFILE_DIR/$rel_path"
+    dest_dir="$(dirname "$dest_file")"
+    mkdir -p "$dest_dir"
+    chmod 700 "$dest_dir"
+    cp -p "$pref_file" "${dest_file}.tmp.$$"
+    chmod 600 "${dest_file}.tmp.$$"
+    mv "${dest_file}.tmp.$$" "$dest_file"
+  done < <(find "$BACKUP_SRC" -maxdepth 3 -type f -name 'Preferences' -print0)
+
+  # 3. Cookies SQLite databases
+  while IFS= read -r -d '' cookie_file; do
+    rel_path="${cookie_file#$BACKUP_SRC/}"
+    dest_file="$TARGET_PROFILE_DIR/$rel_path"
+    dest_dir="$(dirname "$dest_file")"
+    mkdir -p "$dest_dir"
+    chmod 700 "$dest_dir"
+    cp -p "$cookie_file" "${dest_file}.tmp.$$"
+    chmod 600 "${dest_file}.tmp.$$"
+    mv "${dest_file}.tmp.$$" "$dest_file"
+    rm -f "${dest_file}-wal" "${dest_file}-journal" "${dest_file}-shm"
+  done < <(find "$BACKUP_SRC" -maxdepth 3 -type f -name 'Cookies' -print0)
+
+  echo "[INFO] Successfully restored profile '$PROFILE_NAME' from backup '$RESTORE_DATE' to '$TARGET_PROFILE_DIR'."
+  exit 0
+fi
 
 # ── 1. Non-blocking concurrency lock across macOS & Linux ───────────────────
 exec 9>"$LOCK_FILE"

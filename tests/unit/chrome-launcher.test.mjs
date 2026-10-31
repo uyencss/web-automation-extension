@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, chmodSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, unlinkSync, chmodSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -724,7 +724,7 @@ test('scripts/backup_managed_profiles.sh completes within 3.5s under exclusive S
   assert.equal(res.status, 0, `stderr: ${res.stderr}\nstdout: ${res.stdout}`);
   assert.ok(elapsedMs < 3500, `Backup took too long: ${elapsedMs}ms (expected < 3500ms even with 30s lock)`);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = spawnSync('date', ['+%Y-%m-%d'], { encoding: 'utf8' }).stdout.trim();
   const todayDir = path.join(webmcpHome, 'backups', 'profiles', today);
   const backupCookies = path.join(todayDir, 'scum', 'Profile 9', 'Cookies');
   assert.ok(existsSync(backupCookies), 'Backup Cookies file exists');
@@ -876,4 +876,114 @@ test('backup_managed_profiles.sh supports single quotes in profile paths and pru
   // Verify that total date folders in backupRoot is pruned to <= 7
   const remainingFolders = readdirSync(backupRoot, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.staging'));
   assert.ok(remainingFolders.length <= 7, `Expected <= 7 backup folders, got ${remainingFolders.length}`);
+});
+
+test('backup_managed_profiles.sh --restore guards against session replay attack and recovers on corruption/loss', () => {
+  const root = tempRoot();
+  const webmcpHome = path.join(root, '.webmcp');
+  const profilesDir = path.join(webmcpHome, 'managed-profiles');
+  const scumProfile = path.join(profilesDir, 'scum', 'Profile 9');
+  mkdirSync(scumProfile, { recursive: true });
+
+  const metaPath = path.join(profilesDir, 'scum', '.webmcp-meta.json');
+  writeFileSync(metaPath, JSON.stringify({ name: 'scum', profileDir: 'Profile 9' }));
+  const localStatePath = path.join(profilesDir, 'scum', 'Local State');
+  writeFileSync(localStatePath, '{"os_crypt":{"encrypted_key":"test-key"}}');
+
+  const liveCookies = path.join(scumProfile, 'Cookies');
+  // Initialize with facebook session cookie at timestamp 100
+  spawnSync('python3', [
+    '-c',
+    `import sqlite3
+c = sqlite3.connect("${liveCookies}")
+c.execute("CREATE TABLE cookies (creation_utc INTEGER, host_key TEXT, name TEXT, value TEXT, last_access_utc INTEGER)")
+c.execute("INSERT INTO cookies VALUES (100, '.facebook.com', 'c_user', '10001', 100)")
+c.commit()
+c.close()`,
+  ]);
+
+  const scriptPath = path.join(ROOT, 'scripts', 'backup_managed_profiles.sh');
+
+  // 1. Run backup to create a verified backup with timestamp 100
+  const backupRes = spawnSync(scriptPath, [], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(backupRes.status, 0, `Initial backup failed: ${backupRes.stderr}`);
+
+  // 2. Scenario 1: Live DB is healthy and updated with newer last_access_utc (200)
+  spawnSync('python3', [
+    '-c',
+    `import sqlite3
+c = sqlite3.connect("${liveCookies}")
+c.execute("UPDATE cookies SET last_access_utc = 200 WHERE name = 'c_user'")
+c.commit()
+c.close()`,
+  ]);
+
+  // Attempting restore must be BLOCKED by Anti-Replay-Attack guardrail
+  const blockedRes = spawnSync(scriptPath, ['--restore', 'scum'], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(blockedRes.status, 1, 'Expected restore to fail closed on healthy newer session');
+  assert.match(blockedRes.stderr, /\[GUARDRAIL BLOCKED\].*Session Replay Attack/);
+
+  // 3. Scenario 2: Live Cookies file is corrupted with arbitrary bytes
+  writeFileSync(liveCookies, 'corrupted database bytes header');
+  const restoreCorruptedRes = spawnSync(scriptPath, ['--restore', 'scum'], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(restoreCorruptedRes.status, 0, `Expected restore to succeed on corrupt DB: ${restoreCorruptedRes.stderr}`);
+
+  // Verify that Cookies file is restored and intact with original backup timestamp (100)
+  const verifyRes = spawnSync('python3', [
+    '-c',
+    `import sqlite3, sys
+c = sqlite3.connect("${liveCookies}")
+cur = c.cursor()
+cur.execute("PRAGMA integrity_check")
+if cur.fetchone()[0] != 'ok':
+    sys.exit(1)
+cur.execute("SELECT last_access_utc FROM cookies WHERE name = 'c_user'")
+row = cur.fetchone()
+sys.exit(0 if row and row[0] == 100 else 2)`,
+  ]);
+  assert.equal(verifyRes.status, 0, 'Restored Cookies DB should be intact with backup timestamp 100');
+
+  // 4. Scenario 3: Live Cookies file is deleted (disk loss)
+  unlinkSync(liveCookies);
+  const restoreDeletedRes = spawnSync(scriptPath, ['--restore', 'scum'], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(restoreDeletedRes.status, 0, `Expected restore to succeed on deleted DB: ${restoreDeletedRes.stderr}`);
+  assert.ok(existsSync(liveCookies), 'Cookies file should exist after restore');
+
+  // 5. Scenario 4: Live process lock check
+  const lockSymlink = path.join(profilesDir, 'scum', 'SingletonLock');
+  symlinkSync(`test-host-${process.pid}`, lockSymlink);
+  const lockBlockedRes = spawnSync(scriptPath, ['--restore', 'scum', '--force-disaster-recovery'], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(lockBlockedRes.status, 1, 'Expected restore to block when Chrome process is alive');
+  assert.match(lockBlockedRes.stderr, /\[GUARDRAIL BLOCKED\] Chrome is currently running for profile 'scum'/);
+  unlinkSync(lockSymlink);
+
+  // 6. Scenario 5: --force-disaster-recovery succeeds even when live DB has newer tokens
+  spawnSync('python3', [
+    '-c',
+    `import sqlite3
+c = sqlite3.connect("${liveCookies}")
+c.execute("UPDATE cookies SET last_access_utc = 300 WHERE name = 'c_user'")
+c.commit()
+c.close()`,
+  ]);
+  const forceRes = spawnSync(scriptPath, ['--restore', 'scum', '--force-disaster-recovery'], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(forceRes.status, 0, `--force-disaster-recovery should succeed: ${forceRes.stderr}`);
 });
