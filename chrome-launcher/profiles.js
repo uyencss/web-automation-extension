@@ -172,34 +172,61 @@ function listAllProfiles(options = {}) {
   };
 }
 
-function findManagedProfileByNameOrId(query, options = {}) {
+function norm(s) {
+  return String(s || '').normalize('NFC').trim().toLowerCase();
+}
+
+function findManagedProfilesMatching(query, options = {}) {
   const raw = String(query || '').trim();
-  if (!raw) return null;
-  const qLower = raw.toLowerCase();
-  const qStripped = qLower.startsWith('managed:') ? qLower.slice('managed:'.length) : qLower;
+  if (!raw) return [];
+  const qNorm = norm(raw);
+  const qStripped = qNorm.startsWith('managed:') ? qNorm.slice('managed:'.length) : qNorm;
   const managed = readManagedProfiles(options);
-  return (
-    managed.find((p) => p.id.toLowerCase() === qLower) ||
-    managed.find((p) => path.basename(p.userDataDir).toLowerCase() === qStripped) ||
-    managed.find((p) => String(p.name || '').trim().toLowerCase() === qLower) ||
-    managed.find((p) => String(p.name || '').trim().toLowerCase().includes(qLower) && qLower.length >= 4) ||
-    null
-  );
+
+  // 1. Exact match on id or dirName
+  const idOrDirMatches = managed.filter((p) => {
+    const pIdNorm = norm(p.id);
+    const pDirNorm = norm(path.basename(p.userDataDir));
+    return pIdNorm === qNorm || pDirNorm === qStripped || pDirNorm === qNorm;
+  });
+  if (idOrDirMatches.length > 0) {
+    return idOrDirMatches;
+  }
+
+  // 2. Exact match on displayName (meta.name)
+  const nameMatches = managed.filter((p) => norm(p.name) === qNorm);
+  return nameMatches;
+}
+
+function findManagedProfileByNameOrId(query, options = {}) {
+  const matches = findManagedProfilesMatching(query, options);
+  if (matches.length > 1) {
+    const err = new Error(
+      `Ambiguous managed profile name "${query}" matches multiple profiles: ${matches.map((m) => m.id).join(', ')}`
+    );
+    err.code = 'AMBIGUOUS_PROFILE';
+    throw err;
+  }
+  return matches[0] || null;
 }
 
 function findProfileById(profileId, options = {}) {
   const raw = String(profileId || '').trim();
   if (!raw) return null;
-  const qLower = raw.toLowerCase();
+  const qNorm = norm(raw);
   const profiles = listAllProfiles(options);
   const all = [...profiles.managed, ...profiles.existing];
-  return (
-    all.find((profile) => profile.id === raw) ||
-    all.find((profile) => profile.id.toLowerCase() === qLower) ||
-    findManagedProfileByNameOrId(raw, options) ||
-    all.find((profile) => String(profile.name || '').trim().toLowerCase() === qLower) ||
-    null
-  );
+
+  // 1. Direct exact id match
+  const exactId = all.find((p) => p.id === raw || norm(p.id) === qNorm);
+  if (exactId) return exactId;
+
+  // 2. Exact match in managed profiles by dirName or displayName
+  const managedMatch = findManagedProfileByNameOrId(raw, options);
+  if (managedMatch) return managedMatch;
+
+  // 3. Exact match on existing profile name
+  return all.find((p) => norm(p.name) === qNorm) || null;
 }
 
 module.exports = {
@@ -208,6 +235,8 @@ module.exports = {
   readBrowserProfiles,
   readManagedProfiles,
   listAllProfiles,
+  norm,
+  findManagedProfilesMatching,
   findManagedProfileByNameOrId,
   findProfileById,
 };

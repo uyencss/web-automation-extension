@@ -485,3 +485,257 @@ test('webmcp launch --name reuses existing managed profile by display name and b
   assert.equal(resBlocked.status, 1);
   assert.match(resBlocked.stderr, /\[GUARDRAIL BLOCKED\]/);
 });
+
+test('findManagedProfileByNameOrId throws AMBIGUOUS_PROFILE when 2 managed profiles share display name', () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  mkdirSync(path.join(managedProfilesDir, 'scum-a'), { recursive: true });
+  mkdirSync(path.join(managedProfilesDir, 'scum-b'), { recursive: true });
+  writeFileSync(
+    path.join(managedProfilesDir, 'scum-a', '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Lười Cày (Scum)', profileDir: 'Default', createdAt: 1 }),
+  );
+  writeFileSync(
+    path.join(managedProfilesDir, 'scum-b', '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Lười Cày (Scum)', profileDir: 'Default', createdAt: 2 }),
+  );
+
+  assert.throws(
+    () => launcher.findManagedProfileByNameOrId('Lười Cày (Scum)', { managedProfilesDir }),
+    (err) => {
+      assert.equal(err.code, 'AMBIGUOUS_PROFILE');
+      assert.match(err.message, /Ambiguous managed profile name/);
+      assert.match(err.message, /managed:scum-a/);
+      assert.match(err.message, /managed:scum-b/);
+      return true;
+    },
+  );
+});
+
+test('discoverProjectProfileHint finds config from deep subdirectories and blocks rogue launch unless bypassed', () => {
+  const root = tempRoot();
+  const projRoot = path.join(root, 'my-channel');
+  const deepSub = path.join(projRoot, 'output', '2026-10-31', 'runs', 'ep_01');
+  mkdirSync(deepSub, { recursive: true });
+  mkdirSync(path.join(projRoot, 'config'), { recursive: true });
+  mkdirSync(path.join(root, 'managed-profiles', 'scum', 'Profile 9'), { recursive: true });
+  writeFileSync(
+    path.join(root, 'managed-profiles', 'scum', '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Lười Cày (Scum)', profileDir: 'Profile 9', createdAt: 1 }),
+  );
+  writeFileSync(
+    path.join(projRoot, 'config', 'fb_growth_config.json'),
+    JSON.stringify({
+      channel_id: 'scum-story-reup',
+      managed_profile_id: 'managed:scum',
+      chrome_profile: 'Profile 9',
+    }),
+  );
+
+  // 1. Invoked from deep directory: blocked even with --create
+  const resBlocked = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--name',
+    'Rogue Profile',
+    '--create',
+    '--dry-run',
+  ], {
+    cwd: deepSub,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+      WEBMCP_HOME: root,
+    },
+  });
+  assert.equal(resBlocked.status, 1);
+  assert.match(resBlocked.stderr, /\[GUARDRAIL BLOCKED\]/);
+
+  // 2. Invoked with WEBMCP_ALLOW_PROFILE_CREATE=1: permitted
+  const resPermitted = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--name',
+    'Rogue Profile',
+    '--dry-run',
+    '--json',
+  ], {
+    cwd: deepSub,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+      WEBMCP_HOME: root,
+      WEBMCP_ALLOW_PROFILE_CREATE: '1',
+    },
+  });
+  assert.equal(resPermitted.status, 0, resPermitted.stderr);
+});
+
+test('mismatched --profile-id is blocked inside bound project', () => {
+  const root = tempRoot();
+  const projRoot = path.join(root, 'bound-proj');
+  mkdirSync(path.join(projRoot, 'config'), { recursive: true });
+  mkdirSync(path.join(root, 'managed-profiles', 'scum', 'Profile 9'), { recursive: true });
+  mkdirSync(path.join(root, 'managed-profiles', 'game-di', 'Profile 5'), { recursive: true });
+  writeFileSync(
+    path.join(root, 'managed-profiles', 'scum', '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Lười Cày', profileDir: 'Profile 9', createdAt: 1 }),
+  );
+  writeFileSync(
+    path.join(root, 'managed-profiles', 'game-di', '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Game Dị', profileDir: 'Profile 5', createdAt: 2 }),
+  );
+  writeFileSync(
+    path.join(projRoot, 'config', 'fb_growth_config.json'),
+    JSON.stringify({
+      channel_id: 'scum-story-reup',
+      managed_profile_id: 'managed:scum',
+      chrome_profile: 'Profile 9',
+    }),
+  );
+
+  const resMismatched = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--profile-id',
+    'managed:game-di',
+    '--dry-run',
+  ], {
+    cwd: projRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+      WEBMCP_HOME: root,
+    },
+  });
+  assert.equal(resMismatched.status, 1);
+  assert.match(resMismatched.stderr, /Refusing to launch mismatched --profile-id "managed:game-di"/);
+});
+
+test('naked launch fails closed if bound managed profile missing on disk', () => {
+  const root = tempRoot();
+  const projRoot = path.join(root, 'bound-proj');
+  mkdirSync(path.join(projRoot, 'config'), { recursive: true });
+  writeFileSync(
+    path.join(projRoot, 'config', 'fb_growth_config.json'),
+    JSON.stringify({
+      channel_id: 'scum-story-reup',
+      managed_profile_id: 'managed:scum',
+      chrome_profile: 'Profile 9',
+    }),
+  );
+
+  const resNaked = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--dry-run',
+  ], {
+    cwd: projRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+      WEBMCP_HOME: root,
+    },
+  });
+  assert.equal(resNaked.status, 1);
+  assert.match(resNaked.stderr, /but this managed profile does not exist on disk/);
+});
+
+test('naked launch outside project twice reuses webmcp without creating webmcp-2', () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  mkdirSync(managedProfilesDir, { recursive: true });
+
+  const dir1 = launcher.findExistingManagedProfileDir('webmcp', managedProfilesDir);
+  assert.equal(dir1, null);
+
+  const created1 = launcher.createManagedProfile('webmcp', { managedProfilesDir });
+  assert.equal(path.basename(created1), 'webmcp');
+
+  const dir2 = launcher.findExistingManagedProfileDir('webmcp', managedProfilesDir);
+  assert.equal(dir2, created1);
+
+  // Even if nextManagedProfileDir is queried, findExistingManagedProfileDir protects against webmcp-2
+  assert.equal(existsSync(path.join(managedProfilesDir, 'webmcp-2')), false);
+});
+
+test('NFD normalization matches NFC name', () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const scumDir = path.join(managedProfilesDir, 'scum');
+  mkdirSync(scumDir, { recursive: true });
+  const nfcName = 'Lười Cày (Scum)'.normalize('NFC');
+  writeFileSync(
+    path.join(scumDir, '.webmcp-meta.json'),
+    JSON.stringify({ name: nfcName, profileDir: 'Profile 9' }),
+  );
+
+  const nfdQuery = 'Lười Cày (Scum)'.normalize('NFD');
+  const match = launcher.findManagedProfileByNameOrId(nfdQuery, { managedProfilesDir });
+  assert.ok(match);
+  assert.equal(match.id, 'managed:scum');
+});
+
+test('scripts/backup_managed_profiles.sh completes within 8s under exclusive SQLite lock and passes integrity check', async () => {
+  const root = tempRoot();
+  const webmcpHome = path.join(root, '.webmcp');
+  const scumDir = path.join(webmcpHome, 'managed-profiles', 'scum', 'Profile 9');
+  mkdirSync(scumDir, { recursive: true });
+  writeFileSync(path.join(webmcpHome, 'managed-profiles', 'scum', '.webmcp-meta.json'), JSON.stringify({ name: 'scum' }));
+  writeFileSync(path.join(webmcpHome, 'managed-profiles', 'scum', 'Local State'), '{"test":1}');
+
+  const cookiesDb = path.join(scumDir, 'Cookies');
+  // Initialize sqlite db with cookies table
+  spawnSync('python3', [
+    '-c',
+    `import sqlite3; c = sqlite3.connect("${cookiesDb}"); c.execute("CREATE TABLE cookies (name TEXT, value TEXT)"); c.execute("INSERT INTO cookies VALUES ('session', '123')"); c.commit(); c.close()`,
+  ]);
+
+  // Hold exclusive lock in background python process
+  const lockProc = spawn('python3', [
+    '-c',
+    `import sqlite3, time; c = sqlite3.connect("${cookiesDb}"); c.execute("BEGIN EXCLUSIVE"); time.sleep(6)`,
+  ]);
+
+  // Give python 200ms to acquire lock
+  await new Promise((r) => setTimeout(r, 200));
+
+  const start = Date.now();
+  const scriptPath = path.join(ROOT, 'scripts', 'backup_managed_profiles.sh');
+  const res = spawnSync(scriptPath, [], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_HOME: webmcpHome,
+    },
+  });
+  const elapsedMs = Date.now() - start;
+
+  try { lockProc.kill(); } catch {}
+
+  assert.equal(res.status, 0, `stderr: ${res.stderr}\nstdout: ${res.stdout}`);
+  assert.ok(elapsedMs < 8000, `Backup took too long: ${elapsedMs}ms`);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const backupCookies = path.join(webmcpHome, 'backups', 'profiles', today, 'scum', 'Profile 9', 'Cookies');
+  assert.ok(existsSync(backupCookies), 'Backup Cookies file exists');
+
+  // Verify permissions (0600)
+  const stat = readFileSync(backupCookies);
+  assert.ok(stat.length > 0);
+
+  // Verify PRAGMA quick_check passes on backup
+  const verifyRes = spawnSync('python3', [
+    '-c',
+    `import sqlite3, sys; c = sqlite3.connect("${backupCookies}"); cur = c.cursor(); cur.execute("PRAGMA quick_check"); res = cur.fetchone()[0]; sys.exit(0 if res == "ok" else 1)`,
+  ]);
+  assert.equal(verifyRes.status, 0);
+});

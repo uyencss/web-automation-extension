@@ -11,7 +11,7 @@
 
 > [!NOTE]
 > **Revised 2026-07-02** — đối chiếu lại với code thực tế. Các thay đổi chính so với bản 2026-07-01:
-> 1. CLI entry là `bin/webmcp.mjs` (ESM), không phải `bin/webmcp.js` — cần quyết định module format (đã chốt: CJS + `createRequire`).
+> 1. CLI entry là `bin/webmcp-browser.mjs` (ESM) (hoặc `webmcp launch`) — cần quyết định module format (đã chốt: CJS + `createRequire`).
 > 2. Phát hiện gap quan trọng: `managedSessions` Map là in-memory, chết theo process → CLI ngắn hạn cần **persist session state ra disk**.
 > 3. Bổ sung các bước bị thiếu: cập nhật `files` trong package.json, cập nhật `install-agent.mjs` (đang hardcode 1 skill), flow `--relaunch` cho CLI, spawn gateway detached.
 > 4. Chốt các Open Questions (extend package hiện có, `~/.webmcp/`).
@@ -51,7 +51,7 @@ graph TD
 
 ### Hiện trạng package `@gyga-browser/webmcp-browser-automation-kit` (đã verify)
 
-- CLI entry: **`bin/webmcp.mjs`** (ESM) với các subcommand `mcp`, `gateway start|health`, `health`, `call`, `workflow`, `extension-path`. Package **không có** `"type": "module"` → file `.js` mặc định là CJS; CLI đã dùng sẵn `createRequire`.
+- CLI entry: **`bin/webmcp-browser.mjs`** (ESM) (symlinked to `bin/webmcp.mjs` / `webmcp`) với các subcommand `mcp`, `gateway start|health`, `health`, `call`, `workflow`, `extension-path`. Package **không có** `"type": "module"` → file `.js` mặc định là CJS; CLI đã dùng sẵn `createRequire`.
 - `package.json#files` là whitelist — **mọi thư mục mới (chrome-launcher/, skill mới) phải được thêm vào đây** thì mới ship khi `npm publish`.
 - `scripts/install-agent.mjs` hardcode `SKILL_NAME = 'webmcp-browser-automation'` — chỉ cài đúng 1 skill vào `~/.claude/skills`, `~/.codex/skills`, v.v.
 - Extension dist hardcode `WS_URL = 'ws://localhost:7865'` ([ws-client.js L4](file:///Users/ttcenter/Desktop/VIBE_CODE/webmcp-automation-kit/webmcp-browser-kit/webmcp-extension/dist/bg/ws-client.js)). Gateway default port 7865. → **CLI phải chạy gateway trên port mặc định 7865**, không dùng random port như desktop app.
@@ -240,7 +240,7 @@ sequenceDiagram
 
 ### 2. Cập nhật CLI
 
-- **[MODIFY] `bin/webmcp.mjs`** (lưu ý: `.mjs`, không phải `.js`)
+- **[MODIFY] `bin/webmcp-browser.mjs`** (lưu ý: `.mjs`, không phải `.js`)
   - Thêm subcommand `launch` (flags: `--name`, `--profile-id`, `--gateway`, `--relaunch`, `--dry-run`, `--json`) và `profiles list [--json]`
   - Import module CJS qua `createRequire` (pattern sẵn có)
   - `--gateway`: health-check trước, spawn detached nếu cần, poll `/health` chờ profileId mới
@@ -276,13 +276,13 @@ npm test   # gồm các test mới ở trên
 node -e "const l = require('./chrome-launcher'); console.log(l.findChromeBinary()); console.log(l.listAllProfiles().managed.length)"
 
 # CLI
-node bin/webmcp.mjs launch --name test --dry-run --json
-node bin/webmcp.mjs profiles list --json
+node bin/webmcp-browser.mjs launch --name test --dry-run --json
+node bin/webmcp-browser.mjs profiles list --json
 ```
 
 ### Manual / End-to-end
 
-1. `node bin/webmcp.mjs launch --name e2e --gateway` → Chrome mở, `chrome://extensions` có WebMCP extension
+1. `node bin/webmcp-browser.mjs launch --name e2e --gateway` → Chrome mở, `chrome://extensions` có WebMCP extension
 2. `curl -sS http://localhost:7865/health` → `extensionConnected: true`, `profiles` có id mới
 3. Chạy lại lệnh launch cùng profile → attach vào session cũ (không spawn Chrome trùng, nhờ sessions.json)
 4. Test `--profile-id` với Chrome thật đang chạy → nhận `needsRelaunch`, exit 2; thêm `--relaunch` → Chrome restart với extension

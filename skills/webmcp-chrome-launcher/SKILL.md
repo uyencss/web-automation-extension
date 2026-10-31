@@ -18,7 +18,17 @@ the user's current Chrome.
 webmcp gateway start
 ```
 
-   If Chrome/the extension also needs bootstrapping, **ALWAYS prioritize launching an existing Native Chrome Profile** (`Chrome:<ProfileDir>`, inspected via `webmcp profiles --json`) using `--profile-id` rather than creating a blank managed profile in `~/.webmcp/managed-profiles` (`--name`):
+   **Project Profile Guardrail & Launch Flow**:
+   - In a project bound by `config/fb_growth_config.json`, **simply run `webmcp launch --gateway`**. It automatically discovers and binds strictly to the channel's designated managed profile (`managed:<channel-slug>`):
+
+```bash
+webmcp launch --gateway
+# Or explicitly with the pinned profile id:
+webmcp launch --profile-id "managed:scum" --gateway --json
+```
+
+   - **DO NOT** use `--name` in bound projects to invent new profile names. Guardrails strictly block rogue profile creation (`[GUARDRAIL BLOCKED]`) unless explicitly bypassed with `WEBMCP_ALLOW_PROFILE_CREATE=1`.
+   - Outside bound projects, to launch an existing native profile or managed profile:
 
 ```bash
 webmcp launch --profile-id "Chrome:Profile 11" --gateway --json

@@ -148,28 +148,54 @@ function nextManagedProfileDir(name, managedProfilesDir = MANAGED_PROFILES_DIR) 
   return dir;
 }
 
+function norm(s) {
+  return String(s || '').normalize('NFC').trim().toLowerCase();
+}
+
 function findExistingManagedProfileDir(name, managedProfilesDir = MANAGED_PROFILES_DIR) {
   const raw = String(name || '').trim();
-  if (!raw || raw.toLowerCase() === 'webmcp') return null;
-  const qLower = raw.toLowerCase();
-  const qStripped = qLower.startsWith('managed:') ? qLower.slice('managed:'.length) : qLower;
+  if (!raw) return null;
+  const qNorm = norm(raw);
+  const qStripped = qNorm.startsWith('managed:') ? qNorm.slice('managed:'.length) : qNorm;
   let entries = [];
   try {
     entries = fs.readdirSync(managedProfilesDir, { withFileTypes: true });
   } catch {
     return null;
   }
+
+  // 1. Direct match on directory name
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dirNorm = norm(entry.name);
+    if (dirNorm === qStripped || dirNorm === qNorm) {
+      return path.join(managedProfilesDir, entry.name);
+    }
+  }
+
+  // 2. Exact match on meta.name
+  const nameMatches = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const dir = path.join(managedProfilesDir, entry.name);
-    if (entry.name.toLowerCase() === qStripped) return dir;
     try {
       const meta = JSON.parse(fs.readFileSync(path.join(dir, '.webmcp-meta.json'), 'utf8'));
-      const mName = String(meta.name || '').trim().toLowerCase();
-      if (mName && mName === qLower) return dir;
+      const mNameNorm = norm(meta.name);
+      if (mNameNorm && mNameNorm === qNorm) {
+        nameMatches.push(dir);
+      }
     } catch {}
   }
-  return null;
+
+  if (nameMatches.length > 1) {
+    const err = new Error(
+      `Ambiguous managed profile name "${name}" matches multiple profiles: ${nameMatches.map((d) => `managed:${path.basename(d)}`).join(', ')}`
+    );
+    err.code = 'AMBIGUOUS_PROFILE';
+    throw err;
+  }
+
+  return nameMatches[0] || null;
 }
 
 function createManagedProfile(name, options = {}) {
@@ -546,7 +572,47 @@ async function launchChrome(options = {}) {
       extraArgs: effectiveExtraArgs,
       env: options.env,
     });
+    if ((effectiveExtraArgs && effectiveExtraArgs.length > 0) || options.env?.TZ) {
+      spawnRes.attachWarning = 'Chrome is already running for this profile; extraArgs and env (TZ) require --relaunch to take effect.';
+    }
     return annotate(spawnRes);
+  }
+
+  if (isProfileLocked(userDataDir)) {
+    if (!options.relaunch) {
+      return annotate({
+        ok: false,
+        mode: 'managed',
+        attached: true,
+        needsRelaunch: true,
+        userDataDir,
+        profileDir: effectiveProfileDir,
+        profileDirectory: effectiveProfileDir,
+        pid: null,
+        sessionId: null,
+        attachWarning:
+          'Chrome is already running with this managed profile outside WebMCP session tracking; refusing to spawn a duplicate process (which would drop --proxy-server / --load-extension). Close the existing Chrome window first or relaunch via WebMCP.',
+        message:
+          'Chrome is already running with this managed profile outside WebMCP session tracking; refusing to spawn a duplicate process (which would drop --proxy-server / --load-extension). Close the existing Chrome window first or relaunch via WebMCP.',
+      });
+    }
+    const lockPid = readLockPid(userDataDir);
+    if (lockPid && isPidAlive(lockPid)) {
+      try { process.kill(lockPid, 'SIGTERM'); } catch {}
+    } else {
+      await quitChrome();
+    }
+    const unlocked = await waitForUnlock(userDataDir);
+    if (!unlocked) {
+      return annotate({
+        ok: false,
+        mode: 'managed',
+        needsRelaunch: true,
+        userDataDir,
+        profileDir: effectiveProfileDir,
+        message: 'Could not quit the running Chrome automatically. Quit Chrome manually, then try again.',
+      });
+    }
   }
 
   const result = spawnChrome({
