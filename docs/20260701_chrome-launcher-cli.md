@@ -118,7 +118,7 @@ graph TD
 │   ├── webmcp-browser-automation/  # ✅ đã có — thêm cross-reference sang webmcp-chrome-launcher
 │   └── webmcp-chrome-launcher/     # 🆕 NEW
 └── bin/
-    └── webmcp.mjs                # ✅ đã có — thêm subcommand `launch`, `profiles`
+    └── webmcp-browser.mjs        # ✅ đã có — thêm subcommand `launch`, `profiles`
 ```
 
 Ghi chú: **không cần port `extension-locator.js`** vào package — bên trong package, dist luôn ở `<pkgRoot>/webmcp-extension/dist` (CLI `extension-path` đã làm đúng vậy). Locator chỉ cần thiết ở phía desktop (giữ nguyên).
@@ -126,8 +126,11 @@ Ghi chú: **không cần port `extension-locator.js`** vào package — bên tro
 ### CLI usage mới
 
 ```bash
-# Launch Chrome managed profile với extension (tự start gateway nếu chưa chạy)
-webmcp launch --name "scraping-bot" --gateway
+# Trong thư mục dự án đã ghim profile (config/fb_growth_config.json):
+webmcp launch --gateway
+
+# Hoặc chỉ định rõ managed profile ID:
+webmcp launch --profile-id "managed:scum" --gateway
 
 # Launch Chrome với existing profile (id lấy từ `webmcp profiles list`)
 webmcp launch --profile-id "Chrome:Profile 1"
@@ -196,7 +199,7 @@ description: >
 
 Skill hướng dẫn AI:
 1. **Khi nào cần launch** — trước khi dùng skill `webmcp-browser-automation`, nếu `webmcp health` báo gateway chưa chạy hoặc `extensionConnected: false`
-2. **Launch flow chuẩn** — `webmcp launch --name "task-name" --gateway` (one command), đọc `profileId` từ output JSON
+2. **Launch flow chuẩn** — `webmcp launch --gateway` (trong dự án đã ghim profile) hoặc `webmcp launch --profile-id "managed:<id>" --gateway` (one command), đọc `profileId` từ output JSON
 3. **Chọn profile có sẵn** — `webmcp profiles list --json` → chọn → `webmcp launch --profile-id "..."`
 4. **Relaunch safety** — nếu output có `needsRelaunch: true`: **hỏi user xác nhận** trước khi chạy lại với `--relaunch` (sẽ quit Chrome đang mở của user)
 5. **Health check** — verify `curl -sS http://localhost:7865/health`, kiểm tra `profiles` chứa profileId vừa launch
@@ -216,7 +219,7 @@ sequenceDiagram
     participant Automation as webmcp-browser-automation skill
     
     AI->>Skill: Need browser automation
-    Skill->>CLI: webmcp launch --name "task" --gateway
+    Skill->>CLI: webmcp launch --gateway
     CLI->>Gateway: start gateway (detached, port 7865) nếu chưa chạy
     CLI->>Chrome: spawn Chrome + --load-extension
     Chrome-->>Gateway: WebSocket connect (profileId handshake)

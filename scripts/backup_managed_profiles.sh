@@ -66,25 +66,29 @@ src, dst = sys.argv[1], sys.argv[2]
 os.makedirs(os.path.dirname(dst), exist_ok=True)
 
 # Attempt 1: Online backup in a child process with a hard 1.5s OS wall-clock timeout
+# Pass src and dst via sys.argv to preserve special characters / quotes safely
 backup_ok = False
-online_code = f"""
-import sys, os, sqlite3
-uri = f"file:{{os.path.abspath('{src}')}}?mode=ro"
-sconn = sqlite3.connect(uri, uri=True, timeout=0.5)
-dconn = sqlite3.connect('{dst}')
-sconn.backup(dconn)
-dconn.close()
-sconn.close()
-"""
+backup_mode = "unknown"
+online_code = (
+    "import sys, os, sqlite3\n"
+    "src, dst = sys.argv[1], sys.argv[2]\n"
+    "uri = 'file:' + os.path.abspath(src) + '?mode=ro'\n"
+    "sconn = sqlite3.connect(uri, uri=True, timeout=0.5)\n"
+    "dconn = sqlite3.connect(dst)\n"
+    "sconn.backup(dconn)\n"
+    "dconn.close()\n"
+    "sconn.close()\n"
+)
 try:
     p = subprocess.run(
-        [sys.executable, "-c", online_code],
+        [sys.executable, "-c", online_code, src, dst],
         capture_output=True,
         text=True,
         timeout=1.5
     )
     if p.returncode == 0:
         backup_ok = True
+        backup_mode = "online"
     else:
         sys.stderr.write(f"WARN: Online backup failed (rc={p.returncode}): {p.stderr.strip()}; falling back to snapshot copy.\n")
 except subprocess.TimeoutExpired:
@@ -113,6 +117,7 @@ if not backup_ok:
             if os.path.exists(aux_dst):
                 try: os.remove(aux_dst)
                 except Exception: pass
+        backup_mode = "snapshot"
     except Exception as e:
         sys.stderr.write(f"ERROR: Snapshot copy failed: {e}\n")
         sys.exit(1)
@@ -129,7 +134,7 @@ try:
     cur.execute("SELECT count(*) FROM cookies")
     count = cur.fetchone()[0]
     conn.close()
-    sys.stdout.write(f"OK:{count}\n")
+    sys.stdout.write(f"OK:{backup_mode}:{count}\n")
 except Exception as e:
     sys.stderr.write(f"ERROR: Integrity verification exception on {dst}: {e}\n")
     sys.exit(3)
@@ -176,10 +181,12 @@ for pdir in "$PROFILES_DIR"/*; do
     target_cookie="$target_dir/Cookies"
 
     if [ -s "$cookie_file" ]; then
-      if out=$(backup_cookie_db "$cookie_file" "$target_cookie" 2>&1); then
+      if out=$(backup_cookie_db "$cookie_file" "$target_cookie"); then
         chmod 600 "$target_cookie"
-        count="${out#OK:}"
-        echo "     [Cookies OK] $(basename "$(dirname "$cookie_file")")/Cookies ($count records)"
+        last_line="$(printf '%s\n' "$out" | tail -n 1)"
+        mode="$(printf '%s\n' "$last_line" | cut -d: -f2)"
+        count="$(printf '%s\n' "$last_line" | cut -d: -f3)"
+        echo "     [Cookies OK] $(basename "$(dirname "$cookie_file")")/Cookies (mode=$mode, $count records)"
       else
         echo "     [Cookies FAILED] $(basename "$(dirname "$cookie_file")")/Cookies: $out" >&2
         PROFILE_FAILED=1
@@ -192,6 +199,8 @@ for pdir in "$PROFILES_DIR"/*; do
     BACKUP_ERRORS=$((BACKUP_ERRORS + 1))
     rm -rf "$pstage"
   else
+    touch "$pstage/.verified_ok"
+    chmod 600 "$pstage/.verified_ok"
     SUCCEEDED_PROFILES=$((SUCCEEDED_PROFILES + 1))
   fi
 done
@@ -207,27 +216,22 @@ for pstage in "$STAGING_DIR"/*; do
   mv "$pstage" "$FINAL_DIR/$pname"
 done
 
-# Check exit condition: require zero errors and at least one succeeded profile
+# 5. Retention: keep rolling 7 latest days across all date folders
+echo "[INFO] Pruning old backups (keeping rolling 7 latest days) in $BACKUP_ROOT..."
+find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name ".staging*" | sort -r | tail -n +8 | while read -r old_dir; do
+  [ -d "$old_dir" ] || continue
+  echo "  -> Removing old backup: $old_dir"
+  rm -rf "$old_dir"
+done
+
+# 6. Final verification & exit status
 if [ "$BACKUP_ERRORS" -eq 0 ] && [ "$SUCCEEDED_PROFILES" -gt 0 ]; then
-  # Mark this day's backup verified
   touch "$FINAL_DIR/.verified_ok"
   chmod 600 "$FINAL_DIR/.verified_ok"
-
-  # 5. Retention: keep rolling 7 latest days with .verified_ok
-  echo "[INFO] Pruning old backups (keeping rolling 7 latest verified days) in $BACKUP_ROOT..."
-  VERIFIED_COUNT=0
-  for d in $(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d | sort -r); do
-    [ -f "$d/.verified_ok" ] || continue
-    VERIFIED_COUNT=$((VERIFIED_COUNT + 1))
-    if [ "$VERIFIED_COUNT" -gt 7 ]; then
-      echo "  -> Removing old verified backup: $d"
-      rm -rf "$d"
-    fi
-  done
   echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') Profile backup completed successfully. Total: $TOTAL_PROFILES, Succeeded: $SUCCEEDED_PROFILES, Errors: 0"
   exit 0
 else
-  echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') Profile backup completed with failures. Total: $TOTAL_PROFILES, Succeeded: $SUCCEEDED_PROFILES, Errors: $BACKUP_ERRORS" >&2
+  echo "[ALERT] $(date '+%Y-%m-%d %H:%M:%S') Backup finished with $BACKUP_ERRORS failed profile(s) (Succeeded: $SUCCEEDED_PROFILES, Total: $TOTAL_PROFILES)!" >&2
   rm -f "$FINAL_DIR/.verified_ok" 2>/dev/null || true
   rmdir "$FINAL_DIR" 2>/dev/null || true
   exit 1

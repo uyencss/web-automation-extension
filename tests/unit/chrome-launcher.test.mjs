@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, chmodSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, chmodSync, statSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -740,4 +740,140 @@ test('scripts/backup_managed_profiles.sh completes within 3.5s under exclusive S
     `import sqlite3, sys; c = sqlite3.connect("${backupCookies}"); cur = c.cursor(); cur.execute("PRAGMA integrity_check"); res = cur.fetchone()[0]; sys.exit(0 if res == "ok" else 1)`,
   ]);
   assert.equal(verifyRes.status, 0);
+});
+
+test('WEBMCP_ALLOW_PROFILE_CREATE=1 cannot bypass mismatched --profile-id inside bound project', () => {
+  const root = tempRoot();
+  const projRoot = path.join(root, 'bound-proj');
+  mkdirSync(path.join(projRoot, 'config'), { recursive: true });
+  mkdirSync(path.join(root, 'managed-profiles', 'scum', 'Profile 9'), { recursive: true });
+  mkdirSync(path.join(root, 'managed-profiles', 'game-di', 'Profile 5'), { recursive: true });
+  writeFileSync(
+    path.join(root, 'managed-profiles', 'scum', '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Lười Cày', profileDir: 'Profile 9', createdAt: 1 }),
+  );
+  writeFileSync(
+    path.join(root, 'managed-profiles', 'game-di', '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Game Dị', profileDir: 'Profile 5', createdAt: 2 }),
+  );
+  writeFileSync(
+    path.join(projRoot, 'config', 'fb_growth_config.json'),
+    JSON.stringify({
+      channel_id: 'scum-story-reup',
+      managed_profile_id: 'managed:scum',
+      chrome_profile: 'Profile 9',
+    }),
+  );
+
+  const res = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--profile-id',
+    'managed:game-di',
+    '--dry-run',
+  ], {
+    cwd: projRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+      WEBMCP_HOME: root,
+      WEBMCP_ALLOW_PROFILE_CREATE: '1',
+    },
+  });
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /Refusing to launch mismatched --profile-id "managed:game-di"/);
+});
+
+test('WEBMCP_BOUND_PROFILE_CONFIG with non-existent file fails closed', () => {
+  const root = tempRoot();
+  const res = spawnSync(process.execPath, [
+    BIN,
+    'launch',
+    '--dry-run',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_CHROME_BINARY: process.execPath,
+      WEBMCP_DATA_DIR: root,
+      WEBMCP_HOME: root,
+      WEBMCP_BOUND_PROFILE_CONFIG: path.join(root, 'non-existent-cfg.json'),
+    },
+  });
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /WEBMCP_BOUND_PROFILE_CONFIG points to non-existent file/);
+});
+
+test('relaunch on managed profile with orphaned lock returns needsRelaunch without global quit', async () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const scumDir = path.join(managedProfilesDir, 'scum');
+  mkdirSync(scumDir, { recursive: true });
+  writeFileSync(
+    path.join(scumDir, '.webmcp-meta.json'),
+    JSON.stringify({ name: 'Scum', profileDir: 'Default' }),
+  );
+  // Create orphaned lock file (no PID attached)
+  writeFileSync(path.join(scumDir, 'SingletonCookie'), 'cookie-lock');
+
+  const res = await launcher.launchChrome({
+    profile: {
+      kind: 'managed',
+      userDataDir: scumDir,
+      profileDir: 'Default',
+    },
+    relaunch: true,
+    chromePath: process.execPath,
+    managedProfilesDir,
+  });
+
+  assert.equal(res.ok, false);
+  assert.equal(res.needsRelaunch, true);
+  assert.match(res.message, /refusing global quitChrome\(\)/);
+});
+
+test('backup_managed_profiles.sh supports single quotes in profile paths and prunes unverified old date folders', () => {
+  const root = tempRoot();
+  const webmcpHome = path.join(root, '.webmcp');
+  const backupRoot = path.join(webmcpHome, 'backups', 'profiles');
+  mkdirSync(backupRoot, { recursive: true });
+
+  // Pre-populate 8 older dummy date directories (some unverified without .verified_ok)
+  for (let i = 1; i <= 8; i++) {
+    const day = `2026-10-0${i}`;
+    const dpath = path.join(backupRoot, day);
+    mkdirSync(dpath, { recursive: true });
+    if (i % 2 === 0) {
+      writeFileSync(path.join(dpath, '.verified_ok'), '');
+    }
+  }
+
+  // Profile path containing single quotes and spaces
+  const quotedDir = path.join(webmcpHome, 'managed-profiles', "user's-scum-channel", 'Profile 9');
+  mkdirSync(quotedDir, { recursive: true });
+  writeFileSync(path.join(webmcpHome, 'managed-profiles', "user's-scum-channel", '.webmcp-meta.json'), JSON.stringify({ name: "user's-scum" }));
+  writeFileSync(path.join(webmcpHome, 'managed-profiles', "user's-scum-channel", 'Local State'), '{}');
+  const cookiesDb = path.join(quotedDir, 'Cookies');
+  spawnSync('python3', [
+    '-c',
+    `import sqlite3; c = sqlite3.connect("${cookiesDb}"); c.execute("CREATE TABLE cookies (name TEXT, value TEXT)"); c.execute("INSERT INTO cookies VALUES ('sess', 'quoted')"); c.commit(); c.close()`,
+  ]);
+
+  const scriptPath = path.join(ROOT, 'scripts', 'backup_managed_profiles.sh');
+  const res = spawnSync(scriptPath, [], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      WEBMCP_HOME: webmcpHome,
+    },
+  });
+  assert.equal(res.status, 0, `stderr: ${res.stderr}\nstdout: ${res.stdout}`);
+  assert.match(res.stdout, /mode=online/);
+
+  // Verify that total date folders in backupRoot is pruned to <= 7
+  const remainingFolders = readdirSync(backupRoot, { withFileTypes: true }).filter((d) => d.isDirectory() && !d.name.startsWith('.staging'));
+  assert.ok(remainingFolders.length <= 7, `Expected <= 7 backup folders, got ${remainingFolders.length}`);
 });

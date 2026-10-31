@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile, execFileSync, spawn } = require('child_process');
+const { execFile, execFileSync, execSync, spawn } = require('child_process');
 const { isPidAlive } = require('./sessions');
 const {
   ensureDirs,
@@ -90,6 +90,20 @@ function cleanStaleLocks(userDataDir) {
     }
   }
   return removed;
+}
+
+function findChromePidForUserDataDir(userDataDir) {
+  try {
+    const out = execSync('ps -ax -o pid=,command=', { encoding: 'utf8' });
+    const lines = out.split('\n');
+    for (const line of lines) {
+      if (line.includes(`--user-data-dir=${userDataDir}`) && !line.includes('--type=')) {
+        const match = line.trim().match(/^(\d+)/);
+        if (match) return parseInt(match[1], 10);
+      }
+    }
+  } catch {}
+  return null;
 }
 
 function readLockPid(userDataDir) {
@@ -596,21 +610,31 @@ async function launchChrome(options = {}) {
           'Chrome is already running with this managed profile outside WebMCP session tracking; refusing to spawn a duplicate process (which would drop --proxy-server / --load-extension). Close the existing Chrome window first or relaunch via WebMCP.',
       });
     }
-    const lockPid = readLockPid(userDataDir);
+    let lockPid = readLockPid(userDataDir);
+    if (!lockPid) {
+      lockPid = findChromePidForUserDataDir(userDataDir);
+    }
     if (lockPid && isPidAlive(lockPid)) {
       try { process.kill(lockPid, 'SIGTERM'); } catch {}
+      const unlocked = await waitForUnlock(userDataDir);
+      if (!unlocked) {
+        return annotate({
+          ok: false,
+          mode: 'managed',
+          needsRelaunch: true,
+          userDataDir,
+          profileDir: effectiveProfileDir,
+          message: 'Could not quit the running Chrome process for this profile automatically. Quit Chrome manually, then try again.',
+        });
+      }
     } else {
-      await quitChrome();
-    }
-    const unlocked = await waitForUnlock(userDataDir);
-    if (!unlocked) {
       return annotate({
         ok: false,
         mode: 'managed',
         needsRelaunch: true,
         userDataDir,
         profileDir: effectiveProfileDir,
-        message: 'Could not quit the running Chrome automatically. Quit Chrome manually, then try again.',
+        message: 'Profile lock file exists without a readable PID; refusing global quitChrome() to protect other running channels. Remove stale Singleton* files in userDataDir or close the specific window manually.',
       });
     }
   }
@@ -748,6 +772,7 @@ module.exports = {
   chromeCandidates,
   findChromeBinary,
   readLockPid,
+  findChromePidForUserDataDir,
   isProfileLocked,
   cleanStaleLocks,
   slugify,

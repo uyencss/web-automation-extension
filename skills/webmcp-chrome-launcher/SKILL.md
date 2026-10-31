@@ -27,7 +27,7 @@ webmcp launch --gateway
 webmcp launch --profile-id "managed:scum" --gateway --json
 ```
 
-   - **DO NOT** use `--name` in bound projects to invent new profile names. Guardrails strictly block rogue profile creation (`[GUARDRAIL BLOCKED]`) unless explicitly bypassed with `WEBMCP_ALLOW_PROFILE_CREATE=1`.
+   - **DO NOT** use `--name` in bound projects to invent new profile names. Guardrails strictly block rogue profile creation (`[GUARDRAIL BLOCKED]`).
    - Outside bound projects, to launch an existing native profile or managed profile:
 
 ```bash
