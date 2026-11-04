@@ -133,7 +133,7 @@ npx -y @gyga-browser/webmcp-browser-automation-kit call webmcp.listTools '{"tabI
 ## Local Credential Vault
 
 Credential storage is a separate package,
-**[@gyga-browser/webmcp-vault-kit](../webmcp-vault-kit)**. This kit does not
+**[@gyga-browser/webmcp-vault-kit](../../apps/webmcp-vault-kit)**. This kit does not
 bundle or depend on the vault package, and the aggregate `vault` route belongs
 to the WebMCP CLI (`webmcp vault ...`). See that package's README for setup.
 

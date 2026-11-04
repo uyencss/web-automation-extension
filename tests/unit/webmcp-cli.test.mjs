@@ -15,7 +15,7 @@ const WORKSPACE_ROOT = path.resolve(ROOT, '..');
 process.env.WEBMCP_DEV_SOURCE_FALLBACK ??= '1';
 // Vault setup in bootstrap tests invokes the owning vault package directly:
 // the aggregate `vault` route now belongs to the WebMCP CLI, not the browser.
-const VAULT_BIN = path.join(WORKSPACE_ROOT, 'webmcp-vault-kit', 'bin', 'webmcp-vault.mjs');
+const VAULT_BIN = path.resolve(ROOT, '..', '..', 'apps', 'webmcp-vault-kit', 'bin', 'webmcp-vault.mjs');
 
 // Mirrors bin/webmcp-browser.mjs serviceFileName(): the exact template name production
 // renders for this platform (launchd plist / systemd service / Windows task xml).

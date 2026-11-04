@@ -15,7 +15,7 @@ import { createRequire } from 'node:module';
 import { ProfileGovernorError } from '../../profile-governor/errors.mjs';
 
 const require = createRequire(import.meta.url);
-const broker = require('../../../webmcp-vault-kit/lib/broker.js');
+const broker = require('../../../../apps/webmcp-vault-kit/lib/broker.js');
 
 const A3_FENCE_MODE = process.env.A3_FENCE_MODE ?? 'enforce';
 
@@ -97,7 +97,7 @@ test('A3 broker fence: fill with fence passes in enforce mode', async () => {
 });
 
 test('A3 broker fence: no alternative mutation path bypasses the fence', () => {
-  const brokerUrl = new URL('../../../webmcp-vault-kit/lib/broker.js', import.meta.url);
+  const brokerUrl = new URL('../../../../apps/webmcp-vault-kit/lib/broker.js', import.meta.url);
   const text = fs.readFileSync(brokerUrl, 'utf8');
   const callSites = text.split('\n').filter((line) => line.includes('gateway.call('));
   assert.ok(callSites.length >= 4, `broker must expose its mutating gateway calls for audit (found ${callSites.length})`);

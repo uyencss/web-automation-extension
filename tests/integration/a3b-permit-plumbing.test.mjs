@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const KIT_ROOT = new URL('../..', import.meta.url);
 const MCP_SERVER = fileURLToPath(new URL('../../server/mcp_server.mjs', import.meta.url));
-const VAULT_BIN = fileURLToPath(new URL('../../../webmcp-vault-kit/bin/webmcp-vault.mjs', import.meta.url));
+const VAULT_BIN = fileURLToPath(new URL('../../../../apps/webmcp-vault-kit/bin/webmcp-vault.mjs', import.meta.url));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

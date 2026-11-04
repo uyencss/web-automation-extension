@@ -23,16 +23,14 @@ const WEBMCP_EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/web
 
 function defaultExtensionPath() {
   const browserExt = path.resolve(__dirname, '..', 'webmcp-extension', 'dist');
-  const vaultExt = path.resolve(
-    __dirname,
-    '..',
-    '..',
-    'webmcp-vault-kit',
-    'webmcp-vault-extension',
-    'dist'
-  );
-  if (fs.existsSync(path.join(vaultExt, 'manifest.json'))) {
-    return `${browserExt},${vaultExt}`;
+  const vaultCandidates = [
+    path.resolve(__dirname, '..', '..', '..', 'apps', 'webmcp-vault-kit', 'webmcp-vault-extension', 'dist'),
+    path.resolve(__dirname, '..', '..', 'webmcp-vault-kit', 'webmcp-vault-extension', 'dist'),
+  ];
+  for (const vaultExt of vaultCandidates) {
+    if (fs.existsSync(path.join(vaultExt, 'manifest.json'))) {
+      return `${browserExt},${vaultExt}`;
+    }
   }
   return browserExt;
 }
