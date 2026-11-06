@@ -4,7 +4,7 @@
 **Ngày ban hành**: `2026-10-29` (Bản nâng cấp v2 sau kiểm thử thực nghiệm trực tiếp trên **Xiaomi 13 `reup-xm13`** & thẩm định `/ponytail` bởi **Claude Opus 5.5 High**)  
 **Trạng thái**: `IMPLEMENTED & VERIFIED ON XIAOMI 13 (100% UNIT + LIVE E2E PASS)`  
 **Mục tiêu**: `/Users/ttcenter/Desktop/VIBE_CODE/webmcp-automation-kit/packages/webmcp-browser-kit/webmcp-mobile-cdp/` (kèm 1 dòng root-cause guard tại `webmcp-extension/dist/content-scripts/aria-snapshot.js:736`)  
-**Công cụ kiểm định**: Live ADB + CDP Probe trên `reup-xm13` (`100.118.203.105:5555`) + Gemini 3.8 Flash High Subagents + Claude Opus 5.5 High (`claude-opus-4-7 --effort high`)  
+**Công cụ kiểm định**: Live ADB + CDP Probe trên `reup-xm13` (`100.118.203.105:5555`) + Gemini 3.8 Flash High Subagents + Claude Opus 5.5 High (`claude-opus-5-5 --effort high`)  
 **Phạm vi**: Tự động hóa toàn diện trình duyệt Chrome trên điện thoại Android qua cầu nối ADB CDP (Zero-Extension), ánh xạ đầy đủ **67 lệnh** của WebMCP Browser Kit (`minimal` / `core` / `full`) thông qua kiến trúc **Unified Table-Driven Dispatcher (`≤ 500 LOC`)**.
 
 ---
