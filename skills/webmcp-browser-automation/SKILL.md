@@ -183,6 +183,18 @@ The MCP adapter exposes page operations as `webmcp_list_tools` and
 `webmcp_invoke_tool`; pass the page tool name using the input field shown by the
 runtime schema (`toolName` or `tool_name`).
 
+### Bringing Target Profile Window to Front / Split-Screen on Linux X11 Nodes (`webmcp window`)
+
+When automating a Chrome profile on a Linux X11 cluster node (`reup-minipc`, `dell`) where multiple Chrome profile windows are open simultaneously, MCP commands execute in the target profile's tabs but do not automatically raise the OS window to the top of the X11 desktop stack. Whenever the user or workflow needs the active profile window visible on top (e.g. live monitoring, visual verification, interactive Turnstile/CAPTCHA clicks, or side-by-side multi-profile runs), call `webmcp window`:
+
+```bash
+# Bring the target Chrome profile window to the front (zOrder = 1) before/during automation:
+webmcp window focus --node minipc --profile-id "managed:scum" --json
+
+# Or split/tile specific profiles side-by-side (e.g. 2x1 left/right or 2x2 grid):
+webmcp window tile --node minipc --order "managed:scum,managed:game-di" --only --layout 2x1 --json
+```
+
 ## Reading vs Interacting (decide first)
 
 Before discovering page structure, decide what the task actually needs:
@@ -218,6 +230,7 @@ For every browser automation task:
    Note the `extensionVersion` in `profileDetails[]` — if it is older than
    v2.1.10, consult *Extension Version Compatibility* for per-command
    availability and use the documented fallback for any gated command.
+   - On multi-profile Linux X11 nodes (`reup-minipc`), if the target profile window needs to be visible on top (or tiled side-by-side), run `webmcp window focus --node minipc --profile-id <id> --json` (see *Bringing Target Profile Window to Front*).
 2. Select a tab: call `getActiveTab`, `newTab`, or `navigate`. If you need an
    already-open tab, call `listTabs`, pick the intended `tabId`, then call
    `activateTab` before interacting.
