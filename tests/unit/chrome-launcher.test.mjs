@@ -987,3 +987,15 @@ c.close()`,
   });
   assert.equal(forceRes.status, 0, `--force-disaster-recovery should succeed: ${forceRes.stderr}`);
 });
+
+test('forkExistingProfile enforces host profile ceiling unless force is true', () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const srcDir = path.join(managedProfilesDir, 'p0');
+  mkdirSync(path.join(srcDir, 'Default'), { recursive: true });
+  writeFileSync(path.join(srcDir, 'Default', 'Preferences'), '{}');
+  const srcProfile = { id: 'managed:p0', userDataDir: srcDir, profileDir: 'Default' };
+  assert.throws(() => launcher.forkExistingProfile(srcProfile, 'p1', { managedProfilesDir, maxProfiles: 1 }), /PROFILE_CEILING_REACHED/);
+  const ok = launcher.forkExistingProfile(srcProfile, 'p1', { managedProfilesDir, force: true });
+  assert.equal(ok.totalManagedCount, 2);
+});

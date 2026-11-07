@@ -2,9 +2,21 @@
 
 const fs = require('fs');
 const path = require('path');
+const { MANAGED_PROFILES_DIR } = require('./config');
 const { isProfileLocked, createManagedProfile } = require('./launcher');
 
 const CACHE_RE = /(^|[\\/])(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|CacheStorage)([\\/]|$)/;
+// ponytail: 12 native-clean ceiling per host (30 max with --force / micro-farbling) to prevent hardware clustering bans
+const DEFAULT_MAX_NATIVE_CLEAN_PROFILES = 12;
+const HARD_MAX_FARM_PROFILES = 30;
+
+function countManagedProfiles(managedProfilesDir = MANAGED_PROFILES_DIR) {
+  try {
+    return fs.readdirSync(managedProfilesDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
+  } catch {
+    return 0;
+  }
+}
 
 function patchJson(filePath, mutator) {
   let data = {};
@@ -29,6 +41,15 @@ function forkExistingProfile(profile, name, options = {}) {
   const srcProfilePath = path.join(profile.userDataDir, profile.profileDir);
   if (!fs.existsSync(srcProfilePath)) {
     throw new Error(`Source profile directory does not exist: ${srcProfilePath}`);
+  }
+
+  const managedProfilesDir = options.managedProfilesDir || MANAGED_PROFILES_DIR;
+  const existingCount = countManagedProfiles(managedProfilesDir);
+  const ceiling = options.maxProfiles || (options.force ? HARD_MAX_FARM_PROFILES : DEFAULT_MAX_NATIVE_CLEAN_PROFILES);
+  if (existingCount >= ceiling) {
+    throw new Error(
+      `[PROFILE_CEILING_REACHED] Host already has ${existingCount} managed Chrome profiles (limit: ${ceiling}; native-clean: ${DEFAULT_MAX_NATIVE_CLEAN_PROFILES}, micro-farbling max: ${HARD_MAX_FARM_PROFILES}). Run 'webmcp profiles list' to reuse an existing profile, or pass --force if micro-farbling is active.`
+    );
   }
 
   let srcMeta = {};
@@ -69,10 +90,15 @@ function forkExistingProfile(profile, name, options = {}) {
     userDataDir: dst,
     profileDir: profile.profileDir,
     forkedFrom,
+    existingManagedCount: existingCount,
+    totalManagedCount: existingCount + 1,
   };
 }
 
 module.exports = {
   CACHE_RE,
+  DEFAULT_MAX_NATIVE_CLEAN_PROFILES,
+  HARD_MAX_FARM_PROFILES,
+  countManagedProfiles,
   forkExistingProfile,
 };
