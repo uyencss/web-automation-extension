@@ -838,7 +838,8 @@ function createGatewayServer({
         // Derive only logical identity hints from trusted context/permit. A
         // physical profile ID is never a logical-route hint and must not make
         // a direct extension lookup authoritative.
-        const ctxForHints = runtime.getCurrentContext();
+        const isInteractiveRuntime = runtime.mode !== 'off' || Boolean(permit);
+        const ctxForHints = isInteractiveRuntime ? runtime.getCurrentContext() : null;
         const logicalHints = new Set();
         const trustedPhysicalIds = new Set();
         if (ctxForHints?.profileAlias && typeof ctxForHints.profileAlias === 'string') logicalHints.add(ctxForHints.profileAlias);
