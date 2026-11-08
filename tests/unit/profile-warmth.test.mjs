@@ -124,7 +124,7 @@ test('evaluateProfileWarmth: mock seeded profile returns SEEDED (score 40-69) an
 test('evaluateProfileWarmth: mock soaked profile returns SOAKED (score 70-89) and three actions', (t) => {
   // Requirements for SOAKED: score 70-89
   // 25 pts soak age (30h)
-  // 25 pts entropy (>= 3 unique 3P domains)
+  // 25 pts entropy (>= 3 unique 3P domains and >= 15 cookies)
   // 20 pts telemetry (AEC: 10 + VISITOR_INFO1_LIVE: 5 + YSC: 5)
   // 10 pts footprint (Cache > 5MB = 10, no storage)
   // Total = 80 pts
@@ -132,10 +132,12 @@ test('evaluateProfileWarmth: mock soaked profile returns SOAKED (score 70-89) an
     { host_key: '.google.com', name: 'AEC', hoursAgo: 30 },
     { host_key: '.youtube.com', name: 'VISITOR_INFO1_LIVE', hoursAgo: 30 },
     { host_key: '.youtube.com', name: 'YSC', hoursAgo: 30 },
-    { host_key: '.shopee.vn', name: 'sp_session', hoursAgo: 30 },
-    { host_key: '.vnexpress.net', name: 'vne_id', hoursAgo: 30 },
-    { host_key: '.github.com', name: 'user_session', hoursAgo: 30 },
   ];
+  for (let i = 0; i < 5; i += 1) {
+    cookies.push({ host_key: '.shopee.vn', name: `sp_${i}`, hoursAgo: 30 });
+    cookies.push({ host_key: '.vnexpress.net', name: `vne_${i}`, hoursAgo: 30 });
+    cookies.push({ host_key: '.github.com', name: `gh_${i}`, hoursAgo: 30 });
+  }
 
   const { tmpDir } = createMockProfile(t, {
     cookies,
@@ -162,7 +164,7 @@ test('evaluateProfileWarmth: mock soaked profile returns SOAKED (score 70-89) an
 test('evaluateProfileWarmth: mock mature profile returns MATURE (score 90-100) and all five actions', (t) => {
   // Requirements for MATURE: score >= 90
   // 30 pts soak age (> 48h)
-  // 25 pts entropy (>= 3 unique 3P domains)
+  // 25 pts entropy (>= 3 unique 3P domains and >= 15 cookies)
   // 30 pts telemetry (AEC, NID, SEARCH_SAMESITE, VISITOR_INFO1_LIVE, YSC, PREF)
   // 15 pts footprint (Cache > 5MB: 10 + Local Storage: 5)
   // Total = 100 pts
@@ -173,10 +175,12 @@ test('evaluateProfileWarmth: mock mature profile returns MATURE (score 90-100) a
     { host_key: '.youtube.com', name: 'VISITOR_INFO1_LIVE', hoursAgo: 50 },
     { host_key: '.youtube.com', name: 'YSC', hoursAgo: 50 },
     { host_key: '.youtube.com', name: 'PREF', hoursAgo: 50 },
-    { host_key: '.yahoo.com', name: 'B', hoursAgo: 50 },
-    { host_key: '.amazon.com', name: 'session-id', hoursAgo: 50 },
-    { host_key: '.cloudflare.com', name: 'cf_clearance', hoursAgo: 50 },
   ];
+  for (let i = 0; i < 5; i += 1) {
+    cookies.push({ host_key: '.yahoo.com', name: `y_${i}`, hoursAgo: 50 });
+    cookies.push({ host_key: '.amazon.com', name: `amz_${i}`, hoursAgo: 50 });
+    cookies.push({ host_key: '.cloudflare.com', name: `cf_${i}`, hoursAgo: 50 });
+  }
 
   const { tmpDir } = createMockProfile(t, {
     cookies,
