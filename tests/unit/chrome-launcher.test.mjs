@@ -217,6 +217,9 @@ test('forkExistingProfile copies profile state, filters cache, and refuses locke
   mkdirSync(path.join(srcProfilePath, 'Cache'), { recursive: true });
   mkdirSync(path.join(srcProfilePath, 'Code Cache', 'js'), { recursive: true });
   mkdirSync(path.join(srcProfilePath, 'GPUCache'), { recursive: true });
+  mkdirSync(path.join(srcProfilePath, 'Local Extension Settings', launcher.WEBMCP_EXTENSION_ID), { recursive: true });
+  mkdirSync(path.join(srcProfilePath, 'Sync Extension Settings', launcher.WEBMCP_EXTENSION_ID), { recursive: true });
+  mkdirSync(path.join(srcProfilePath, 'Local Extension Settings', 'other-ext-id'), { recursive: true });
 
   writeFileSync(path.join(srcUserData, 'Local State'), JSON.stringify({ profile: { last_used: 'Default' } }, null, 2));
   writeFileSync(path.join(srcProfilePath, 'Preferences'), JSON.stringify({ profile: { exit_type: 'Crashed', exited_cleanly: false } }, null, 2));
@@ -224,6 +227,9 @@ test('forkExistingProfile copies profile state, filters cache, and refuses locke
   writeFileSync(path.join(srcProfilePath, 'Cache', 'data_0'), 'cache-data');
   writeFileSync(path.join(srcProfilePath, 'Code Cache', 'js', 'data_1'), 'code-cache-data');
   writeFileSync(path.join(srcProfilePath, 'GPUCache', 'data_2'), 'gpu-cache-data');
+  writeFileSync(path.join(srcProfilePath, 'Local Extension Settings', launcher.WEBMCP_EXTENSION_ID, '000003.log'), 'storage-data');
+  writeFileSync(path.join(srcProfilePath, 'Sync Extension Settings', launcher.WEBMCP_EXTENSION_ID, '000003.log'), 'sync-data');
+  writeFileSync(path.join(srcProfilePath, 'Local Extension Settings', 'other-ext-id', 'settings.json'), '{"ok":true}');
 
   const managedProfilesDir = path.join(root, 'managed-profiles');
   const srcProfile = {
@@ -254,6 +260,12 @@ test('forkExistingProfile copies profile state, filters cache, and refuses locke
   assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'Cache')), false);
   assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'Code Cache')), false);
   assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'GPUCache')), false);
+
+  // Verify WebMCP extension storage filtered out to prevent profileId UUID collisions
+  assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'Local Extension Settings', launcher.WEBMCP_EXTENSION_ID)), false);
+  assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'Sync Extension Settings', launcher.WEBMCP_EXTENSION_ID)), false);
+  // Verify other extension settings are preserved
+  assert.equal(existsSync(path.join(res.userDataDir, 'Profile 9', 'Local Extension Settings', 'other-ext-id', 'settings.json')), true);
 
   // Verify .webmcp-meta.json
   const meta = JSON.parse(readFileSync(path.join(res.userDataDir, '.webmcp-meta.json'), 'utf8'));

@@ -6,6 +6,7 @@ const { MANAGED_PROFILES_DIR } = require('./config');
 const { isProfileLocked, createManagedProfile } = require('./launcher');
 
 const CACHE_RE = /(^|[\\/])(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|CacheStorage)([\\/]|$)/;
+const WEBMCP_STORAGE_RE = /(^|[\\/])(Local|Sync) Extension Settings[\\/]lbodkmkjbcemodklopcfdmpjomdoapae([\\/]|$)/;
 // ponytail: 12 native-clean ceiling per host (30 max with --force / micro-farbling) to prevent hardware clustering bans
 const DEFAULT_MAX_NATIVE_CLEAN_PROFILES = 12;
 const HARD_MAX_FARM_PROFILES = 30;
@@ -69,7 +70,10 @@ function forkExistingProfile(profile, name, options = {}) {
 
   fs.cpSync(srcProfilePath, path.join(dst, profile.profileDir), {
     recursive: true,
-    filter: (src) => !CACHE_RE.test(path.relative(srcProfilePath, src)),
+    filter: (src) => {
+      const rel = path.relative(srcProfilePath, src);
+      return !CACHE_RE.test(rel) && !WEBMCP_STORAGE_RE.test(rel);
+    },
   });
 
   patchJson(path.join(dst, 'Local State'), (j) => {
@@ -97,6 +101,7 @@ function forkExistingProfile(profile, name, options = {}) {
 
 module.exports = {
   CACHE_RE,
+  WEBMCP_STORAGE_RE,
   DEFAULT_MAX_NATIVE_CLEAN_PROFILES,
   HARD_MAX_FARM_PROFILES,
   countManagedProfiles,
