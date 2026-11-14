@@ -511,3 +511,91 @@ test('cli: runCookies executes import subcommand and prints human output or json
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('import: unwraps cookies export --json envelope and auto-recovers from chrome://newtab/ EXECUTION_FAILED', async () => {
+  const exportedEnvelope = {
+    status: 'success',
+    profileId: 'managed:hieu2906090001',
+    format: 'playwright',
+    exportedCount: 1,
+    data: {
+      cookies: [
+        { name: 'c_user', value: '10001', domain: '.facebook.com', path: '/', secure: true, httpOnly: true },
+      ],
+      origins: [],
+    },
+  };
+
+  const calls = [];
+  let hasAttachableTab = false;
+  const mockGatewayCall = async (method, params, profileId) => {
+    calls.push({ method, params, profileId });
+    if (method === 'newTab') {
+      hasAttachableTab = true;
+      return { tabId: 99, url: params.url };
+    }
+    if (method === 'setCookie') {
+      if (!hasAttachableTab) {
+        const err = new Error('EXECUTION_FAILED');
+        err.status = 500;
+        err.payload = { error: 'EXECUTION_FAILED', extensionError: 'Cannot access a chrome:// URL' };
+        throw err;
+      }
+      return { success: true };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  };
+
+  const result = await handleImport(
+    { profileId: 'managed:hieu2906090001', input: 'dummy.json', overwrite: true },
+    {
+      gatewayCall: mockGatewayCall,
+      healthLookup: async () => ({
+        ok: true,
+        profileDetails: [
+          { profileId: '927c8935-50df-4054-9391-46924edb564c', name: 'hieu2906090001', email: '' },
+        ],
+      }),
+      inputContent: JSON.stringify(exportedEnvelope),
+    }
+  );
+
+  assert.equal(result.status, 'success');
+  assert.equal(result.profileId, 'managed:hieu2906090001');
+  assert.equal(result.resolvedProfileId, '927c8935-50df-4054-9391-46924edb564c');
+  assert.equal(result.selectedCount, 1);
+  assert.equal(result.appliedCount, 1);
+  assert.deepEqual(
+    calls.map((c) => `${c.method}:${c.profileId}`),
+    [
+      'setCookie:927c8935-50df-4054-9391-46924edb564c',
+      'newTab:927c8935-50df-4054-9391-46924edb564c',
+      'setCookie:927c8935-50df-4054-9391-46924edb564c',
+    ]
+  );
+});
+
+test('import: also unwraps standard format { status, data: [...] } envelope', async () => {
+  const standardEnvelope = {
+    status: 'success',
+    format: 'standard',
+    exportedCount: 1,
+    data: [{ name: 'xs', value: 'abc', domain: '.facebook.com', path: '/', secure: true }],
+  };
+
+  const setCalls = [];
+  const res = await handleImport(
+    { profileId: 'target-prof', input: 'dummy.json', overwrite: true },
+    {
+      gatewayCall: async (method, params) => {
+        if (method === 'setCookie') setCalls.push(params);
+        return { success: true };
+      },
+      inputContent: JSON.stringify(standardEnvelope),
+    }
+  );
+
+  assert.equal(res.status, 'success');
+  assert.equal(res.appliedCount, 1);
+  assert.equal(setCalls[0].name, 'xs');
+});

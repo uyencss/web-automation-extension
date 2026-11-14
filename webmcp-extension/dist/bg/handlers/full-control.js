@@ -1,11 +1,11 @@
-import { resolveTabId } from '../utils.js';
+import { resolveTabId, resolveAttachableTabId } from '../utils.js';
 import { evaluateInTab, sendCDPCommand } from '../cdp-bridge.js';
 import { attachedTabs } from '../state.js';
 import { getCurrentGatewayUrl } from '../ws-client.js';
 
 export const fullControlHandlers = {
   async getCookies(params) {
-    const tabId = await resolveTabId(params);
+    const tabId = await resolveAttachableTabId(params);
     const cdpParams = {};
     if (params?.urls && Array.isArray(params.urls)) {
       cdpParams.urls = params.urls;
@@ -37,7 +37,7 @@ export const fullControlHandlers = {
       partitionKey,
     } = params;
     if (!name || value === undefined) throw new Error('Missing required params: name, value');
-    const tabId = await resolveTabId(params);
+    const tabId = await resolveAttachableTabId(params);
 
     const cdpParams = {
       name,
@@ -72,7 +72,7 @@ export const fullControlHandlers = {
   async deleteCookies(params) {
     const { name, domain, url } = params;
     if (!name) throw new Error('Missing required param: name');
-    const tabId = await resolveTabId(params);
+    const tabId = await resolveAttachableTabId(params);
 
     await sendCDPCommand(tabId, 'Network.deleteCookies', {
       name, ...(domain ? { domain } : {}), ...(url ? { url } : {}),
