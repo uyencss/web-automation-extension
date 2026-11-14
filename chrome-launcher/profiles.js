@@ -50,32 +50,55 @@ function readBrowserProfiles(browser, userDataDir) {
     return [];
   }
 
+  function extractFromPreferences(prefFile) {
+    let email = '';
+    let gaiaName = '';
+    let avatarUrl = '';
+    try {
+      if (!fs.existsSync(prefFile)) return { email, gaiaName, avatarUrl };
+      const pref = JSON.parse(fs.readFileSync(prefFile, 'utf8'));
+      const accs = Array.isArray(pref.account_info) ? pref.account_info : [];
+      for (const acc of accs) {
+        if (!email && acc?.email) email = String(acc.email).trim();
+        if (!gaiaName && (acc?.full_name || acc?.given_name)) gaiaName = acc.full_name || acc.given_name;
+        if (!avatarUrl && acc?.picture_url) avatarUrl = acc.picture_url;
+      }
+      if (!email) {
+        const candidates = [
+          pref.google?.services?.last_username,
+          pref.google?.services?.username,
+          pref.signin?.allowed_username,
+          pref.profile?.user_name,
+        ];
+        email = candidates.find((c) => typeof c === 'string' && c.includes('@')) || '';
+      }
+      if (!email && pref.signin?.accounts_metadata_dict && typeof pref.signin.accounts_metadata_dict === 'object') {
+        for (const [k, v] of Object.entries(pref.signin.accounts_metadata_dict)) {
+          if (v?.email && String(v.email).includes('@')) { email = String(v.email).trim(); break; }
+          if (String(k).includes('@')) { email = String(k).trim(); break; }
+        }
+      }
+    } catch {
+      // Safe read fallback: ignore JSON or filesystem errors
+    }
+    return { email, gaiaName, avatarUrl };
+  }
+
   return Object.entries(cache).map(([dir, info]) => {
     let name = info.name || dir;
-    let email = info.user_name || '';
+    let email = info.user_name || info.gaia_email || '';
     let gaiaName = info.gaia_name || info.gaia_given_name || '';
     let avatarUrl = '';
 
     const isDefaultOrGarbageName = !name || /^Person \d+$/i.test(name) || name === 'Your Chrome' || name === 'Default' || name.includes('@');
-    if (!email || !gaiaName || isDefaultOrGarbageName) {
-      const prefPath = path.join(userDataDir, dir, 'Preferences');
-      try {
-        if (fs.existsSync(prefPath)) {
-          const pref = JSON.parse(fs.readFileSync(prefPath, 'utf8'));
-          const accs = pref.account_info;
-          if (Array.isArray(accs) && accs.length > 0) {
-            const acc = accs[0];
-            if (!email && acc.email) email = acc.email;
-            if (!gaiaName && (acc.full_name || acc.given_name)) gaiaName = acc.full_name || acc.given_name;
-            if (acc.picture_url) avatarUrl = acc.picture_url;
-            if (isDefaultOrGarbageName) {
-              if (email) name = email.split('@')[0];
-              else if (acc.full_name) name = acc.full_name;
-            }
-          }
-        }
-      } catch {
-        // Safe read fallback: ignore JSON or filesystem errors
+    if (!email || !gaiaName || !avatarUrl || isDefaultOrGarbageName) {
+      const parsed = extractFromPreferences(path.join(userDataDir, dir, 'Preferences'));
+      if (!email && parsed.email) email = parsed.email;
+      if (!gaiaName && parsed.gaiaName) gaiaName = parsed.gaiaName;
+      if (!avatarUrl && parsed.avatarUrl) avatarUrl = parsed.avatarUrl;
+      if (isDefaultOrGarbageName) {
+        if (email) name = email.split('@')[0];
+        else if (gaiaName) name = gaiaName;
       }
     }
 
@@ -117,7 +140,7 @@ function readManagedProfiles(options = {}) {
       }
 
       let name = meta.name || entry.name;
-      let email = '';
+      let email = meta.email || '';
       let gaiaName = '';
       let avatarUrl = '';
 
@@ -126,12 +149,29 @@ function readManagedProfiles(options = {}) {
       try {
         if (fs.existsSync(prefFile)) {
           const pref = JSON.parse(fs.readFileSync(prefFile, 'utf8'));
-          const accs = pref.account_info;
-          if (Array.isArray(accs) && accs.length > 0) {
-            const acc = accs[0];
-            if (acc.email) email = acc.email;
-            if (acc.full_name || acc.given_name) gaiaName = acc.full_name || acc.given_name;
-            if (acc.picture_url) avatarUrl = acc.picture_url;
+          const accs = Array.isArray(pref.account_info) ? pref.account_info : [];
+          for (const acc of accs) {
+            if (!email && acc?.email) email = String(acc.email).trim();
+            if (!gaiaName && (acc?.full_name || acc?.given_name)) gaiaName = acc.full_name || acc.given_name;
+            if (!avatarUrl && acc?.picture_url) avatarUrl = acc.picture_url;
+          }
+          if (!email) {
+            const cand = [
+              pref.google?.services?.last_username,
+              pref.google?.services?.username,
+              pref.signin?.allowed_username,
+              pref.profile?.user_name,
+            ].find((c) => typeof c === 'string' && c.includes('@'));
+            if (cand) email = cand.trim();
+          }
+        }
+        if (!email) {
+          const lsPath = path.join(userDataDir, 'Local State');
+          if (fs.existsSync(lsPath)) {
+            const ls = JSON.parse(fs.readFileSync(lsPath, 'utf8'));
+            const info = ls?.profile?.info_cache?.[profileDir];
+            if (info?.user_name && String(info.user_name).includes('@')) email = String(info.user_name).trim();
+            else if (info?.gaia_email && String(info.gaia_email).includes('@')) email = String(info.gaia_email).trim();
           }
         }
       } catch {
