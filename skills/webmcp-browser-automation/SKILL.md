@@ -687,8 +687,26 @@ Troubleshooting:
   a session. The artifact of a handoff is the **cookie**, never a raw
   Turnstile token (one-time/form-bound).
 
-## Local Cookie Transfer CLI (`webmcp-browser cookies copy`)
+## Local Cookie Transfer CLI (`webmcp cookies export`, `import`, & `copy`)
 
+### 1. Exporting & Importing Cookies (`webmcp cookies export | import`)
+For cross-profile or cross-OS session transfer (or piping Playwright storageState between nodes):
+
+```bash
+# Export decrypted session cookies from a closed Chrome/managed profile (Playwright/JSON/Netscape):
+webmcp cookies export --profile "managed:gamer-std" --domain "facebook.com" --json > ./fb_cookies.json
+
+# Import cookies into an active Gateway profile (supports managed:<slug>, name, email, or UUID):
+webmcp cookies import --profile "managed:hieu2906090001" -i ./fb_cookies.json --overwrite --json
+
+# Direct stdin pipe (auto-unwraps { ok, data: { cookies } } envelope & opens about:blank if needed):
+webmcp fleet cookies export --node minipc --profile-id "managed:hieu2906090001" --json \
+  | webmcp cookies import --profile "managed:hieu2906090001" -i - --overwrite --json
+```
+
+> **Moving an entire profile across OSes (`Ubuntu <-> macOS`)?** Prefer **`webmcp fleet migrate`** (`packages/webmcp-fleet-kit`), which orchestrates `cross-os-cdp-cookie-bridge` (offline cookie export + `.webmcp-meta.json` + `Bookmarks` + Gateway launch + CDP `Network.setCookie` + `--verify-url`) automatically.
+
+### 2. Direct One-Shot Local Cookie Copy (`webmcp-browser cookies copy`)
 When you need to copy authenticated session cookies from an existing local Chrome profile into a connected WebMCP automation target profile without manual login or browser UI automation, use the native `cookies copy` subcommand:
 
 ```bash

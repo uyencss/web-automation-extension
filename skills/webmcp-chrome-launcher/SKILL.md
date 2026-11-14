@@ -87,6 +87,26 @@ webmcp launch --profile-id "managed:scum" --gateway --json
 
 When launching a profile that has a `.webmcp-meta.json#proxy` binding, `webmcp launch` automatically runs the fail-closed `resolveProfileLaunchGate` check (probing the proxy endpoint and verifying carrier ISP before spawning Chrome) and injects `--proxy-server`, `--proxy-bypass-list=127.0.0.1;localhost`, `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, and `TZ=<timezone>`.
 
+### Migrating a Profile Across OS / Cluster Nodes (`Ubuntu <-> macOS`)
+
+Do **NOT** copy raw Chrome `User Data` folders or `.tar.gz` archives across different operating systems (`reup-minipc` Ubuntu $\leftrightarrow$ `local` / `mac-m1` macOS): Chrome's SQLite `Cookies` are encrypted with OS-native keys (`peanuts`/Secret Service on Linux vs Keychain Safe Storage on macOS), so raw file copies lose all sessions and fail with `ERR_CROSS_OS_ARCHIVE_MISMATCH`.
+
+Always use `webmcp fleet migrate` (which auto-selects **`cross-os-cdp-cookie-bridge`** when OSes differ or **`same-os-archive`** on matching OSes) after closing the source profile (`webmcp close`):
+
+```bash
+# 1. Close the source profile cleanly on the source node if running:
+ssh reup-minipc 'webmcp close --profile-id "managed:hieu2906090001"'
+
+# 2. Migrate Ubuntu -> macOS (name managed profile by Gmail slug) and verify live Facebook feed:
+webmcp fleet migrate \
+  --from-node minipc \
+  --profile-id "managed:hieu2906090001" \
+  --to-node local \
+  --as-managed hieu2906090001 \
+  --verify-url "https://www.facebook.com" \
+  --json
+```
+
 ## Chrome 137+ does not auto-load the extension
 
 Stable and Beta Google Chrome removed the `--load-extension` command-line switch in **M137** (and the old `--disable-features=DisableLoadExtensionCommandLineSwitch` escape hatch no longer works). On those builds Chrome opens the profile but the WebMCP extension is not injected.
