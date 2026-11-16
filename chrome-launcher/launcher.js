@@ -521,22 +521,6 @@ async function launchChrome(options = {}) {
 
   const effectiveProfileDir = options.profile?.profileDir || meta.profileDir || 'Default';
 
-  if (!options.dryRun) {
-    if (!meta.detoxedForManaged && (meta.forkedFrom || meta.convertedFrom === 'chrome' || hasGoogleSecurePrefs(userDataDir, effectiveProfileDir))) {
-      if (!isProfileLocked(userDataDir)) {
-        try {
-          const { detoxForkedManagedProfile } = require('./profile-fork');
-          detoxForkedManagedProfile(userDataDir, effectiveProfileDir);
-          try {
-            meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
-          } catch {
-            meta.detoxedForManaged = true;
-          }
-        } catch {}
-      }
-    }
-  }
-
   const effectiveExtraArgs = [...(options.extraArgs || [])];
   if (chromeInfo.channel === 'chromium' && typeof meta.fingerprintSeed === 'number') {
     effectiveExtraArgs.push(`--fingerprint=${meta.fingerprintSeed}`);
@@ -607,6 +591,18 @@ async function launchChrome(options = {}) {
         message: 'Profile lock file exists without a readable PID; refusing global quitChrome() to protect other running channels. Remove stale Singleton* files in userDataDir or close the specific window manually.',
       });
     }
+  }
+
+  if (!options.dryRun && !meta.detoxedForManaged && Boolean(meta.forkedFrom || meta.convertedFrom || meta.migratedFrom) && !isProfileLocked(userDataDir)) {
+    try {
+      const { detoxForkedManagedProfile } = require('./profile-fork');
+      detoxForkedManagedProfile(userDataDir, effectiveProfileDir);
+      try {
+        meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
+      } catch {
+        meta.detoxedForManaged = true;
+      }
+    } catch {}
   }
 
   const result = spawnChrome({
@@ -732,20 +728,6 @@ async function closeChrome(options = {}) {
   return { ok: true, closedCount };
 }
 
-function hasGoogleSecurePrefs(userDataDir, profileDir) {
-  try {
-    const secPrefPath = path.join(userDataDir, profileDir, 'Secure Preferences');
-    if (!fs.existsSync(secPrefPath)) return false;
-    const raw = fs.readFileSync(secPrefPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (parsed?.protection?.macs?.google) return true;
-    if (raw.includes('"google"')) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 module.exports = {
   WEBMCP_EXTENSION_ID,
   WEBMCP_EXTENSION_STORE_URL,
@@ -770,5 +752,4 @@ module.exports = {
   waitForUnlock,
   launchChrome,
   closeChrome,
-  hasGoogleSecurePrefs,
 };

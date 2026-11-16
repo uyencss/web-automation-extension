@@ -7,6 +7,13 @@ const { isProfileLocked, createManagedProfile } = require('./launcher');
 
 const CACHE_RE = /(^|[\\/])(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|CacheStorage)([\\/]|$)/;
 const WEBMCP_STORAGE_RE = /(^|[\\/])(Local|Sync) Extension Settings[\\/]lbodkmkjbcemodklopcfdmpjomdoapae([\\/]|$)/;
+const SQLITE_MAGIC = Buffer.from('SQLite format 3\0', 'utf8');
+const CHROME_WEBSTORE_UPDATE_URL = 'https://clients2.google.com/service/update2/crx';
+const EXT_ID_RE = /^[a-p]{32}$/;
+const BUILTIN_EXTENSION_IDS = new Set([
+  'nmmhkkegccagdldgiimedpiccmgmieda',
+  'ghbmnnjooekpmoecnnnilnnbdlolhkhi',
+]);
 // ponytail: 12 native-clean ceiling per host (30 max with --force / micro-farbling) to prevent hardware clustering bans
 const DEFAULT_MAX_NATIVE_CLEAN_PROFILES = 12;
 const HARD_MAX_FARM_PROFILES = 30;
@@ -19,17 +26,109 @@ function countManagedProfiles(managedProfilesDir = MANAGED_PROFILES_DIR) {
   }
 }
 
+function atomicWriteJson(filePath, data) {
+  const tmpPath = `${filePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`);
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    throw err;
+  }
+}
+
 function patchJson(filePath, mutator) {
   let data = {};
   if (fs.existsSync(filePath)) {
+    const raw = fs.readFileSync(filePath, 'utf8');
     try {
-      data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch {
-      data = {};
+      data = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`Refusing to overwrite corrupt JSON in ${filePath}: ${err.message}`);
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error(`Refusing to overwrite non-object JSON in ${filePath}`);
     }
   }
   mutator(data);
-  fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`);
+  atomicWriteJson(filePath, data);
+}
+
+function isSqliteFile(filePath) {
+  let fd;
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size < 16) return false;
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(16);
+    const bytesRead = fs.readSync(fd, buf, 0, 16, 0);
+    return bytesRead === 16 && buf.equals(SQLITE_MAGIC);
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+}
+
+function extractWebstoreExtensionIds(targetProfilePath, secPrefsPath) {
+  const ids = new Set();
+
+  if (fs.existsSync(secPrefsPath)) {
+    try {
+      const secPrefs = JSON.parse(fs.readFileSync(secPrefsPath, 'utf8'));
+      const settings = secPrefs?.extensions?.settings;
+      if (settings && typeof settings === 'object') {
+        for (const [extId, entry] of Object.entries(settings)) {
+          if (
+            EXT_ID_RE.test(extId) &&
+            !BUILTIN_EXTENSION_IDS.has(extId) &&
+            entry &&
+            entry.from_webstore === true &&
+            ![5, 6, 10].includes(entry.location)
+          ) {
+            ids.add(extId);
+          }
+        }
+      }
+    } catch {
+      // Secure Preferences is about to be quarantined; fall through to Extensions dir scan
+    }
+  }
+
+  const extsRoot = path.join(targetProfilePath, 'Extensions');
+  if (fs.existsSync(extsRoot)) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(extsRoot, { withFileTypes: true });
+    } catch {}
+    for (const entry of entries) {
+      const extId = entry.name;
+      if (!entry.isDirectory() || !EXT_ID_RE.test(extId) || BUILTIN_EXTENSION_IDS.has(extId)) {
+        continue;
+      }
+      const extDir = path.join(extsRoot, extId);
+      let versions = [];
+      try {
+        versions = fs.readdirSync(extDir, { withFileTypes: true });
+      } catch {}
+      for (const ver of versions) {
+        if (!ver.isDirectory()) continue;
+        const manifestPath = path.join(extDir, ver.name, 'manifest.json');
+        if (!fs.existsSync(manifestPath)) continue;
+        try {
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          if (String(manifest?.update_url || '').includes('clients2.google.com/service/update2/crx')) {
+            ids.add(extId);
+            break;
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return Array.from(ids).sort();
 }
 
 function forkExistingProfile(profile, name, options = {}) {
@@ -63,10 +162,23 @@ function forkExistingProfile(profile, name, options = {}) {
     skipFingerprintSeed: true,
   });
 
+  let srcLs = null;
   const srcLocalState = path.join(profile.userDataDir, 'Local State');
   if (fs.existsSync(srcLocalState)) {
-    fs.copyFileSync(srcLocalState, path.join(dst, 'Local State'));
+    try {
+      srcLs = JSON.parse(fs.readFileSync(srcLocalState, 'utf8'));
+    } catch (err) {
+      throw new Error(`Refusing to fork with corrupt JSON in ${srcLocalState}: ${err.message}`);
+    }
   }
+  const srcInfo = srcLs?.profile?.info_cache?.[profile.profileDir];
+  const minimalLocalState = {
+    ...(srcLs?.os_crypt !== undefined ? { os_crypt: srcLs.os_crypt } : {}),
+    profile: {
+      last_used: profile.profileDir,
+      info_cache: srcInfo && typeof srcInfo === 'object' ? { [profile.profileDir]: { ...srcInfo } } : {},
+    },
+  };
 
   fs.cpSync(srcProfilePath, path.join(dst, profile.profileDir), {
     recursive: true,
@@ -76,9 +188,7 @@ function forkExistingProfile(profile, name, options = {}) {
     },
   });
 
-  patchJson(path.join(dst, 'Local State'), (j) => {
-    (j.profile ??= {}).last_used = profile.profileDir;
-  });
+  atomicWriteJson(path.join(dst, 'Local State'), minimalLocalState);
   patchJson(path.join(dst, profile.profileDir, 'Preferences'), (j) => {
     (j.profile ??= {}).exit_type = 'Normal';
     j.profile.exited_cleanly = true;
@@ -109,21 +219,29 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
   if (!fs.existsSync(targetProfilePath)) {
     return { ok: false, skipped: true };
   }
+  if (isProfileLocked(userDataDir)) {
+    return { ok: false, skipped: true, error: 'PROFILE_IN_USE' };
+  }
 
   // 1. Read Preferences (if exists) and .webmcp-meta.json (if exists)
+  const metaDir = options.metaDir || userDataDir;
   const prefsPath = path.join(targetProfilePath, 'Preferences');
-  const metaPath = path.join(userDataDir, '.webmcp-meta.json');
+  const metaPath = path.join(metaDir, '.webmcp-meta.json');
   let prefs = null;
   if (fs.existsSync(prefsPath)) {
     try {
       prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
-    } catch {}
+    } catch (err) {
+      throw new Error(`Refusing detox on corrupt JSON in ${prefsPath}: ${err.message}`);
+    }
   }
   let meta = {};
   if (fs.existsSync(metaPath)) {
     try {
       meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-    } catch {}
+    } catch (err) {
+      throw new Error(`Refusing detox on corrupt JSON in ${metaPath}: ${err.message}`);
+    }
   }
 
   // If account_info[0] exists, preserve email, full_name (gaiaName), picture_url (avatarUrl)
@@ -138,7 +256,7 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
     }
   }
 
-  // 2. Before mutating anything else: look for <profileDir>/Cookies or <profileDir>/Network/Cookies
+  // 2. Snapshot <profileDir>/Network/Cookies or <profileDir>/Cookies via VACUUM INTO before mutating prefs
   const cookieCandidates = [
     path.join(targetProfilePath, 'Network', 'Cookies'),
     path.join(targetProfilePath, 'Cookies'),
@@ -146,87 +264,65 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
   let srcCookiePath = null;
   for (const cand of cookieCandidates) {
     if (fs.existsSync(cand)) {
-      try {
-        const stat = fs.statSync(cand);
-        if (stat.size > 0) {
-          srcCookiePath = cand;
-          break;
-        }
-      } catch {}
+      const stat = fs.statSync(cand);
+      if (stat.size > 0) {
+        srcCookiePath = cand;
+        break;
+      }
     }
   }
 
-  const prebootPath = path.join(userDataDir, '.cookies-preboot.sqlite');
-  if (srcCookiePath && !isProfileLocked(userDataDir) && fs.existsSync(`${srcCookiePath}-wal`)) {
-    try {
+  const prebootPath = path.join(metaDir, '.cookies-preboot.sqlite');
+  if (srcCookiePath) {
+    if (isSqliteFile(srcCookiePath)) {
       const { DatabaseSync } = require('node:sqlite');
-      const dbMerge = new DatabaseSync(srcCookiePath);
+      const db = new DatabaseSync(srcCookiePath);
       try {
-        dbMerge.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-      } finally {
-        dbMerge.close();
-      }
-    } catch {}
-  }
-
-  if (srcCookiePath && !fs.existsSync(prebootPath)) {
-    let shouldCopy = true;
-    try {
-      const { DatabaseSync } = require('node:sqlite');
-      let dbTmp;
-      try {
-        dbTmp = new DatabaseSync(srcCookiePath, { readOnly: true });
-        const tbl = dbTmp.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='cookies'").get();
-        if (tbl && tbl.count > 0) {
-          const rowCount = dbTmp.prepare("SELECT count(*) AS count FROM cookies").get();
-          if (rowCount && rowCount.count === 0) {
-            shouldCopy = false;
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        if (!fs.existsSync(prebootPath)) {
+          const tbl = db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='cookies'").get();
+          const rowCount = tbl && tbl.count > 0
+            ? (db.prepare('SELECT count(*) AS count FROM cookies').get()?.count ?? 0)
+            : 0;
+          if (rowCount > 0) {
+            db.exec(`VACUUM INTO '${prebootPath.replace(/'/g, "''")}';`);
+            try { fs.chmodSync(prebootPath, 0o600); } catch {}
           }
         }
       } finally {
-        if (dbTmp) dbTmp.close();
+        db.close();
       }
-    } catch {
-      // If DatabaseSync fails to open (e.g. dummy test file), fallback to copying
-      shouldCopy = true;
-    }
-
-    if (shouldCopy) {
-      try {
-        fs.copyFileSync(srcCookiePath, prebootPath);
-        try { fs.chmodSync(prebootPath, 0o600); } catch {}
-        for (const ext of ['-wal', '-shm']) {
-          const auxSrc = `${srcCookiePath}${ext}`;
-          if (fs.existsSync(auxSrc)) {
-            const auxDst = `${prebootPath}${ext}`;
-            fs.copyFileSync(auxSrc, auxDst);
-            try { fs.chmodSync(auxDst, 0o600); } catch {}
-          }
-        }
-        if (fs.existsSync(`${prebootPath}-wal`)) {
-          try {
-            const { DatabaseSync } = require('node:sqlite');
-            const dbTmp = new DatabaseSync(prebootPath);
-            try {
-              dbTmp.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-            } finally {
-              dbTmp.close();
-            }
-          } catch {}
-        }
-      } catch {}
+    } else if (!fs.existsSync(prebootPath)) {
+      fs.copyFileSync(srcCookiePath, prebootPath);
+      try { fs.chmodSync(prebootPath, 0o600); } catch {}
     }
   }
 
-  // 3. Remove <profileDir>/Secure Preferences (unlink if exists)
+  // 3. Extract Web Store extension IDs before quarantining Secure Preferences -> .pre-detox
   const secPrefsPath = path.join(targetProfilePath, 'Secure Preferences');
-  if (fs.existsSync(secPrefsPath)) {
-    try {
-      fs.unlinkSync(secPrefsPath);
-    } catch {}
+  const discoveredExtensions = extractWebstoreExtensionIds(targetProfilePath, secPrefsPath);
+  if (!options.metaDir && discoveredExtensions.length > 0) {
+    const extDir = path.join(userDataDir, 'External Extensions');
+    fs.mkdirSync(extDir, { recursive: true });
+    for (const extId of discoveredExtensions) {
+      const extJsonPath = path.join(extDir, `${extId}.json`);
+      if (!fs.existsSync(extJsonPath)) {
+        atomicWriteJson(extJsonPath, { external_update_url: CHROME_WEBSTORE_UPDATE_URL });
+      }
+    }
   }
 
-  // 4. Mutate <profileDir>/Preferences (atomic/safe write JSON)
+  if (fs.existsSync(secPrefsPath)) {
+    const preDetoxPath = `${secPrefsPath}.pre-detox`;
+    if (!fs.existsSync(preDetoxPath)) {
+      fs.renameSync(secPrefsPath, preDetoxPath);
+      try { fs.chmodSync(preDetoxPath, 0o600); } catch {}
+    } else {
+      fs.unlinkSync(secPrefsPath);
+    }
+  }
+
+  // 4. Mutate <profileDir>/Preferences (atomic/fail-closed JSON)
   if (fs.existsSync(prefsPath)) {
     patchJson(prefsPath, (p) => {
       delete p.account_info;
@@ -238,7 +334,7 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
         delete p.prefs.tracked_preferences_reset;
         delete p.prefs.preference_reset_time;
       }
-      p.signin = { allowed: false };
+      p.signin = { allowed: false, allowed_on_next_startup: false };
       p.profile = {
         ...(p.profile || {}),
         exit_type: 'Normal',
@@ -262,34 +358,30 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
     });
   }
 
-  // 6. Mutate Web Data and Account Web Data (if file exists and is valid SQLite)
+  // 6. Mutate Web Data and Account Web Data (only when valid SQLite; real errors fail closed)
   for (const webDataName of ['Web Data', 'Account Web Data']) {
     const webDataPath = path.join(targetProfilePath, webDataName);
-    if (fs.existsSync(webDataPath)) {
+    if (fs.existsSync(webDataPath) && isSqliteFile(webDataPath)) {
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(webDataPath);
       try {
-        const { DatabaseSync } = require('node:sqlite');
-        const db = new DatabaseSync(webDataPath);
-        try {
-          const tbl = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='token_service'").get();
-          if (tbl) {
-            db.exec('DELETE FROM token_service;');
-            db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-          }
-        } finally {
-          db.close();
+        const tbl = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='token_service'").get();
+        if (tbl) {
+          db.exec('DELETE FROM token_service;');
+          db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
         }
-      } catch {
-        // Gracefully ignore parse/open errors on non-sqlite or dummy test files
+      } finally {
+        db.close();
       }
     }
   }
 
-  // 7. Write detoxedForManaged: true into .webmcp-meta.json
+  // 7. Write detoxedForManaged: true LAST and ONLY after all JSON/SQLite steps succeed
   meta.detoxedForManaged = true;
   meta.detoxedAt = new Date().toISOString();
-  fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+  atomicWriteJson(metaPath, meta);
 
-  return { ok: true, detoxed: true, userDataDir, profileDir };
+  return { ok: true, detoxed: true, userDataDir, profileDir, discoveredExtensions };
 }
 
 function detoxAllManagedProfiles(managedProfilesDir = MANAGED_PROFILES_DIR) {

@@ -87,17 +87,19 @@ webmcp launch --profile-id "managed:scum" --gateway --json
 
 When launching a profile that has a `.webmcp-meta.json#proxy` binding, `webmcp launch` automatically runs the fail-closed `resolveProfileLaunchGate` check (probing the proxy endpoint and verifying carrier ISP before spawning Chrome) and injects `--proxy-server`, `--proxy-bypass-list=127.0.0.1;localhost`, `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`, and `TZ=<timezone>`.
 
-### Migrating a Profile Across OS / Cluster Nodes (`Ubuntu <-> macOS`)
+- **Cross-UDD DICE Detox (`forkExistingProfile` / `detoxForkedManagedProfile` / `webmcp profiles detox`)**: Forking, converting, or migrating a profile across `--user-data-dir` invalidates Chrome's `Secure Preferences` HMAC (`PrefHashFilter`), which triggers Chrome M124+ DICE `SigninPending` and wipes `Cookies` to `0` rows if stale Google sign-in metadata remains. `forkExistingProfile` and `launchChrome` (gated strictly on provenance: `forkedFrom`, `convertedFrom`, or `migratedFrom` — fresh native profiles are never touched) automatically detox target profiles right before spawn (including after `--relaunch` unlock): WAL-checkpoint `Cookies`, `VACUUM INTO` `.cookies-preboot.sqlite` (`0o600`), extract Web Store extension IDs (`from_webstore` excluding `location` `5/6/10` and `Extensions/*/*/manifest.json` `update_url`, excluding built-in helpers) into `<userDataDir>/External Extensions/<extId>.json` for Official Chrome auto-rehydration (because Chrome M137+ ignores `--load-extension`, and on macOS `Secure Preferences` is the sole extension registry so quarantining it without `External Extensions` drops extensions), quarantine `Secure Preferences` to `Secure Preferences.pre-detox` (`0o600`, never clobbering an existing `.pre-detox`), scrub `account_info`/`google.services`/`tracked_preferences_reset`/`token_service`/`Local State` `user_name`/`gaia_id`, set `signin: { allowed: false, allowed_on_next_startup: false }`, and mark `detoxedForManaged: true` LAST only if all JSON/SQLite steps succeed. Use `webmcp profiles detox --profile-id <id> | --udd <dir> [--profile-dir <dir>] [--meta-dir <dir>] [--json]` for manual detox (`{ metaDir }` skips writing `<userDataDir>/External Extensions` when targeting a shared System Chrome UDD).
 
-Do **NOT** copy raw Chrome `User Data` folders or `.tar.gz` archives across different operating systems (`reup-minipc` Ubuntu $\leftrightarrow$ `local` / `mac-m1` macOS): Chrome's SQLite `Cookies` are encrypted with OS-native keys (`peanuts`/Secret Service on Linux vs Keychain Safe Storage on macOS), so raw file copies lose all sessions and fail with `ERR_CROSS_OS_ARCHIVE_MISMATCH`.
+### Migrating a Profile Across OS / Distinct Keychain Hosts (`Ubuntu <-> macOS` & `macOS <-> macOS`)
 
-Always use `webmcp fleet migrate` (which auto-selects **`cross-os-cdp-cookie-bridge`** when OSes differ or **`same-os-archive`** on matching OSes) after closing the source profile (`webmcp close`):
+Do **NOT** copy raw Chrome `User Data` folders or `.tar.gz` archives across different operating systems (`reup-minipc` Ubuntu <-> `local` / `mac-m1` macOS) OR across two distinct macOS hosts (`mac-m1` <-> `mac-pro14`): Chrome's SQLite `Cookies` are encrypted with OS/host-native keys (`peanuts`/Secret Service on Linux vs per-Mac Keychain `Chrome Safe Storage`), so raw file copies cannot be decrypted on another machine and fail with `ERR_CROSS_OS_ARCHIVE_MISMATCH`.
+
+Always use `webmcp fleet migrate` (which auto-selects **`cross-os-cdp-cookie-bridge`** whenever OSes differ OR `darwin <-> darwin` crosses distinct `fromNode.id !== toNode.id`, using `--allow-online` + Gateway CDP fallback over headless SSH and Direct CDP `DevToolsActivePort` injection + `SIGTERM` SQLite flush on extensionless Chrome M137+/M157 targets):
 
 ```bash
-# 1. Close the source profile cleanly on the source node if running:
+# 1. Close the source profile cleanly on the source node if running (or keep Gateway-connected when exporting over macOS SSH with --allow-online):
 ssh reup-minipc 'webmcp close --profile-id "managed:hieu2906090001"'
 
-# 2. Migrate Ubuntu -> macOS (name managed profile by Gmail slug) and verify live Facebook feed:
+# 2. Migrate Ubuntu -> macOS (or mac-m1 -> mac-pro14) and verify live Facebook feed:
 webmcp fleet migrate \
   --from-node minipc \
   --profile-id "managed:hieu2906090001" \

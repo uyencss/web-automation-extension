@@ -23,7 +23,8 @@ import {
   parseExportArgs,
   handleExport,
   resolveProfile,
-} from '../../lib/cli/commands/cookies.mjs';
+  findConnectedProfileDetail,
+} from '../../lib/cli/commands/cookies-export.mjs';
 
 const MAC_PASSWORD = 'mac-test-pass';
 const MAC_KEY = deriveMacAesKey(MAC_PASSWORD);
@@ -776,4 +777,57 @@ test('handleExport: allowOnline unwraps real executeCDP { tabId, result: { cooki
   assert.equal(result.status, 'success');
   assert.equal(result.exportedCount, 1);
   assert.equal(result.data.cookies[0].name, 'c_user');
+});
+
+test('findConnectedProfileDetail: prioritizes id/name/dir over email and refuses ambiguous duplicate emails', () => {
+  const details = [
+    { profileId: 'managed:alpha', name: 'Alpha', email: 'shared@example.com', profileDir: 'Profile 1' },
+    { profileId: 'managed:beta', name: 'Beta', email: 'shared@example.com', profileDir: 'Profile 2' },
+    { profileId: 'managed:gamma', name: 'Gamma', email: 'unique@example.com', profileDir: 'Profile 3' },
+  ];
+
+  // 1. Exact ID match beats earlier duplicate email
+  assert.equal(
+    findConnectedProfileDetail(
+      { id: 'managed:beta', name: 'Other', email: 'shared@example.com', profileDir: 'Profile 1' },
+      details
+    )?.profileId,
+    'managed:beta'
+  );
+
+  // 2. Exact name match beats earlier duplicate email
+  assert.equal(
+    findConnectedProfileDetail(
+      { id: 'uuid-unknown', name: 'Beta', email: 'shared@example.com', profileDir: 'Profile 1' },
+      details
+    )?.profileId,
+    'managed:beta'
+  );
+
+  // 3. profileDir match beats duplicate email
+  assert.equal(
+    findConnectedProfileDetail(
+      { id: 'uuid-unknown', name: 'Unknown', email: 'shared@example.com', profileDir: 'Profile 2' },
+      details
+    )?.profileId,
+    'managed:beta'
+  );
+
+  // 4. Duplicate email without id/name/dir match fails closed (returns null)
+  assert.equal(
+    findConnectedProfileDetail(
+      { id: 'uuid-unknown', name: 'Unknown', email: 'shared@example.com', profileDir: 'Profile 99' },
+      details
+    ),
+    null
+  );
+
+  // 5. Unique email matches when id/name/dir don't
+  assert.equal(
+    findConnectedProfileDetail(
+      { id: 'uuid-unknown', name: 'Unknown', email: 'unique@example.com', profileDir: 'Profile 99' },
+      details
+    )?.profileId,
+    'managed:gamma'
+  );
 });

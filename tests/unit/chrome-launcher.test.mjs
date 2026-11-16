@@ -1106,6 +1106,7 @@ test('detoxForkedManagedProfile safely guards, preserves meta, backs up cookies,
   prebootDb.close();
 
   assert.equal(existsSync(path.join(profilePath, 'Secure Preferences')), false);
+  assert.equal(existsSync(path.join(profilePath, 'Secure Preferences.pre-detox')), true);
 
   const updatedPrefs = JSON.parse(readFileSync(path.join(profilePath, 'Preferences'), 'utf8'));
   assert.equal(updatedPrefs.account_info, undefined);
@@ -1113,7 +1114,7 @@ test('detoxForkedManagedProfile safely guards, preserves meta, backs up cookies,
   assert.equal(updatedPrefs.protection, undefined);
   assert.equal(updatedPrefs.prefs?.tracked_preferences_reset, undefined);
   assert.equal(updatedPrefs.prefs?.preference_reset_time, undefined);
-  assert.deepEqual(updatedPrefs.signin, { allowed: false });
+  assert.deepEqual(updatedPrefs.signin, { allowed: false, allowed_on_next_startup: false });
   assert.equal(updatedPrefs.profile?.exit_type, 'Normal');
   assert.equal(updatedPrefs.profile?.exited_cleanly, true);
 
@@ -1131,18 +1132,34 @@ test('detoxForkedManagedProfile safely guards, preserves meta, backs up cookies,
   checkWDb.close();
 });
 
-test('hasGoogleSecurePrefs detects Google HMAC in Secure Preferences', () => {
+test('fresh native managed profiles without provenance are NOT detoxed on launch even with google in Secure Preferences', async () => {
+  assert.equal(launcher.hasGoogleSecurePrefs, undefined);
   const root = tempRoot();
-  const dir = path.join(root, 'has-sec-pref');
-  mkdirSync(path.join(dir, 'Default'), { recursive: true });
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const extensionPath = fakeExtensionDir(root);
+  const ud = launcher.createManagedProfile('fresh-native', { managedProfilesDir });
+  const defDir = path.join(ud, 'Default');
+  mkdirSync(defDir, { recursive: true });
+  writeFileSync(path.join(defDir, 'Preferences'), JSON.stringify({ signin: { allowed: true } }));
+  writeFileSync(path.join(defDir, 'Secure Preferences'), '{"protection":{"macs":{"google":"valid-hmac"}}}');
 
-  assert.equal(launcher.hasGoogleSecurePrefs(dir, 'Default'), false);
+  const fakeBin = path.join(root, 'fake-chrome.sh');
+  writeFileSync(fakeBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Google Chrome 130.0.0.0"; exit 0; fi\nexit 0\n');
+  chmodSync(fakeBin, 0o755);
 
-  writeFileSync(path.join(dir, 'Default', 'Secure Preferences'), '{"protection":{"macs":{"google":"valid-hmac"}}}');
-  assert.equal(launcher.hasGoogleSecurePrefs(dir, 'Default'), true);
-
-  writeFileSync(path.join(dir, 'Default', 'Secure Preferences'), '{"protection":{"macs":{"other":"valid-hmac"}}}');
-  assert.equal(launcher.hasGoogleSecurePrefs(dir, 'Default'), false);
+  const res = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: ud, profileDir: 'Default' },
+    chromePath: fakeBin,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile: path.join(root, 'sessions.json'),
+  });
+  assert.equal(res.ok, true);
+  assert.equal(existsSync(path.join(defDir, 'Secure Preferences')), true);
+  assert.equal(existsSync(path.join(defDir, 'Secure Preferences.pre-detox')), false);
+  const meta = JSON.parse(readFileSync(path.join(ud, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(meta.detoxedForManaged, undefined);
 });
 
 test('detoxForkedManagedProfile checkpoints Cookies-wal into Cookies and .cookies-preboot.sqlite', () => {
@@ -1208,4 +1225,217 @@ test('detoxAllManagedProfiles detoxes unlocked profiles and skips locked ones', 
   assert.equal(unlockedMeta.email, 'u@example.com');
 
   assert.equal(existsSync(path.join(locked, 'Default', 'Secure Preferences')), true);
+});
+
+test('detoxForkedManagedProfile respects custom options.metaDir for managed-to-chrome', () => {
+  const root = tempRoot();
+  const sysChrome = path.join(root, 'SystemChrome');
+  const pdir = path.join(sysChrome, 'Profile 4');
+  mkdirSync(pdir, { recursive: true });
+  writeFileSync(path.join(pdir, 'Preferences'), JSON.stringify({ account_info: [{ email: 'm2c@example.com' }], signin: { allowed: true } }));
+  writeFileSync(path.join(pdir, 'Secure Preferences'), '{"protection":{"macs":{"google":"old"}}}');
+  const { DatabaseSync } = require('node:sqlite');
+  const cdb = new DatabaseSync(path.join(pdir, 'Cookies'));
+  cdb.exec("CREATE TABLE cookies (name TEXT, value TEXT); INSERT INTO cookies VALUES ('SID', 'abc');");
+  cdb.close();
+
+  const res = launcher.detoxForkedManagedProfile(sysChrome, 'Profile 4', { metaDir: pdir });
+  assert.equal(res.ok, true);
+  assert.equal(existsSync(path.join(pdir, 'Secure Preferences')), false);
+  assert.equal(existsSync(path.join(pdir, '.cookies-preboot.sqlite')), true);
+  assert.equal(existsSync(path.join(sysChrome, '.cookies-preboot.sqlite')), false);
+  const meta = JSON.parse(readFileSync(path.join(pdir, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(meta.email, 'm2c@example.com');
+  assert.equal(meta.detoxedForManaged, true);
+  assert.equal(existsSync(path.join(sysChrome, 'External Extensions')), false);
+});
+
+test('detoxForkedManagedProfile preserves .pre-detox without clobbering and generates External Extensions JSON for Web Store IDs', () => {
+  const root = tempRoot();
+  const ud = path.join(root, 'ext-rehydrate');
+  const pdir = path.join(ud, 'Default');
+  const extFromSp = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const extFromDir = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const extLocation10 = 'cccccccccccccccccccccccccccccccc';
+  const builtinPayments = 'nmmhkkegccagdldgiimedpiccmgmieda';
+  const builtinDocs = 'ghbmnnjooekpmoecnnnilnnbdlolhkhi';
+
+  mkdirSync(path.join(pdir, 'Extensions', extFromDir, '1.0_0'), { recursive: true });
+  mkdirSync(path.join(pdir, 'Extensions', builtinDocs, '1.0_0'), { recursive: true });
+  writeFileSync(path.join(pdir, 'Preferences'), JSON.stringify({ signin: { allowed: true } }));
+  writeFileSync(path.join(pdir, 'Secure Preferences'), JSON.stringify({
+    extensions: {
+      settings: {
+        [extFromSp]: { from_webstore: true, location: 1 },
+        [extLocation10]: { from_webstore: true, location: 10 },
+        [builtinPayments]: { from_webstore: true, location: 1 },
+      },
+    },
+  }));
+  writeFileSync(
+    path.join(pdir, 'Extensions', extFromDir, '1.0_0', 'manifest.json'),
+    JSON.stringify({ name: 'FromDir', update_url: 'https://clients2.google.com/service/update2/crx' })
+  );
+  writeFileSync(
+    path.join(pdir, 'Extensions', builtinDocs, '1.0_0', 'manifest.json'),
+    JSON.stringify({ name: 'DocsOffline', update_url: 'https://clients2.google.com/service/update2/crx' })
+  );
+  writeFileSync(path.join(ud, '.webmcp-meta.json'), JSON.stringify({ profileDir: 'Default' }));
+
+  const res1 = launcher.detoxForkedManagedProfile(ud, 'Default');
+  assert.equal(res1.ok, true);
+  assert.deepEqual(res1.discoveredExtensions, [extFromSp, extFromDir]);
+
+  const preDetoxPath = path.join(pdir, 'Secure Preferences.pre-detox');
+  assert.equal(existsSync(path.join(pdir, 'Secure Preferences')), false);
+  assert.equal(existsSync(preDetoxPath), true);
+  assert.equal(statSync(preDetoxPath).mode & 0o777, 0o600);
+  const origPreDetox = readFileSync(preDetoxPath, 'utf8');
+
+  for (const id of [extFromSp, extFromDir]) {
+    const extJson = JSON.parse(readFileSync(path.join(ud, 'External Extensions', `${id}.json`), 'utf8'));
+    assert.equal(extJson.external_update_url, 'https://clients2.google.com/service/update2/crx');
+  }
+  assert.equal(existsSync(path.join(ud, 'External Extensions', `${extLocation10}.json`)), false);
+  assert.equal(existsSync(path.join(ud, 'External Extensions', `${builtinPayments}.json`)), false);
+  assert.equal(existsSync(path.join(ud, 'External Extensions', `${builtinDocs}.json`)), false);
+
+  // Repeat detox with a new Secure Preferences must NOT clobber original .pre-detox
+  writeFileSync(path.join(pdir, 'Secure Preferences'), '{"newer":true}');
+  const res2 = launcher.detoxForkedManagedProfile(ud, 'Default');
+  assert.equal(res2.ok, true);
+  assert.equal(existsSync(path.join(pdir, 'Secure Preferences')), false);
+  assert.equal(readFileSync(preDetoxPath, 'utf8'), origPreDetox);
+});
+
+test('forkExistingProfile builds minimal Local State without sibling profile leakage', () => {
+  const root = tempRoot();
+  const srcUserData = path.join(root, 'source-chrome');
+  mkdirSync(path.join(srcUserData, 'Profile 9'), { recursive: true });
+  writeFileSync(
+    path.join(srcUserData, 'Local State'),
+    JSON.stringify({
+      os_crypt: { encrypted_key: 'keep-me' },
+      profile: {
+        last_used: 'Default',
+        info_cache: {
+          Default: { name: 'Sibling Main', gaia_id: 'sibling-gaia', user_name: 'sibling@example.com' },
+          'Profile 9': { name: 'Target P9', gaia_id: 'target-gaia', user_name: 'target@example.com' },
+        },
+      },
+      unrelated_secret_tree: { should_not_copy: true },
+    })
+  );
+  writeFileSync(path.join(srcUserData, 'Profile 9', 'Preferences'), JSON.stringify({ profile: {} }));
+
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const res = launcher.forkExistingProfile(
+    { id: 'Chrome:Profile 9', browser: 'Chrome', userDataDir: srcUserData, profileDir: 'Profile 9' },
+    'isolated-p9',
+    { managedProfilesDir }
+  );
+  assert.equal(res.ok, true);
+  const dstLs = JSON.parse(readFileSync(path.join(res.userDataDir, 'Local State'), 'utf8'));
+  assert.equal(dstLs.unrelated_secret_tree, undefined);
+  assert.deepEqual(dstLs.os_crypt, { encrypted_key: 'keep-me' });
+  assert.equal(dstLs.profile.last_used, 'Profile 9');
+  assert.deepEqual(Object.keys(dstLs.profile.info_cache), ['Profile 9']);
+  assert.equal(dstLs.profile.info_cache.Default, undefined);
+  assert.equal(dstLs.profile.info_cache['Profile 9'].gaia_id, undefined);
+  assert.equal(dstLs.profile.info_cache['Profile 9'].user_name, undefined);
+});
+
+test('detoxForkedManagedProfile fails closed on corrupt JSON without setting detoxedForManaged or overwriting file', () => {
+  const root = tempRoot();
+  const ud = path.join(root, 'corrupt-detox');
+  const pdir = path.join(ud, 'Default');
+  mkdirSync(pdir, { recursive: true });
+  writeFileSync(path.join(pdir, 'Preferences'), '{ broken json !!!');
+  writeFileSync(path.join(ud, '.webmcp-meta.json'), JSON.stringify({ profileDir: 'Default' }));
+
+  assert.throws(
+    () => launcher.detoxForkedManagedProfile(ud, 'Default'),
+    /corrupt JSON/i
+  );
+  assert.equal(readFileSync(path.join(pdir, 'Preferences'), 'utf8'), '{ broken json !!!');
+  const meta = JSON.parse(readFileSync(path.join(ud, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(meta.detoxedForManaged, undefined);
+});
+
+test('launchChrome with --relaunch auto-detoxes provenance profile after unlock', async () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const extensionPath = fakeExtensionDir(root);
+  const ud = path.join(managedProfilesDir, 'relaunch-detox');
+  const pdir = path.join(ud, 'Default');
+  mkdirSync(pdir, { recursive: true });
+  writeFileSync(path.join(ud, '.webmcp-meta.json'), JSON.stringify({ name: 'relaunch-detox', profileDir: 'Default', forkedFrom: 'Chrome:Default' }));
+  writeFileSync(path.join(pdir, 'Preferences'), JSON.stringify({ account_info: [{ email: 'relaunch@example.com' }], signin: { allowed: true } }));
+  writeFileSync(path.join(pdir, 'Secure Preferences'), '{"protection":{"macs":{"google":"hmac"}}}');
+
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  const lockPath = path.join(ud, 'SingletonLock');
+  symlinkSync(`host-${child.pid}`, lockPath);
+  const origKill = process.kill;
+  // Ensure test cleanup on child exit removes lock so waitForUnlock observes unlock
+  child.on('exit', () => { try { unlinkSync(lockPath); } catch {} });
+
+  const fakeBin = path.join(root, 'fake-chrome.sh');
+  writeFileSync(fakeBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Google Chrome 130.0.0.0"; exit 0; fi\nexit 0\n');
+  chmodSync(fakeBin, 0o755);
+
+  const res = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: ud, profileDir: 'Default' },
+    relaunch: true,
+    chromePath: fakeBin,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile: path.join(root, 'sessions.json'),
+  });
+  assert.equal(typeof origKill, 'function');
+  assert.equal(res.ok, true);
+  assert.equal(existsSync(path.join(pdir, 'Secure Preferences')), false);
+  assert.equal(existsSync(path.join(pdir, 'Secure Preferences.pre-detox')), true);
+  const meta = JSON.parse(readFileSync(path.join(ud, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(meta.detoxedForManaged, true);
+  assert.equal(meta.email, 'relaunch@example.com');
+});
+
+test('webmcp profiles detox CLI supports --profile-id, --udd, and fails non-zero when locked', () => {
+  const root = tempRoot();
+  const managedDir = path.join(root, 'managed-profiles');
+  const ud = path.join(managedDir, 'cli-detox');
+  const pdir = path.join(ud, 'Profile 2');
+  mkdirSync(pdir, { recursive: true });
+  writeFileSync(path.join(ud, '.webmcp-meta.json'), JSON.stringify({ name: 'cli-detox', profileDir: 'Profile 2' }));
+  writeFileSync(path.join(pdir, 'Preferences'), JSON.stringify({ account_info: [{ email: 'cli@example.com' }] }));
+  writeFileSync(path.join(pdir, 'Secure Preferences'), '{"protection":{"macs":{"google":"x"}}}');
+
+  const okRes = spawnSync(process.execPath, [BIN, 'profiles', 'detox', '--profile-id', 'managed:cli-detox', '--json'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_DATA_DIR: root },
+  });
+  assert.equal(okRes.status, 0, okRes.stderr);
+  const okPayload = JSON.parse(okRes.stdout);
+  assert.equal(okPayload.ok, true);
+  assert.equal(okPayload.detoxed, true);
+  assert.equal(existsSync(path.join(pdir, 'Secure Preferences.pre-detox')), true);
+
+  // Locked target via --udd must exit non-zero
+  symlinkSync(`host-${process.pid}`, path.join(ud, 'SingletonLock'));
+  const lockedRes = spawnSync(process.execPath, [BIN, 'profiles', 'detox', '--udd', ud, '--profile-dir', 'Profile 2', '--json'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_DATA_DIR: root },
+  });
+  assert.equal(lockedRes.status, 1);
+  const lockedPayload = JSON.parse(lockedRes.stdout);
+  assert.equal(lockedPayload.ok, false);
+  assert.equal(lockedPayload.error, 'PROFILE_IN_USE');
 });
