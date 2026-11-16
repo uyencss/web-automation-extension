@@ -484,3 +484,224 @@ test('decryptCookieValue (Linux Dual-Key): decrypts v10 (peanuts) and v11 (keyri
     (err) => err.code === 'LINUX_KEYRING_UNAVAILABLE'
   );
 });
+
+test('parseExportArgs: parses --allow-online flag', () => {
+  const optsDefault = parseExportArgs(['--profile', 'Default']);
+  assert.equal(optsDefault.allowOnline, false);
+
+  const optsOnline = parseExportArgs(['--profile', 'Default', '--allow-online']);
+  assert.equal(optsOnline.allowOnline, true);
+});
+
+test('exportLocalCookies: allowOnline bypasses SingletonLock and active WAL, checkpoints snapshot, and cleans up temp directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'online-cookie-test-'));
+  try {
+    const profileDir = 'Default';
+    const profileRoot = path.join(root, profileDir);
+    const dbPath = path.join(profileRoot, 'Network', 'Cookies');
+
+    createSyntheticCookieDb(dbPath, [
+      {
+        host_key: '.example.com',
+        name: 'auth_token',
+        value: 'plain_secret',
+        is_secure: 1,
+        is_httponly: 1,
+      },
+    ]);
+
+    const lockTarget = `host-${process.pid}`;
+    fs.symlinkSync(lockTarget, path.join(root, 'SingletonLock'));
+    fs.writeFileSync(`${dbPath}-wal`, 'wal-content');
+
+    const profile = { id: 'test-profile', userDataDir: root, profileDir };
+
+    assert.throws(
+      () => exportLocalCookies(profile, { allowOnline: false }),
+      (err) => err.code === 'SOURCE_PROFILE_BUSY' || err.code === 'SOURCE_DATABASE_WAL_ACTIVE'
+    );
+
+    const res = exportLocalCookies(profile, { allowOnline: true });
+    assert.equal(res.exportedCount, 1);
+    assert.equal(res.data.cookies[0].name, 'auth_token');
+    assert.equal(res.data.cookies[0].value, 'plain_secret');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('exportLocalCookies: allowOnline supports large payload (up to 8 MiB) without throwing LIMIT_EXCEEDED', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'large-cookie-test-'));
+  try {
+    const profileDir = 'Default';
+    const profileRoot = path.join(root, profileDir);
+    const dbPath = path.join(profileRoot, 'Network', 'Cookies');
+
+    const bigValue = 'x'.repeat(1500 * 1024);
+    createSyntheticCookieDb(dbPath, [
+      {
+        host_key: '.example.com',
+        name: 'large_token',
+        value: bigValue,
+        is_secure: 1,
+      },
+    ]);
+
+    const profile = { id: 'test-profile', userDataDir: root, profileDir };
+
+    assert.throws(
+      () => exportLocalCookies(profile, { allowOnline: false, checkProcess: false }),
+      (err) => err.code === 'LIMIT_EXCEEDED'
+    );
+
+    const res = exportLocalCookies(profile, { allowOnline: true, checkProcess: false });
+    assert.equal(res.exportedCount, 1);
+    assert.equal(res.data.cookies[0].name, 'large_token');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('handleExport: allowOnline falls back to Gateway Network.getAllCookies on KEYCHAIN_DENIED', async () => {
+  let cdpCalledWith = null;
+
+  const fakeGatewayHealth = async () => ({
+    extensionConnected: true,
+    profileDetails: [
+      { profileId: 'managed:test-online', name: 'Test Online', email: 'online@example.com' },
+    ],
+  });
+
+  const fakeGatewayCall = async (method, params, profileId) => {
+    cdpCalledWith = { method, params, profileId };
+    return {
+      cookies: [
+        {
+          name: 'cdp_session',
+          value: 'cdp_val_123',
+          domain: '.tiktok.com',
+          path: '/',
+          secure: true,
+          httpOnly: true,
+          expires: Date.now() / 1000 + 3600,
+        },
+        {
+          name: 'other_domain',
+          value: 'other_val',
+          domain: '.other.com',
+          path: '/',
+          secure: true,
+          httpOnly: false,
+          expires: Date.now() / 1000 + 3600,
+        },
+      ],
+    };
+  };
+
+  const fakeProfileResolver = () => ({
+    id: 'managed:test-online',
+    name: 'Test Online',
+    userDataDir: '/tmp/fake',
+    profileDir: 'Default',
+  });
+
+  const fakeExporterThrowingKeychain = () => {
+    const err = new Error('macOS keychain denied');
+    err.code = 'KEYCHAIN_DENIED';
+    throw err;
+  };
+
+  const result = await handleExport(
+    {
+      profileId: 'test-online',
+      allowOnline: true,
+      domain: 'tiktok.com',
+      format: 'playwright',
+    },
+    {
+      profileResolver: fakeProfileResolver,
+      cookieExporter: fakeExporterThrowingKeychain,
+      gatewayHealthLookup: fakeGatewayHealth,
+      gatewayCaller: fakeGatewayCall,
+    }
+  );
+
+  assert.equal(result.status, 'success');
+  assert.equal(result.exportedCount, 1);
+  assert.equal(result.data.cookies[0].name, 'cdp_session');
+  assert.equal(result.data.cookies[0].value, 'cdp_val_123');
+  assert.equal(cdpCalledWith?.method, 'executeCDP');
+  assert.equal(cdpCalledWith?.params?.method, 'Network.getAllCookies');
+  assert.equal(cdpCalledWith?.profileId, 'managed:test-online');
+});
+
+test('handleExport: allowOnline falls back to Gateway Network.getAllCookies when local DB returns 0 cookies', async () => {
+  const fakeGatewayHealth = async () => ({
+    profileDetails: [{ profileId: 'managed:empty-local', name: 'Empty' }],
+  });
+
+  const fakeGatewayCall = async () => ({
+    cookies: [
+      {
+        name: 'gateway_cookie',
+        value: 'found_in_gateway',
+        domain: '.example.com',
+        path: '/',
+        secure: true,
+        httpOnly: false,
+      },
+    ],
+  });
+
+  const fakeExporterEmpty = () => ({
+    profileId: 'managed:empty-local',
+    format: 'playwright',
+    totalFound: 0,
+    exportedCount: 0,
+    expiredCount: 0,
+    data: { cookies: [] },
+  });
+
+  const result = await handleExport(
+    {
+      profileId: 'empty-local',
+      allowOnline: true,
+      format: 'playwright',
+    },
+    {
+      profileResolver: () => ({ id: 'managed:empty-local', name: 'Empty' }),
+      cookieExporter: fakeExporterEmpty,
+      gatewayHealthLookup: fakeGatewayHealth,
+      gatewayCaller: fakeGatewayCall,
+    }
+  );
+
+  assert.equal(result.exportedCount, 1);
+  assert.equal(result.data.cookies[0].name, 'gateway_cookie');
+});
+
+test('handleExport: rethrows KEYCHAIN_DENIED if Gateway is not connected or profile not found in health', async () => {
+  const fakeGatewayHealth = async () => ({
+    profileDetails: [],
+  });
+
+  const fakeExporterThrowing = () => {
+    const err = new Error('keychain denied');
+    err.code = 'KEYCHAIN_DENIED';
+    throw err;
+  };
+
+  await assert.rejects(
+    async () => {
+      await handleExport(
+        { profileId: 'p1', allowOnline: true },
+        {
+          profileResolver: () => ({ id: 'managed:p1' }),
+          cookieExporter: fakeExporterThrowing,
+          gatewayHealthLookup: fakeGatewayHealth,
+        }
+      );
+    },
+    (err) => err.code === 'KEYCHAIN_DENIED'
+  );
+});

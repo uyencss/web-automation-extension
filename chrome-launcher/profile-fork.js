@@ -88,6 +88,8 @@ function forkExistingProfile(profile, name, options = {}) {
     j.forkedFrom = forkedFrom;
   });
 
+  detoxForkedManagedProfile(dst, profile.profileDir);
+
   return {
     ok: true,
     id: `managed:${path.basename(dst)}`,
@@ -99,6 +101,185 @@ function forkExistingProfile(profile, name, options = {}) {
   };
 }
 
+function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
+  if (!userDataDir || !profileDir) {
+    return { ok: false, skipped: true };
+  }
+  const targetProfilePath = path.join(userDataDir, profileDir);
+  if (!fs.existsSync(targetProfilePath)) {
+    return { ok: false, skipped: true };
+  }
+
+  // 1. Read Preferences (if exists) and .webmcp-meta.json (if exists)
+  const prefsPath = path.join(targetProfilePath, 'Preferences');
+  const metaPath = path.join(userDataDir, '.webmcp-meta.json');
+  let prefs = null;
+  if (fs.existsSync(prefsPath)) {
+    try {
+      prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
+    } catch {}
+  }
+  let meta = {};
+  if (fs.existsSync(metaPath)) {
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    } catch {}
+  }
+
+  // If account_info[0] exists, preserve email, full_name (gaiaName), picture_url (avatarUrl)
+  if (Array.isArray(prefs?.account_info) && prefs.account_info.length > 0) {
+    const acc = prefs.account_info[0];
+    if (acc && typeof acc === 'object') {
+      if ((!meta.email || meta.email === '') && acc.email) meta.email = acc.email;
+      const gaiaName = acc.full_name || acc.name || acc.given_name;
+      if ((!meta.gaiaName || meta.gaiaName === '') && gaiaName) meta.gaiaName = gaiaName;
+      const avatarUrl = acc.picture_url || acc.picture;
+      if ((!meta.avatarUrl || meta.avatarUrl === '') && avatarUrl) meta.avatarUrl = avatarUrl;
+    }
+  }
+
+  // 2. Before mutating anything else: look for <profileDir>/Cookies or <profileDir>/Network/Cookies
+  const cookieCandidates = [
+    path.join(targetProfilePath, 'Network', 'Cookies'),
+    path.join(targetProfilePath, 'Cookies'),
+  ];
+  let srcCookiePath = null;
+  for (const cand of cookieCandidates) {
+    if (fs.existsSync(cand)) {
+      try {
+        const stat = fs.statSync(cand);
+        if (stat.size > 0) {
+          srcCookiePath = cand;
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  const prebootPath = path.join(userDataDir, '.cookies-preboot.sqlite');
+  if (srcCookiePath && !fs.existsSync(prebootPath)) {
+    let shouldCopy = true;
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      let dbTmp;
+      try {
+        dbTmp = new DatabaseSync(srcCookiePath, { readOnly: true });
+        const tbl = dbTmp.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='cookies'").get();
+        if (tbl && tbl.count > 0) {
+          const rowCount = dbTmp.prepare("SELECT count(*) AS count FROM cookies").get();
+          if (rowCount && rowCount.count === 0) {
+            shouldCopy = false;
+          }
+        }
+      } finally {
+        if (dbTmp) dbTmp.close();
+      }
+    } catch {
+      // If DatabaseSync fails to open (e.g. dummy test file), fallback to copying
+      shouldCopy = true;
+    }
+
+    if (shouldCopy) {
+      try {
+        fs.copyFileSync(srcCookiePath, prebootPath);
+        try { fs.chmodSync(prebootPath, 0o600); } catch {}
+        for (const ext of ['-wal', '-shm']) {
+          const auxSrc = `${srcCookiePath}${ext}`;
+          if (fs.existsSync(auxSrc)) {
+            const auxDst = `${prebootPath}${ext}`;
+            fs.copyFileSync(auxSrc, auxDst);
+            try { fs.chmodSync(auxDst, 0o600); } catch {}
+          }
+        }
+        if (fs.existsSync(`${prebootPath}-wal`)) {
+          try {
+            const { DatabaseSync } = require('node:sqlite');
+            const dbTmp = new DatabaseSync(prebootPath);
+            try {
+              dbTmp.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+            } finally {
+              dbTmp.close();
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  }
+
+  // 3. Remove <profileDir>/Secure Preferences (unlink if exists)
+  const secPrefsPath = path.join(targetProfilePath, 'Secure Preferences');
+  if (fs.existsSync(secPrefsPath)) {
+    try {
+      fs.unlinkSync(secPrefsPath);
+    } catch {}
+  }
+
+  // 4. Mutate <profileDir>/Preferences (atomic/safe write JSON)
+  if (fs.existsSync(prefsPath)) {
+    patchJson(prefsPath, (p) => {
+      delete p.account_info;
+      if (p.google) {
+        delete p.google.services;
+      }
+      delete p.protection;
+      if (p.prefs) {
+        delete p.prefs.tracked_preferences_reset;
+        delete p.prefs.preference_reset_time;
+      }
+      p.signin = { allowed: false };
+      p.profile = {
+        ...(p.profile || {}),
+        exit_type: 'Normal',
+        exited_cleanly: true,
+      };
+    });
+  }
+
+  // 5. Mutate <userDataDir>/Local State (if exists)
+  const localStatePath = path.join(userDataDir, 'Local State');
+  if (fs.existsSync(localStatePath)) {
+    patchJson(localStatePath, (ls) => {
+      const infoCache = ls.profile?.info_cache;
+      if (infoCache && infoCache[profileDir]) {
+        const entry = infoCache[profileDir];
+        delete entry.gaia_id;
+        delete entry.user_name;
+        entry.is_consented_primary_account = false;
+        entry.is_ephemeral = false;
+      }
+    });
+  }
+
+  // 6. Mutate Web Data and Account Web Data (if file exists and is valid SQLite)
+  for (const webDataName of ['Web Data', 'Account Web Data']) {
+    const webDataPath = path.join(targetProfilePath, webDataName);
+    if (fs.existsSync(webDataPath)) {
+      try {
+        const { DatabaseSync } = require('node:sqlite');
+        const db = new DatabaseSync(webDataPath);
+        try {
+          const tbl = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='token_service'").get();
+          if (tbl) {
+            db.exec('DELETE FROM token_service;');
+            db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+          }
+        } finally {
+          db.close();
+        }
+      } catch {
+        // Gracefully ignore parse/open errors on non-sqlite or dummy test files
+      }
+    }
+  }
+
+  // 7. Write detoxedForManaged: true into .webmcp-meta.json
+  meta.detoxedForManaged = true;
+  meta.detoxedAt = new Date().toISOString();
+  fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+
+  return { ok: true, detoxed: true, userDataDir, profileDir };
+}
+
 module.exports = {
   CACHE_RE,
   WEBMCP_STORAGE_RE,
@@ -106,4 +287,5 @@ module.exports = {
   HARD_MAX_FARM_PROFILES,
   countManagedProfiles,
   forkExistingProfile,
+  detoxForkedManagedProfile,
 };

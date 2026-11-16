@@ -1011,3 +1011,136 @@ test('forkExistingProfile enforces host profile ceiling unless force is true', (
   const ok = launcher.forkExistingProfile(srcProfile, 'p1', { managedProfilesDir, force: true });
   assert.equal(ok.totalManagedCount, 2);
 });
+
+test('detoxForkedManagedProfile safely guards, preserves meta, backs up cookies, unlinks Secure Preferences and cleans Preferences/Local State/Web Data', () => {
+  const root = tempRoot();
+  const userDataDir = path.join(root, 'managed-detox');
+  const profileDir = 'Profile 1';
+  const profilePath = path.join(userDataDir, profileDir);
+  mkdirSync(profilePath, { recursive: true });
+
+  // 1. Guard test
+  assert.deepEqual(launcher.detoxForkedManagedProfile(null, 'Default'), { ok: false, skipped: true });
+  assert.deepEqual(launcher.detoxForkedManagedProfile(userDataDir, 'NonExistent'), { ok: false, skipped: true });
+
+  // 2. Set up initial files:
+  writeFileSync(
+    path.join(profilePath, 'Preferences'),
+    JSON.stringify({
+      account_info: [
+        {
+          email: 'detox.user@example.com',
+          full_name: 'Detox User',
+          picture_url: 'https://example.com/avatar.jpg',
+        },
+      ],
+      google: { services: { sync: { enabled: true } } },
+      protection: { macs: { google: 'some-hmac' } },
+      prefs: {
+        tracked_preferences_reset: 1,
+        preference_reset_time: 123456,
+      },
+      profile: { exit_type: 'Crashed', exited_cleanly: false },
+    })
+  );
+
+  writeFileSync(path.join(profilePath, 'Secure Preferences'), '{"protection":{"macs":{"google":"hmac"}}}');
+
+  writeFileSync(
+    path.join(userDataDir, 'Local State'),
+    JSON.stringify({
+      profile: {
+        info_cache: {
+          'Profile 1': {
+            gaia_id: '123456789',
+            user_name: 'detox.user@example.com',
+            name: 'Display Name',
+            is_consented_primary_account: true,
+            is_ephemeral: true,
+          },
+        },
+      },
+    })
+  );
+
+  mkdirSync(path.join(profilePath, 'Network'), { recursive: true });
+  const cookieDbPath = path.join(profilePath, 'Network', 'Cookies');
+  const { DatabaseSync } = require('node:sqlite');
+  const cDb = new DatabaseSync(cookieDbPath);
+  cDb.exec(`
+    CREATE TABLE cookies (name TEXT, value TEXT);
+    INSERT INTO cookies VALUES ('session', 'secret123');
+  `);
+  cDb.close();
+
+  const webDataPath = path.join(profilePath, 'Web Data');
+  const wDb = new DatabaseSync(webDataPath);
+  wDb.exec(`
+    CREATE TABLE token_service (service TEXT, encrypted_token BLOB);
+    INSERT INTO token_service VALUES ('gaia', X'0102');
+  `);
+  wDb.close();
+
+  writeFileSync(
+    path.join(userDataDir, '.webmcp-meta.json'),
+    JSON.stringify({ profileDir: 'Profile 1' })
+  );
+
+  const detoxRes = launcher.detoxForkedManagedProfile(userDataDir, profileDir);
+  assert.equal(detoxRes.ok, true);
+  assert.equal(detoxRes.detoxed, true);
+
+  const meta = JSON.parse(readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(meta.email, 'detox.user@example.com');
+  assert.equal(meta.gaiaName, 'Detox User');
+  assert.equal(meta.avatarUrl, 'https://example.com/avatar.jpg');
+  assert.equal(meta.detoxedForManaged, true);
+  assert.ok(meta.detoxedAt);
+
+  const prebootPath = path.join(userDataDir, '.cookies-preboot.sqlite');
+  assert.ok(existsSync(prebootPath));
+  const prebootDb = new DatabaseSync(prebootPath);
+  const rows = prebootDb.prepare('SELECT name, value FROM cookies').all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'session');
+  prebootDb.close();
+
+  assert.equal(existsSync(path.join(profilePath, 'Secure Preferences')), false);
+
+  const updatedPrefs = JSON.parse(readFileSync(path.join(profilePath, 'Preferences'), 'utf8'));
+  assert.equal(updatedPrefs.account_info, undefined);
+  assert.equal(updatedPrefs.google?.services, undefined);
+  assert.equal(updatedPrefs.protection, undefined);
+  assert.equal(updatedPrefs.prefs?.tracked_preferences_reset, undefined);
+  assert.equal(updatedPrefs.prefs?.preference_reset_time, undefined);
+  assert.deepEqual(updatedPrefs.signin, { allowed: false });
+  assert.equal(updatedPrefs.profile?.exit_type, 'Normal');
+  assert.equal(updatedPrefs.profile?.exited_cleanly, true);
+
+  const updatedLocalState = JSON.parse(readFileSync(path.join(userDataDir, 'Local State'), 'utf8'));
+  const entry = updatedLocalState.profile.info_cache['Profile 1'];
+  assert.equal(entry.gaia_id, undefined);
+  assert.equal(entry.user_name, undefined);
+  assert.equal(entry.is_consented_primary_account, false);
+  assert.equal(entry.is_ephemeral, false);
+  assert.equal(entry.name, 'Display Name');
+
+  const checkWDb = new DatabaseSync(webDataPath);
+  const tokenRows = checkWDb.prepare('SELECT count(*) as count FROM token_service').get();
+  assert.equal(tokenRows.count, 0);
+  checkWDb.close();
+});
+
+test('hasGoogleSecurePrefs detects Google HMAC in Secure Preferences', () => {
+  const root = tempRoot();
+  const dir = path.join(root, 'has-sec-pref');
+  mkdirSync(path.join(dir, 'Default'), { recursive: true });
+
+  assert.equal(launcher.hasGoogleSecurePrefs(dir, 'Default'), false);
+
+  writeFileSync(path.join(dir, 'Default', 'Secure Preferences'), '{"protection":{"macs":{"google":"valid-hmac"}}}');
+  assert.equal(launcher.hasGoogleSecurePrefs(dir, 'Default'), true);
+
+  writeFileSync(path.join(dir, 'Default', 'Secure Preferences'), '{"protection":{"macs":{"other":"valid-hmac"}}}');
+  assert.equal(launcher.hasGoogleSecurePrefs(dir, 'Default'), false);
+});
