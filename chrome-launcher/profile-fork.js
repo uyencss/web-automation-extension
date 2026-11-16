@@ -157,6 +157,18 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
   }
 
   const prebootPath = path.join(userDataDir, '.cookies-preboot.sqlite');
+  if (srcCookiePath && !isProfileLocked(userDataDir) && fs.existsSync(`${srcCookiePath}-wal`)) {
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const dbMerge = new DatabaseSync(srcCookiePath);
+      try {
+        dbMerge.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+      } finally {
+        dbMerge.close();
+      }
+    } catch {}
+  }
+
   if (srcCookiePath && !fs.existsSync(prebootPath)) {
     let shouldCopy = true;
     try {
@@ -280,6 +292,59 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
   return { ok: true, detoxed: true, userDataDir, profileDir };
 }
 
+function detoxAllManagedProfiles(managedProfilesDir = MANAGED_PROFILES_DIR) {
+  if (!managedProfilesDir || !fs.existsSync(managedProfilesDir)) {
+    return { ok: true, total: 0, detoxedCount: 0, skippedLockedCount: 0, results: [] };
+  }
+  const entries = fs.readdirSync(managedProfilesDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const results = [];
+  let detoxedCount = 0;
+  let skippedLockedCount = 0;
+
+  for (const entry of entries) {
+    const slug = entry.name;
+    const ud = path.join(managedProfilesDir, slug);
+    let meta = {};
+    try {
+      meta = JSON.parse(fs.readFileSync(path.join(ud, '.webmcp-meta.json'), 'utf8'));
+    } catch {}
+    let profileDir = meta?.profileDir;
+    if (!profileDir) {
+      if (fs.existsSync(path.join(ud, 'Default'))) {
+        profileDir = 'Default';
+      } else {
+        try {
+          profileDir = fs.readdirSync(ud).find((d) => /^Profile \d+$/.test(d)) || 'Default';
+        } catch {
+          profileDir = 'Default';
+        }
+      }
+    }
+    if (isProfileLocked(ud)) {
+      skippedLockedCount += 1;
+      results.push({ slug, profileDir, status: 'skipped_locked' });
+      continue;
+    }
+    const res = detoxForkedManagedProfile(ud, profileDir);
+    if (res && res.detoxed) {
+      detoxedCount += 1;
+      results.push({ slug, profileDir, status: 'detoxed' });
+    } else {
+      results.push({ slug, profileDir, status: 'skipped' });
+    }
+  }
+
+  return {
+    ok: true,
+    total: entries.length,
+    detoxedCount,
+    skippedLockedCount,
+    results,
+  };
+}
+
 module.exports = {
   CACHE_RE,
   WEBMCP_STORAGE_RE,
@@ -288,4 +353,5 @@ module.exports = {
   countManagedProfiles,
   forkExistingProfile,
   detoxForkedManagedProfile,
+  detoxAllManagedProfiles,
 };

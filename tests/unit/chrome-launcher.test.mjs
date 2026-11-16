@@ -1144,3 +1144,68 @@ test('hasGoogleSecurePrefs detects Google HMAC in Secure Preferences', () => {
   writeFileSync(path.join(dir, 'Default', 'Secure Preferences'), '{"protection":{"macs":{"other":"valid-hmac"}}}');
   assert.equal(launcher.hasGoogleSecurePrefs(dir, 'Default'), false);
 });
+
+test('detoxForkedManagedProfile checkpoints Cookies-wal into Cookies and .cookies-preboot.sqlite', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const root = tempRoot();
+  const ud = path.join(root, 'wal-prof');
+  const pd = path.join(ud, 'Profile 31');
+  mkdirSync(pd, { recursive: true });
+  writeFileSync(path.join(pd, 'Preferences'), JSON.stringify({ signin: { signin_pending_start_time: '123' } }));
+  writeFileSync(path.join(ud, '.webmcp-meta.json'), JSON.stringify({ profileDir: 'Profile 31' }));
+
+  const ckPath = path.join(pd, 'Cookies');
+  const dbInit = new DatabaseSync(ckPath);
+  dbInit.exec('PRAGMA journal_mode=WAL; CREATE TABLE cookies (name TEXT, value TEXT);');
+  dbInit.close();
+
+  // Keep writer holding WAL uncommitted until close while disabling autocheckpoint so rows live in -wal
+  const dbWal = new DatabaseSync(ckPath);
+  dbWal.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO cookies VALUES ('wal_only', 'v1');");
+  dbWal.close();
+  // Verify -wal still has data or exists before detox; ensure preboot & main DB retain the row without -wal
+  const res = launcher.detoxForkedManagedProfile(ud, 'Profile 31');
+  assert.equal(res.ok, true);
+  assert.equal(res.detoxed, true);
+
+  for (const ext of ['-wal', '-shm']) {
+    try { unlinkSync(ckPath + ext); } catch {}
+    try { unlinkSync(path.join(ud, '.cookies-preboot.sqlite' + ext)); } catch {}
+  }
+
+  const checkMain = new DatabaseSync(ckPath, { readOnly: true });
+  assert.equal(checkMain.prepare('SELECT count(*) as c FROM cookies').get().c, 1);
+  checkMain.close();
+
+  const checkPre = new DatabaseSync(path.join(ud, '.cookies-preboot.sqlite'), { readOnly: true });
+  assert.equal(checkPre.prepare('SELECT count(*) as c FROM cookies').get().c, 1);
+  checkPre.close();
+});
+
+test('detoxAllManagedProfiles detoxes unlocked profiles and skips locked ones', () => {
+  const root = tempRoot();
+  const managedDir = path.join(root, 'managed-profiles');
+  const unlocked = path.join(managedDir, 'offline-prof');
+  const locked = path.join(managedDir, 'running-prof');
+  mkdirSync(path.join(unlocked, 'Profile 9'), { recursive: true });
+  mkdirSync(path.join(locked, 'Default'), { recursive: true });
+
+  writeFileSync(path.join(unlocked, 'Profile 9', 'Preferences'), JSON.stringify({ account_info: [{ email: 'u@example.com' }], signin: { allowed: true } }));
+  writeFileSync(path.join(unlocked, 'Profile 9', 'Secure Preferences'), '{"protection":{"macs":{"google":"bad"}}}');
+  writeFileSync(path.join(locked, 'Default', 'Preferences'), JSON.stringify({ account_info: [{ email: 'live@example.com' }] }));
+  writeFileSync(path.join(locked, 'Default', 'Secure Preferences'), '{"protection":{"macs":{"google":"keep"}}}');
+  symlinkSync(`test-host-${process.pid}`, path.join(locked, 'SingletonLock'));
+
+  const res = launcher.detoxAllManagedProfiles(managedDir);
+  assert.equal(res.ok, true);
+  assert.equal(res.total, 2);
+  assert.equal(res.detoxedCount, 1);
+  assert.equal(res.skippedLockedCount, 1);
+
+  assert.equal(existsSync(path.join(unlocked, 'Profile 9', 'Secure Preferences')), false);
+  const unlockedMeta = JSON.parse(readFileSync(path.join(unlocked, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(unlockedMeta.detoxedForManaged, true);
+  assert.equal(unlockedMeta.email, 'u@example.com');
+
+  assert.equal(existsSync(path.join(locked, 'Default', 'Secure Preferences')), true);
+});
