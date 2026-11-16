@@ -444,6 +444,13 @@ async function launchChrome(options = {}) {
     const userDataDir = options.profile.userDataDir;
     const profileDir = options.profile.profileDir || 'Default';
 
+    const targetProfilePath = path.join(userDataDir, profileDir);
+    if (!fs.existsSync(targetProfilePath) && !options.dryRun) {
+      const err = new Error(`Existing Chrome profile directory does not exist: ${targetProfilePath}`);
+      err.code = 'EXISTING_PROFILE_DIR_NOT_FOUND';
+      throw err;
+    }
+
     if (hasLiveManagedSession(userDataDir, sessionsFile)) {
       const spawnRes = spawnChrome({
         chromePath,
@@ -506,6 +513,31 @@ async function launchChrome(options = {}) {
     (options.dryRun
       ? nextManagedProfileDir(options.newProfileName, managedProfilesDir)
       : createManagedProfile(options.newProfileName, { managedProfilesDir, sessionsFile }));
+
+  if (options.profile?.userDataDir && !options.allowExternalManagedDir) {
+    const resolvedUserDataDir = path.resolve(userDataDir);
+    const resolvedManagedRoot = path.resolve(managedProfilesDir);
+    const managedPrefix = resolvedManagedRoot.endsWith(path.sep) ? resolvedManagedRoot : resolvedManagedRoot + path.sep;
+    let isInside = resolvedUserDataDir.startsWith(managedPrefix);
+    if (!isInside) {
+      try {
+        if (fs.existsSync(resolvedUserDataDir) && fs.existsSync(resolvedManagedRoot)) {
+          const realUserDataDir = fs.realpathSync(resolvedUserDataDir);
+          const realManagedRoot = fs.realpathSync(resolvedManagedRoot);
+          const realManagedPrefix = realManagedRoot.endsWith(path.sep) ? realManagedRoot : realManagedRoot + path.sep;
+          isInside = realUserDataDir.startsWith(realManagedPrefix);
+        }
+      } catch {}
+    }
+    if (!isInside) {
+      const err = new Error(
+        `Managed profile directory "${resolvedUserDataDir}" is outside managedProfilesDir root "${resolvedManagedRoot}". ` +
+        `Refusing to launch to prevent rogue profile creation.`
+      );
+      err.code = 'MANAGED_DIR_OUT_OF_ROOT';
+      throw err;
+    }
+  }
 
   let meta = {};
   try {

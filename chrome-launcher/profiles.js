@@ -84,8 +84,14 @@ function readBrowserProfiles(browser, userDataDir) {
     return { email, gaiaName, avatarUrl };
   }
 
-  return Object.entries(cache).map(([dir, info]) => {
-    let name = info.name || dir;
+  const results = [];
+  for (const [dir, info] of Object.entries(cache)) {
+    if (!fs.existsSync(path.join(userDataDir, dir))) {
+      continue;
+    }
+
+    const rawName = info.name || dir;
+    let name = rawName;
     let email = info.user_name || info.gaia_email || '';
     let gaiaName = info.gaia_name || info.gaia_given_name || '';
     let avatarUrl = '';
@@ -102,7 +108,14 @@ function readBrowserProfiles(browser, userDataDir) {
       }
     }
 
-    return {
+    if (browser !== 'Chrome') {
+      const isGarbage = /^(your chromium|your chrome|your cốc cốc|default|person \d+)$/i.test(rawName);
+      if (!email && isGarbage && !fs.existsSync(path.join(userDataDir, dir, '.webmcp-meta.json'))) {
+        continue;
+      }
+    }
+
+    results.push({
       kind: 'existing',
       browser,
       userDataDir,
@@ -115,8 +128,10 @@ function readBrowserProfiles(browser, userDataDir) {
       initials: initialsFromName(gaiaName || name, email),
       isSupervised: Boolean(info.is_supervised),
       lastUsed: typeof info.active_time === 'number' ? info.active_time : null,
-    };
-  });
+    });
+  }
+
+  return results;
 }
 
 function readManagedProfiles(options = {}) {

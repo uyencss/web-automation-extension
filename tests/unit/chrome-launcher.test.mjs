@@ -1439,3 +1439,131 @@ test('webmcp profiles detox CLI supports --profile-id, --udd, and fails non-zero
   assert.equal(lockedPayload.ok, false);
   assert.equal(lockedPayload.error, 'PROFILE_IN_USE');
 });
+
+test('readBrowserProfiles skips missing profile directories and empty garbage stubs on non-Chrome browsers', () => {
+  const root = tempRoot();
+  const chromeUserData = path.join(root, 'chrome-user-data');
+  const chromiumUserData = path.join(root, 'chromium-user-data');
+  mkdirSync(chromeUserData, { recursive: true });
+  mkdirSync(chromiumUserData, { recursive: true });
+
+  // Chrome Local State has Profile 1 (exists on disk) and Profile 2 (missing on disk)
+  mkdirSync(path.join(chromeUserData, 'Profile 1'), { recursive: true });
+  writeFileSync(path.join(chromeUserData, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        'Profile 1': { name: 'Active User', gaia_email: 'user@gmail.com' },
+        'Profile 2': { name: 'Ghost Profile', gaia_email: 'ghost@gmail.com' },
+      },
+    },
+  }));
+
+  const chromeProfiles = launcher.readBrowserProfiles('Chrome', chromeUserData);
+  assert.equal(chromeProfiles.length, 1);
+  assert.equal(chromeProfiles[0].profileDir, 'Profile 1');
+
+  // Chromium Local State has Default (garbage name "Your Chromium", no email, no .webmcp-meta.json)
+  // and Profile 1 (has email) and Profile 2 (garbage name but has .webmcp-meta.json)
+  mkdirSync(path.join(chromiumUserData, 'Default'), { recursive: true });
+  mkdirSync(path.join(chromiumUserData, 'Profile 1'), { recursive: true });
+  mkdirSync(path.join(chromiumUserData, 'Profile 2'), { recursive: true });
+  writeFileSync(path.join(chromiumUserData, 'Profile 2', '.webmcp-meta.json'), JSON.stringify({ name: 'Bound Profile' }));
+
+  writeFileSync(path.join(chromiumUserData, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        'Default': { name: 'Your Chromium' },
+        'Profile 1': { name: 'Chromium User', gaia_email: 'chrom@example.com' },
+        'Profile 2': { name: 'Person 1' },
+      },
+    },
+  }));
+
+  const chromiumProfiles = launcher.readBrowserProfiles('Chromium', chromiumUserData);
+  // Default is skipped because garbage name, no email, no .webmcp-meta.json
+  // Profile 1 is kept because email exists
+  // Profile 2 is kept because .webmcp-meta.json exists
+  assert.equal(chromiumProfiles.length, 2);
+  const dirs = chromiumProfiles.map((p) => p.profileDir).sort();
+  assert.deepEqual(dirs, ['Profile 1', 'Profile 2']);
+});
+
+test('launchChrome throws MANAGED_DIR_OUT_OF_ROOT when managed profile userDataDir is outside managedProfilesDir', async () => {
+  const root = tempRoot();
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const outsideDir = path.join(root, 'rogue-outside-profiles', 'rogue-user');
+  mkdirSync(outsideDir, { recursive: true });
+  const extensionPath = fakeExtensionDir(root);
+
+  // 1. Outside root -> throws MANAGED_DIR_OUT_OF_ROOT
+  await assert.rejects(
+    async () => {
+      await launcher.launchChrome({
+        mode: 'managed',
+        profile: { kind: 'managed', userDataDir: outsideDir },
+        chromePath: process.execPath,
+        extensionPath,
+        managedProfilesDir,
+        dryRun: true,
+      });
+    },
+    (err) => {
+      assert.equal(err.code, 'MANAGED_DIR_OUT_OF_ROOT');
+      return true;
+    }
+  );
+
+  // 2. Outside root but allowExternalManagedDir: true -> passes
+  const allowedRes = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: outsideDir },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    allowExternalManagedDir: true,
+    dryRun: true,
+  });
+  assert.equal(allowedRes.ok, true);
+  assert.equal(allowedRes.userDataDir, outsideDir);
+});
+
+test('launchChrome throws EXISTING_PROFILE_DIR_NOT_FOUND when existing profileDir does not exist on disk', async () => {
+  const root = tempRoot();
+  const userDataDir = path.join(root, 'existing-chrome-root');
+  mkdirSync(userDataDir, { recursive: true });
+  const extensionPath = fakeExtensionDir(root);
+
+  // 'Profile 99' does not exist in userDataDir
+  await assert.rejects(
+    async () => {
+      await launcher.launchChrome({
+        mode: 'existing',
+        profile: { kind: 'existing', userDataDir, profileDir: 'Profile 99' },
+        chromePath: process.execPath,
+        extensionPath,
+        dryRun: false,
+      });
+    },
+    (err) => {
+      assert.equal(err.code, 'EXISTING_PROFILE_DIR_NOT_FOUND');
+      return true;
+    }
+  );
+
+  // If the directory does exist on disk, it does not throw EXISTING_PROFILE_DIR_NOT_FOUND
+  const realProfileDir = path.join(userDataDir, 'Profile 1');
+  mkdirSync(realProfileDir, { recursive: true });
+  const fakeBin = path.join(root, 'fake-chrome.sh');
+  writeFileSync(fakeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(fakeBin, 0o755);
+
+  const res = await launcher.launchChrome({
+    mode: 'existing',
+    profile: { kind: 'existing', userDataDir, profileDir: 'Profile 1' },
+    chromePath: fakeBin,
+    extensionPath,
+    dryRun: true,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.profileDir, 'Profile 1');
+});
