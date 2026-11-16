@@ -91,17 +91,144 @@ function cleanStaleLocks(userDataDir) {
   return removed;
 }
 
-function findChromePidForUserDataDir(userDataDir) {
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Parses a CLI flag value from a commandLine string (/ponytail exact parser).
+ * Handles:
+ *   --flag="val"
+ *   --flag='val'
+ *   --flag=val (terminated by space before next flag --, protocol://, about:, or end of line)
+ * @param {string} commandLine
+ * @param {string} flagName
+ * @returns {string|null}
+ */
+function extractCliFlagValue(commandLine, flagName) {
+  if (!commandLine || typeof commandLine !== 'string' || !flagName) return null;
+  const escaped = escapeRegExp(flagName);
+  const re = new RegExp(`(?:^|\\s)${escaped}=(?:"([^"]+)"|'([^']+)'|(.+?))(?=\\s+(?:--|[a-zA-Z]+://|about:)|$)`);
+  const match = commandLine.match(re);
+  if (!match) return null;
+  const val = match[1] ?? match[2] ?? match[3];
+  return val != null ? val.trim() : null;
+}
+
+function expandTilde(p) {
+  if (!p) return '';
+  if (p === '~') return os.homedir();
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
+function pathsMatch(pathA, pathB) {
+  if (!pathA || !pathB) return false;
+  const resA = path.resolve(expandTilde(pathA));
+  const resB = path.resolve(expandTilde(pathB));
+  if (resA === resB) return true;
   try {
-    const out = execSync('ps -ax -o pid=,command=', { encoding: 'utf8' });
-    const lines = out.split('\n');
-    for (const line of lines) {
-      if (line.includes(`--user-data-dir=${userDataDir}`) && !line.includes('--type=')) {
-        const match = line.trim().match(/^(\d+)/);
-        if (match) return parseInt(match[1], 10);
-      }
+    if (fs.existsSync(resA) && fs.existsSync(resB)) {
+      return fs.realpathSync(resA) === fs.realpathSync(resB);
     }
   } catch {}
+  return false;
+}
+
+function resolveRealPathWithFallback(targetPath) {
+  let curr = path.resolve(targetPath);
+  const segments = [];
+  while (!fs.existsSync(curr)) {
+    const parent = path.dirname(curr);
+    if (parent === curr) break;
+    segments.unshift(path.basename(curr));
+    curr = parent;
+  }
+  let realBase = curr;
+  try {
+    if (fs.existsSync(curr)) {
+      realBase = fs.realpathSync(curr);
+    }
+  } catch {}
+  return segments.length ? path.join(realBase, ...segments) : realBase;
+}
+
+function matchChromePidInPsOutput(psOutput, { userDataDir, profileDir } = {}) {
+  if (!psOutput || typeof psOutput !== 'string' || !userDataDir) return null;
+  const lines = psOutput.split('\n');
+  for (const line of lines) {
+    if (line.includes('--type=') || line.includes('/usr/bin/open')) continue;
+    const uddVal = extractCliFlagValue(line, '--user-data-dir');
+    if (!uddVal || !pathsMatch(uddVal, userDataDir)) continue;
+    if (profileDir) {
+      const pdirVal = extractCliFlagValue(line, '--profile-directory');
+      if (pdirVal !== profileDir) continue;
+    }
+    const match = line.trim().match(/^(\d+)/);
+    if (match) {
+      return parseInt(match[1], 10);
+    }
+  }
+  return null;
+}
+
+function findChromePidForUserDataDir(userDataDir) {
+  return findRunningChromePid({ userDataDir, mode: 'existing' });
+}
+
+function findRunningChromePid({ userDataDir, profileDir, mode }) {
+  if (mode === 'managed') {
+    const lockPid = readLockPid(userDataDir);
+    if (lockPid && isPidAlive(lockPid)) return lockPid;
+  }
+  try {
+    const out = execSync('ps -ax -o pid=,command=', { encoding: 'utf8' });
+    const pid = matchChromePidInPsOutput(out, { userDataDir, profileDir });
+    if (pid && isPidAlive(pid)) return pid;
+  } catch {}
+  return null;
+}
+
+async function findRunningChromePidAsync({ userDataDir, profileDir, mode, psOutputFn } = {}) {
+  if (mode === 'managed') {
+    const lockPid = readLockPid(userDataDir);
+    if (lockPid && isPidAlive(lockPid)) return lockPid;
+  }
+  try {
+    let out;
+    if (typeof psOutputFn === 'function') {
+      out = await psOutputFn();
+    } else {
+      out = await new Promise((resolve) => {
+        execFile('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+          if (err) resolve('');
+          else resolve(stdout || '');
+        });
+      });
+    }
+    const pid = matchChromePidInPsOutput(out, { userDataDir, profileDir });
+    if (pid && isPidAlive(pid)) return pid;
+  } catch {}
+  return null;
+}
+
+function resolveMacAppBundle(chromePath, args = []) {
+  if (
+    process.platform === 'darwin' &&
+    typeof chromePath === 'string' &&
+    !(Array.isArray(args) && args.some((a) => String(a).startsWith('--headless')))
+  ) {
+    let resolved = chromePath;
+    try {
+      if (fs.existsSync(chromePath)) {
+        resolved = fs.realpathSync(chromePath);
+      }
+    } catch {}
+    if (resolved.includes('.app/Contents/MacOS/')) {
+      const idx = resolved.indexOf('.app/Contents/MacOS/');
+      return resolved.slice(0, idx + 4);
+    }
+  }
   return null;
 }
 
@@ -352,7 +479,7 @@ function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
   return otherArgs;
 }
 
-function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
+async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
   const rawBase = baseArgs({ extensionPath, userDataDir, profileDir });
   const args = mergeChromeLaunchArgs(rawBase, extraArgs);
   const mergedEnv = env ? { ...process.env, ...env } : process.env;
@@ -362,6 +489,62 @@ function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode,
       ok: true,
       dryRun: true,
       pid: null,
+      chromePath,
+      userDataDir,
+      profileDir,
+      mode: mode || 'managed',
+      attached: Boolean(attached),
+      args,
+      env: env || null,
+      tz: env?.TZ || null,
+    };
+  }
+
+  const appBundle = resolveMacAppBundle(chromePath, args);
+  if (appBundle) {
+    const openArgs = ['-na', appBundle];
+    if (env && typeof env === 'object') {
+      for (const [k, v] of Object.entries(env)) {
+        if (v != null && v !== '' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+          openArgs.push('--env', `${k}=${v}`);
+        }
+      }
+    }
+    openArgs.push('--args', ...args);
+
+    await new Promise((resolve, reject) => {
+      execFile('/usr/bin/open', openArgs, { timeout: 10000, stdio: 'ignore' }, (err) => {
+        if (err) {
+          reject(new Error(`Failed to launch Chrome via LaunchServices (/usr/bin/open): ${err.message}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    let resolvedPid = null;
+    if (attached) {
+      resolvedPid = await findRunningChromePidAsync({ userDataDir, profileDir, mode });
+    } else {
+      resolvedPid = await findRunningChromePidAsync({ userDataDir, profileDir, mode });
+      if (!resolvedPid) {
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          await new Promise((r) => setTimeout(r, 100));
+          resolvedPid = await findRunningChromePidAsync({ userDataDir, profileDir, mode });
+          if (resolvedPid) break;
+        }
+      }
+    }
+
+    if (mode === 'managed' && !attached && !resolvedPid && !readLockPid(userDataDir)) {
+      throw new Error('Chrome launched via LaunchServices exited before acquiring managed profile lock');
+    }
+
+    return {
+      ok: true,
+      pid: resolvedPid || null,
+      launchedViaLaunchServices: true,
       chromePath,
       userDataDir,
       profileDir,
@@ -452,7 +635,7 @@ async function launchChrome(options = {}) {
     }
 
     if (hasLiveManagedSession(userDataDir, sessionsFile)) {
-      const spawnRes = spawnChrome({
+      const spawnRes = await spawnChrome({
         chromePath,
         extensionPath,
         userDataDir,
@@ -499,7 +682,7 @@ async function launchChrome(options = {}) {
       }
     }
 
-    const result = spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, extraArgs: options.extraArgs, env: options.env });
+    const result = await spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, extraArgs: options.extraArgs, env: options.env });
     if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
     return annotate(result);
   }
@@ -517,18 +700,16 @@ async function launchChrome(options = {}) {
   if (options.profile?.userDataDir && !options.allowExternalManagedDir) {
     const resolvedUserDataDir = path.resolve(userDataDir);
     const resolvedManagedRoot = path.resolve(managedProfilesDir);
-    const managedPrefix = resolvedManagedRoot.endsWith(path.sep) ? resolvedManagedRoot : resolvedManagedRoot + path.sep;
-    let isInside = resolvedUserDataDir.startsWith(managedPrefix);
-    if (!isInside) {
-      try {
-        if (fs.existsSync(resolvedUserDataDir) && fs.existsSync(resolvedManagedRoot)) {
-          const realUserDataDir = fs.realpathSync(resolvedUserDataDir);
-          const realManagedRoot = fs.realpathSync(resolvedManagedRoot);
-          const realManagedPrefix = realManagedRoot.endsWith(path.sep) ? realManagedRoot : realManagedRoot + path.sep;
-          isInside = realUserDataDir.startsWith(realManagedPrefix);
-        }
-      } catch {}
-    }
+    let realManagedRoot = resolvedManagedRoot;
+    try {
+      if (fs.existsSync(resolvedManagedRoot)) {
+        realManagedRoot = fs.realpathSync(resolvedManagedRoot);
+      }
+    } catch {}
+    const realManagedPrefix = realManagedRoot.endsWith(path.sep) ? realManagedRoot : realManagedRoot + path.sep;
+
+    const realUserDataDir = resolveRealPathWithFallback(resolvedUserDataDir);
+    const isInside = realUserDataDir === realManagedRoot || realUserDataDir.startsWith(realManagedPrefix);
     if (!isInside) {
       const err = new Error(
         `Managed profile directory "${resolvedUserDataDir}" is outside managedProfilesDir root "${resolvedManagedRoot}". ` +
@@ -561,7 +742,7 @@ async function launchChrome(options = {}) {
   }
 
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
-    const spawnRes = spawnChrome({
+    const spawnRes = await spawnChrome({
       chromePath,
       extensionPath,
       userDataDir,
@@ -637,7 +818,7 @@ async function launchChrome(options = {}) {
     } catch {}
   }
 
-  const result = spawnChrome({
+  const result = await spawnChrome({
     chromePath,
     extensionPath,
     userDataDir,
@@ -767,6 +948,10 @@ module.exports = {
   chromeCandidates,
   findChromeBinary,
   readLockPid,
+  extractCliFlagValue,
+  matchChromePidInPsOutput,
+  findRunningChromePid,
+  findRunningChromePidAsync,
   findChromePidForUserDataDir,
   isProfileLocked,
   cleanStaleLocks,
@@ -784,4 +969,6 @@ module.exports = {
   waitForUnlock,
   launchChrome,
   closeChrome,
+  resolveMacAppBundle,
+  spawnChrome,
 };

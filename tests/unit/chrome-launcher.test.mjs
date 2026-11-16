@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, unlinkSync, chmodSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, symlinkSync, unlinkSync, chmodSync, statSync, readdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -910,6 +910,7 @@ test('backup_managed_profiles.sh --restore guards against session replay attack 
 c = sqlite3.connect("${liveCookies}")
 c.execute("CREATE TABLE cookies (creation_utc INTEGER, host_key TEXT, name TEXT, value TEXT, last_access_utc INTEGER)")
 c.execute("INSERT INTO cookies VALUES (100, '.facebook.com', 'c_user', '10001', 100)")
+c.execute("INSERT INTO cookies VALUES (100, '.facebook.com', 'xs', 'token_xs', 100)")
 c.commit()
 c.close()`,
   ]);
@@ -928,7 +929,7 @@ c.close()`,
     '-c',
     `import sqlite3
 c = sqlite3.connect("${liveCookies}")
-c.execute("UPDATE cookies SET last_access_utc = 200 WHERE name = 'c_user'")
+c.execute("UPDATE cookies SET last_access_utc = 200 WHERE name in ('c_user', 'xs')")
 c.commit()
 c.close()`,
   ]);
@@ -989,7 +990,7 @@ sys.exit(0 if row and row[0] == 100 else 2)`,
     '-c',
     `import sqlite3
 c = sqlite3.connect("${liveCookies}")
-c.execute("UPDATE cookies SET last_access_utc = 300 WHERE name = 'c_user'")
+c.execute("UPDATE cookies SET last_access_utc = 300 WHERE name in ('c_user', 'xs')")
 c.commit()
 c.close()`,
   ]);
@@ -1566,4 +1567,160 @@ test('launchChrome throws EXISTING_PROFILE_DIR_NOT_FOUND when existing profileDi
   });
   assert.equal(res.ok, true);
   assert.equal(res.profileDir, 'Profile 1');
+});
+
+test('resolveMacAppBundle resolves .app bundle on darwin and returns null for headless / non-bundle binaries', () => {
+  const chromeAppPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const betaAppPath = '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta';
+
+  if (process.platform === 'darwin') {
+    assert.equal(launcher.resolveMacAppBundle(chromeAppPath), '/Applications/Google Chrome.app');
+    assert.equal(launcher.resolveMacAppBundle(betaAppPath), '/Applications/Google Chrome Beta.app');
+    assert.equal(launcher.resolveMacAppBundle(chromeAppPath, ['--headless']), null);
+    assert.equal(launcher.resolveMacAppBundle(chromeAppPath, ['--headless=new']), null);
+  }
+
+  assert.equal(launcher.resolveMacAppBundle('/usr/bin/google-chrome'), null);
+  assert.equal(launcher.resolveMacAppBundle('/tmp/fake-chrome.sh'), null);
+  assert.equal(launcher.resolveMacAppBundle(null), null);
+  assert.equal(launcher.resolveMacAppBundle(undefined), null);
+  assert.equal(launcher.resolveMacAppBundle(123), null);
+});
+
+test('extractCliFlagValue and matchChromePidInPsOutput: exact flag parsing against synthetic ps output ([H1])', () => {
+  assert.equal(launcher.extractCliFlagValue('chrome --user-data-dir="/tmp/chrome with spaces" --other', '--user-data-dir'), '/tmp/chrome with spaces');
+  assert.equal(launcher.extractCliFlagValue("chrome --user-data-dir='/tmp/chrome with spaces' --other", '--user-data-dir'), '/tmp/chrome with spaces');
+  assert.equal(launcher.extractCliFlagValue('chrome --user-data-dir=/tmp/smoke https://google.com', '--user-data-dir'), '/tmp/smoke');
+  assert.equal(launcher.extractCliFlagValue('chrome --user-data-dir=/tmp/smoke about:blank', '--user-data-dir'), '/tmp/smoke');
+  assert.equal(launcher.extractCliFlagValue('chrome --profile-directory="Profile 1" --user-data-dir=/tmp/smoke', '--profile-directory'), 'Profile 1');
+  assert.equal(launcher.extractCliFlagValue('chrome --other-flag=123', '--user-data-dir'), null);
+
+  const syntheticPs = [
+    '    1 /sbin/launchd',
+    '  101 /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow',
+    '  201 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '  301 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --type=renderer --user-data-dir=/tmp/smoke',
+    '  302 /usr/bin/open -na /Applications/Google Chrome.app --args --user-data-dir=/tmp/smoke',
+    '  401 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/tmp/smoke-2 --profile-directory="Profile 1"',
+    '  402 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/tmp/smoke --profile-directory="Profile 10"',
+    '  403 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/tmp/smoke --profile-directory="Profile 1"',
+    '  501 /Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta --user-data-dir="/tmp/path with spaces/udd" --profile-directory=Default',
+  ].join('\n');
+
+  assert.equal(launcher.matchChromePidInPsOutput(syntheticPs, { userDataDir: '/tmp/smoke-2', profileDir: 'Profile 1' }), 401);
+  assert.equal(launcher.matchChromePidInPsOutput(syntheticPs, { userDataDir: '/tmp/smoke', profileDir: 'Profile 10' }), 402);
+  assert.equal(launcher.matchChromePidInPsOutput(syntheticPs, { userDataDir: '/tmp/smoke', profileDir: 'Profile 1' }), 403);
+  assert.equal(launcher.matchChromePidInPsOutput(syntheticPs, { userDataDir: '/tmp/path with spaces/udd', profileDir: 'Default' }), 501);
+  assert.equal(launcher.matchChromePidInPsOutput(syntheticPs, { userDataDir: '/nonexistent' }), null);
+});
+
+test('resolveMacAppBundle follows symlink to .app bundle on darwin ([L6])', () => {
+  const root = tempRoot();
+  const fakeAppDir = path.join(root, 'Fake Chrome.app', 'Contents', 'MacOS');
+  mkdirSync(fakeAppDir, { recursive: true });
+  const realBin = path.join(fakeAppDir, 'Fake Chrome');
+  writeFileSync(realBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(realBin, 0o755);
+
+  const symlinkBin = path.join(root, 'chrome-symlink');
+  symlinkSync(realBin, symlinkBin);
+
+  if (process.platform === 'darwin') {
+    const resolved = launcher.resolveMacAppBundle(symlinkBin);
+    assert.ok(resolved);
+    assert.equal(realpathSync(resolved), realpathSync(path.join(root, 'Fake Chrome.app')));
+  } else {
+    assert.equal(launcher.resolveMacAppBundle(symlinkBin), null);
+  }
+});
+
+test('launchChrome blocks symlink escape pointing outside managedProfilesDir ([L8])', async () => {
+  const root = tempRoot();
+  const managedDir = path.join(root, 'managed-profiles');
+  const outsideDir = path.join(root, 'outside-rogue-dir');
+  mkdirSync(managedDir, { recursive: true });
+  mkdirSync(outsideDir, { recursive: true });
+
+  const evilSymlink = path.join(managedDir, 'evil-symlink');
+  symlinkSync(outsideDir, evilSymlink);
+
+  await assert.rejects(
+    async () => {
+      await launcher.launchChrome({
+        mode: 'managed',
+        profile: { kind: 'managed', userDataDir: evilSymlink },
+        managedProfilesDir: managedDir,
+        dryRun: true,
+      });
+    },
+    (err) => {
+      assert.equal(err.code, 'MANAGED_DIR_OUT_OF_ROOT');
+      return true;
+    }
+  );
+});
+
+test('backup_managed_profiles.sh --restore blocks stale replay when live FB is newer ([H2]) and blocks corrupt backup ([M1])', () => {
+  const root = tempRoot();
+  const webmcpHome = path.join(root, '.webmcp');
+  const profilesDir = path.join(webmcpHome, 'managed-profiles');
+  const pDir = path.join(profilesDir, 'myprofile', 'Default');
+  mkdirSync(pDir, { recursive: true });
+
+  writeFileSync(path.join(profilesDir, 'myprofile', '.webmcp-meta.json'), JSON.stringify({ name: 'myprofile', profileDir: 'Default' }));
+  writeFileSync(path.join(profilesDir, 'myprofile', 'Local State'), '{"os_crypt":{"encrypted_key":"test-key"}}');
+
+  const liveCookies = path.join(pDir, 'Cookies');
+  spawnSync('python3', [
+    '-c',
+    `import sqlite3
+c = sqlite3.connect("${liveCookies}")
+c.execute("CREATE TABLE cookies (creation_utc INTEGER, host_key TEXT, name TEXT, value TEXT, last_access_utc INTEGER)")
+c.execute("INSERT INTO cookies VALUES (100, '.google.com', 'SID', 'sess_sid', 100)")
+c.execute("INSERT INTO cookies VALUES (100, '.google.com', '__Secure-1PSID', 'sess_psid', 100)")
+c.execute("INSERT INTO cookies VALUES (100, 'accounts.google.com', 'LSID', 'sess_lsid', 100)")
+c.commit()
+c.close()`,
+  ]);
+
+  const scriptPath = path.join(ROOT, 'scripts', 'backup_managed_profiles.sh');
+
+  // 1. Run backup to snapshot Google session at timestamp 100
+  const backupRes = spawnSync(scriptPath, [], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(backupRes.status, 0, `Initial backup failed: ${backupRes.stderr}`);
+
+  // 2. Scenario [H2]: Live target lost Google, but logged into Facebook with newer timestamp 500!
+  spawnSync('python3', [
+    '-c',
+    `import sqlite3
+c = sqlite3.connect("${liveCookies}")
+c.execute("DELETE FROM cookies")
+c.execute("INSERT INTO cookies VALUES (500, '.facebook.com', 'c_user', '10001', 500)")
+c.execute("INSERT INTO cookies VALUES (500, '.facebook.com', 'xs', 'token_xs', 500)")
+c.commit()
+c.close()`,
+  ]);
+
+  // Attempting restore WITHOUT --force-disaster-recovery must be BLOCKED
+  const blockedH2 = spawnSync(scriptPath, ['--restore', 'myprofile'], {
+    encoding: 'utf8',
+    env: { ...process.env, WEBMCP_HOME: webmcpHome },
+  });
+  assert.equal(blockedH2.status, 1, 'Expected restore to be blocked when live FB session is newer than backup Google');
+  assert.match(blockedH2.stderr, /\[GUARDRAIL BLOCKED\].*Session Replay Attack/);
+
+  // 3. Scenario [M1]: Backup Cookies file becomes corrupt or unreadable
+  const backupDate = new Date().toISOString().slice(0, 10);
+  const backupCookies = path.join(webmcpHome, 'backups', 'profiles', backupDate, 'myprofile', 'Default', 'Cookies');
+  if (existsSync(backupCookies)) {
+    writeFileSync(backupCookies, 'corrupted backup file content');
+    const blockedM1 = spawnSync(scriptPath, ['--restore', 'myprofile'], {
+      encoding: 'utf8',
+      env: { ...process.env, WEBMCP_HOME: webmcpHome },
+    });
+    assert.equal(blockedM1.status, 1, 'Expected restore to fail closed on corrupt backup cookie file ([M1])');
+  }
 });

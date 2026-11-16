@@ -25,6 +25,7 @@
 set -euo pipefail
 umask 077
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEBMCP_HOME="${WEBMCP_HOME:-$HOME/.webmcp}"
 BACKUP_ROOT="${WEBMCP_BACKUP_ROOT:-$WEBMCP_HOME/backups/profiles}"
 PROFILES_DIR="${WEBMCP_MANAGED_PROFILES_DIR:-$WEBMCP_HOME/managed-profiles}"
@@ -117,10 +118,10 @@ except BlockingIOError:
   # ── Pre-Restore Guardrails (1. Live Process Lock + 2. Anti-Replay-Attack) ───
   if [ -d "$TARGET_PROFILE_DIR" ]; then
     guard_rc=0
-    python3 - "$TARGET_PROFILE_DIR" "$BACKUP_SRC" "$FORCE_DISASTER_RECOVERY" << 'PY' || guard_rc=$?
-import os, sqlite3, sys
+    python3 - "$TARGET_PROFILE_DIR" "$BACKUP_SRC" "$FORCE_DISASTER_RECOVERY" "$SCRIPT_DIR" << 'PY' || guard_rc=$?
+import os, sys
 
-target_dir, backup_src, force = sys.argv[1], sys.argv[2], int(sys.argv[3])
+target_dir, backup_src, force, script_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
 
 # 1. Live Process Lock Check (SingletonLock ->hostname-pid)
 lock_file = os.path.join(target_dir, "SingletonLock")
@@ -139,45 +140,70 @@ if os.path.lexists(lock_file):
 if force:
     sys.exit(0)
 
-# 2. Anti-Replay-Attack Guard: block overwriting intact live DB that has >= session timestamps
-def fb_cookie_metric(db_path):
-    if not os.path.isfile(db_path) or os.path.getsize(db_path) == 0:
-        return False, None
-    try:
-        with sqlite3.connect(f"file:{os.path.abspath(db_path)}?mode=ro", uri=True, timeout=2.0) as conn:
-            if (conn.execute("PRAGMA integrity_check").fetchone() or [""])[0] != "ok":
-                return False, None
-            cols = {r[1] for r in conn.execute("PRAGMA table_info(cookies)").fetchall()}
-            if not cols:
-                return True, None
-            hcol = "host_key" if "host_key" in cols else ("host" if "host" in cols else None)
-            where = "name IN ('xs', 'c_user')" + (f" AND {hcol} LIKE '%facebook.com%'" if hcol else "")
-            parts = [f"COALESCE(MAX({c}), 0)" for c in ("last_access_utc", "creation_utc") if c in cols] or ["1"]
-            row = conn.execute(f"SELECT COUNT(*), {', '.join(parts)} FROM cookies WHERE {where}").fetchone()
-            return True, (max(row[1:]) if row[0] > 0 else None)
-    except Exception:
-        return False, None
+# Resolve and import cookie_auth.py SSOT from webmcp-fleet-kit
+cand1 = os.path.abspath(os.path.join(script_dir, "..", "..", "webmcp-fleet-kit", "src", "profiles"))
+cand2 = os.path.abspath(os.path.join(script_dir, "..", "webmcp-fleet-kit", "src", "profiles"))
+cand3 = os.path.abspath(os.path.join(script_dir, "..", "..", "kits", "webmcp-fleet-kit", "src", "profiles"))
 
+fleet_dir = None
+for c in (cand1, cand2, cand3):
+    if os.path.isfile(os.path.join(c, "cookie_auth.py")):
+        fleet_dir = c
+        break
+
+if not fleet_dir:
+    p = script_dir
+    while p and p != os.path.dirname(p):
+        check = os.path.join(p, "webmcp-fleet-kit", "src", "profiles")
+        if os.path.isfile(os.path.join(check, "cookie_auth.py")):
+            fleet_dir = check
+            break
+        p = os.path.dirname(p)
+
+if not fleet_dir:
+    sys.stderr.write("[ERROR] cookie_auth.py SSOT not found in sibling kits\n")
+    sys.exit(3)
+
+sys.path.insert(0, fleet_dir)
+try:
+    from cookie_auth import inspect_cookie_auth_report
+except Exception as e:
+    sys.stderr.write(f"[ERROR] Failed to import cookie_auth: {e}\n")
+    sys.exit(3)
+
+# 2. Anti-Replay-Attack Guard: block overwriting intact live DB that has >= session timestamps
 for root, _, files in os.walk(target_dir):
     if "Cookies" not in files:
         continue
     live_cookie = os.path.join(root, "Cookies")
-    ok, live_ts = fb_cookie_metric(live_cookie)
-    if not ok or live_ts is None:
+    if not (os.path.isfile(live_cookie) and os.path.getsize(live_cookie) > 0):
         continue
-    rel = os.path.relpath(live_cookie, target_dir)
-    b_cookie = os.path.join(backup_src, rel)
-    if not os.path.isfile(b_cookie):
-        b_cookie = next((os.path.join(r, "Cookies") for r, _, fs in os.walk(backup_src) if "Cookies" in fs), "")
-    _, b_ts = fb_cookie_metric(b_cookie)
-    if live_ts >= (b_ts or 0):
-        sys.exit(3)
+    live_rep = inspect_cookie_auth_report(live_cookie)
+    if not live_rep['dbOk']:
+        # Live DB is corrupt, allow recovery!
+        continue
+    live_ts = live_rep.get('authMaxTs') or 0
+    if live_ts > 0:
+        rel = os.path.relpath(live_cookie, target_dir)
+        b_cookie = os.path.join(backup_src, rel)
+        if not os.path.isfile(b_cookie):
+            b_cookie = next((os.path.join(r, "Cookies") for r, _, fs in os.walk(backup_src) if "Cookies" in fs), "")
+        # [M1]: Fail-closed if backup cookie file is missing or unreadable
+        if not b_cookie or not os.path.isfile(b_cookie):
+            sys.exit(3)
+        b_rep = inspect_cookie_auth_report(b_cookie)
+        if not b_rep['dbOk']:
+            sys.exit(3)
+        b_ts = b_rep.get('authMaxTs') or 0
+        # [H2]: Anti-Replay Gate - block restore if live has newer/equal session timestamps (no platform bypass)
+        if live_ts >= b_ts:
+            sys.exit(3)
 PY
     if [ "$guard_rc" -eq 2 ]; then
       echo "[GUARDRAIL BLOCKED] Chrome is currently running for profile '$PROFILE_NAME'. Close Chrome first before restoring." >&2
       exit 1
     elif [ "$guard_rc" -eq 3 ]; then
-      echo "[GUARDRAIL BLOCKED] Live Cookies DB for '$PROFILE_NAME' is intact (PRAGMA integrity_check=ok) and contains newer/active session tokens than backup. Overwriting a healthy profile with stale backup cookies risks triggering Facebook Session Replay Attack (Checkpoint 956) and LevelDB state desync! If you lost your web session, re-login directly in the browser window. Only pass --force-disaster-recovery if recovering from disk/file loss." >&2
+      echo "[GUARDRAIL BLOCKED] Live Cookies DB for '$PROFILE_NAME' is intact (PRAGMA integrity_check=ok) and contains newer/active session tokens than backup. Overwriting a healthy profile with stale backup cookies risks triggering Session Replay Attack (e.g. Checkpoint 956) and LevelDB state desync! If you lost your web session, re-login directly in the browser window. Only pass --force-disaster-recovery if recovering from disk/file loss." >&2
       exit 1
     fi
   fi
