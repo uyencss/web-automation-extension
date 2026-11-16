@@ -705,3 +705,75 @@ test('handleExport: rethrows KEYCHAIN_DENIED if Gateway is not connected or prof
     (err) => err.code === 'KEYCHAIN_DENIED'
   );
 });
+
+test('handleExport: allowOnline unwraps real executeCDP { tabId, result: { cookies } } shape and retries via newTab on chrome:// attach error', async () => {
+  const calls = [];
+
+  const fakeGatewayHealth = async () => ({
+    extensionConnected: true,
+    profileDetails: [{ profileId: '7f00-uuid', name: 'thichminhthien0' }],
+  });
+
+  const fakeGatewayCall = async (method, params, profileId) => {
+    calls.push({ method, params, profileId });
+    if (method === 'executeCDP' && calls.length === 1) {
+      throw new Error('EXECUTION_FAILED: Cannot access a chrome:// URL');
+    }
+    if (method === 'newTab') {
+      return { tabId: 42 };
+    }
+    if (method === 'executeCDP') {
+      return {
+        tabId: 42,
+        result: {
+          cookies: [
+            {
+              name: 'c_user',
+              value: '1000123',
+              domain: '.facebook.com',
+              path: '/',
+              secure: true,
+              httpOnly: false,
+              expires: Date.now() / 1000 + 3600,
+            },
+          ],
+        },
+      };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  };
+
+  const fakeExporterThrowingKeychain = () => {
+    const err = new Error('macOS keychain denied');
+    err.code = 'KEYCHAIN_DENIED';
+    throw err;
+  };
+
+  const result = await handleExport(
+    {
+      profileId: 'managed:thichminhthien0',
+      allowOnline: true,
+      format: 'playwright',
+    },
+    {
+      profileResolver: () => ({
+        id: 'managed:thichminhthien0',
+        name: 'thichminhthien0',
+        userDataDir: '/tmp/fake',
+        profileDir: 'Default',
+      }),
+      cookieExporter: fakeExporterThrowingKeychain,
+      gatewayHealthLookup: fakeGatewayHealth,
+      gatewayCaller: fakeGatewayCall,
+    }
+  );
+
+  assert.deepEqual(
+    calls.map((c) => c.method),
+    ['executeCDP', 'newTab', 'executeCDP']
+  );
+  assert.equal(calls[1].params?.url, 'about:blank');
+  assert.equal(result.status, 'success');
+  assert.equal(result.exportedCount, 1);
+  assert.equal(result.data.cookies[0].name, 'c_user');
+});
