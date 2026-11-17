@@ -1724,3 +1724,106 @@ c.close()`,
     assert.equal(blockedM1.status, 1, 'Expected restore to fail closed on corrupt backup cookie file ([M1])');
   }
 });
+
+test('detoxForkedManagedProfile and launchChrome purge leaked sibling Local State info_cache and preserve metaDir siblings', async (t) => {
+  const { detoxForkedManagedProfile, sanitizeManagedLocalState } = require(path.join(ROOT, 'chrome-launcher', 'profile-fork'));
+  const root = tempRoot();
+  t.after(() => {
+    try { spawnSync('rm', ['-rf', root]); } catch {}
+  });
+
+  // 1. Isolated Managed Profile: sibling info_cache entries must be stripped & "Your Chrome" upgraded
+  const managedDir = path.join(root, 'managed-profiles');
+  const targetDir = path.join(managedDir, 'thichminhthien0');
+  const p43Dir = path.join(targetDir, 'Profile 43');
+  mkdirSync(p43Dir, { recursive: true });
+  writeFileSync(path.join(targetDir, '.webmcp-meta.json'), JSON.stringify({
+    name: 'thichminhthien0',
+    profileDir: 'Profile 43',
+  }));
+  writeFileSync(path.join(p43Dir, 'Preferences'), JSON.stringify({
+    account_info: [{ email: 'thichminhthien0@gmail.com' }],
+    profile: { name: 'Your Chrome', using_default_name: true },
+  }));
+  writeFileSync(path.join(targetDir, 'Local State'), JSON.stringify({
+    os_crypt: { encrypted_key: 'keep-me' },
+    profile: {
+      last_used: 'Profile 43',
+      last_active_profiles: ['Profile 43', 'Profile 22'],
+      profiles_order: ['Profile 43', 'Profile 22', 'Profile 45'],
+      info_cache: {
+        Default: { name: 'hieuhieu', user_name: 'hieu2906090@gmail.com' },
+        'Profile 22': { name: 'codewithzerog' },
+        'Profile 43': { name: 'Your Chrome', gaia_id: '123', user_name: 'thichminhthien0@gmail.com', is_consented_primary_account: true },
+        'Profile 45': { name: 'chennie' },
+      },
+    },
+  }));
+
+  detoxForkedManagedProfile(targetDir, 'Profile 43');
+
+  const lsAfter = JSON.parse(readFileSync(path.join(targetDir, 'Local State'), 'utf8'));
+  assert.deepEqual(Object.keys(lsAfter.profile.info_cache), ['Profile 43'], 'Managed Local State must strip sibling Other Chrome Profiles');
+  assert.equal(lsAfter.profile.info_cache['Profile 43'].name, 'thichminhthien0');
+  assert.equal(lsAfter.profile.info_cache['Profile 43'].is_using_default_name, false);
+  assert.equal(lsAfter.profile.info_cache['Profile 43'].gaia_id, undefined);
+  assert.equal(lsAfter.profile.info_cache['Profile 43'].user_name, undefined);
+  assert.equal(lsAfter.profile.info_cache['Profile 43'].is_consented_primary_account, false);
+  assert.equal(lsAfter.profile.last_used, 'Profile 43');
+  assert.deepEqual(lsAfter.profile.last_active_profiles, ['Profile 43']);
+  assert.equal(lsAfter.profile.profiles_order, undefined);
+  assert.equal(lsAfter.os_crypt.encrypted_key, 'keep-me');
+
+  const prefsAfter = JSON.parse(readFileSync(path.join(p43Dir, 'Preferences'), 'utf8'));
+  assert.equal(prefsAfter.profile.name, 'thichminhthien0');
+  assert.equal(prefsAfter.profile.using_default_name, false);
+
+  // 2. Shared System Chrome (metaDir option set = managed-to-chrome): sibling info_cache entries must stay intact!
+  const sysDir = path.join(root, 'system-chrome');
+  const sysP2 = path.join(sysDir, 'Profile 2');
+  mkdirSync(sysP2, { recursive: true });
+  writeFileSync(path.join(sysP2, 'Preferences'), JSON.stringify({ profile: { name: 'Migrated One' } }));
+  writeFileSync(path.join(sysP2, '.webmcp-meta.json'), JSON.stringify({ name: 'Migrated One' }));
+  writeFileSync(path.join(sysDir, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: { name: 'Main Personal' },
+        'Profile 2': { name: 'Migrated One', gaia_id: '999', user_name: 'x@gmail.com', is_consented_primary_account: true },
+      },
+    },
+  }));
+  detoxForkedManagedProfile(sysDir, 'Profile 2', { metaDir: sysP2 });
+  const sysLsAfter = JSON.parse(readFileSync(path.join(sysDir, 'Local State'), 'utf8'));
+  assert.deepEqual(Object.keys(sysLsAfter.profile.info_cache).sort(), ['Default', 'Profile 2'], 'managed-to-chrome must preserve sibling System Chrome profiles');
+  assert.equal(sysLsAfter.profile.info_cache['Profile 2'].user_name, undefined);
+
+  // 3. launchChrome self-heals a already-detoxed Managed Profile whose Local State still has sibling leakage
+  const alreadyDetoxed = path.join(managedDir, 'already-detoxed');
+  mkdirSync(path.join(alreadyDetoxed, 'Default'), { recursive: true });
+  writeFileSync(path.join(alreadyDetoxed, '.webmcp-meta.json'), JSON.stringify({
+    name: 'Clean Name',
+    profileDir: 'Default',
+    detoxedForManaged: true,
+  }));
+  writeFileSync(path.join(alreadyDetoxed, 'Local State'), JSON.stringify({
+    profile: {
+      info_cache: {
+        Default: { name: 'Your Chrome' },
+        'Profile 99': { name: 'Ghost Sibling' },
+      },
+    },
+  }));
+  await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: alreadyDetoxed, profileDir: 'Default' },
+    managedProfilesDir: managedDir,
+    extensionPath: fakeExtensionDir(root),
+    chromePath: process.execPath,
+    sessionsFile: path.join(root, 'sessions.json'),
+    extraArgs: ['-e', 'process.exit(0)'],
+  });
+  const healedLs = JSON.parse(readFileSync(path.join(alreadyDetoxed, 'Local State'), 'utf8'));
+  assert.deepEqual(Object.keys(healedLs.profile.info_cache), ['Default']);
+  assert.equal(healedLs.profile.info_cache.Default.name, 'Clean Name');
+  assert.equal(typeof sanitizeManagedLocalState, 'function');
+});

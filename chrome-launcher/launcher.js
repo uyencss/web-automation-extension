@@ -816,6 +816,11 @@ async function launchChrome(options = {}) {
         meta.detoxedForManaged = true;
       }
     } catch {}
+  } else if (!options.dryRun && !isProfileLocked(userDataDir)) {
+    try {
+      const { sanitizeManagedLocalState } = require('./profile-fork');
+      sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir));
+    } catch {}
   }
 
   const result = await spawnChrome({

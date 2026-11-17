@@ -131,6 +131,60 @@ function extractWebstoreExtensionIds(targetProfilePath, secPrefsPath) {
   return Array.from(ids).sort();
 }
 
+function isGenericChromeProfileName(name) {
+  if (!name || typeof name !== 'string') return true;
+  const trimmed = name.trim();
+  return !trimmed || trimmed === 'Your Chrome' || trimmed === 'Your Chromium' || trimmed === 'Default' || /^Person \d+$/i.test(trimmed);
+}
+
+/**
+ * Strip leaked sibling profile entries from an isolated Managed Profile's `Local State`
+ * so Chrome never displays "Other Chrome Profiles" in the Profile Switcher menu and
+ * never creates empty ghost subdirectories inside another managed user-data-dir.
+ */
+function sanitizeManagedLocalState(userDataDir, profileDir = 'Default', displayName = '') {
+  if (!userDataDir) return { ok: false, changed: false };
+  const targetDir = profileDir || 'Default';
+  const localStatePath = path.join(userDataDir, 'Local State');
+  const exists = fs.existsSync(localStatePath);
+  if (!exists && !displayName) {
+    return { ok: false, changed: false };
+  }
+  let data = {};
+  let beforeStr = '';
+  if (exists) {
+    beforeStr = fs.readFileSync(localStatePath, 'utf8');
+    data = JSON.parse(beforeStr);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error(`Refusing to overwrite non-object JSON in ${localStatePath}`);
+    }
+  }
+  const prof = (data.profile && typeof data.profile === 'object' && !Array.isArray(data.profile)) ? data.profile : {};
+  data.profile = prof;
+  const rawCache = (prof.info_cache && typeof prof.info_cache === 'object' && !Array.isArray(prof.info_cache)) ? prof.info_cache : {};
+  const prevEntry = (rawCache[targetDir] && typeof rawCache[targetDir] === 'object' && !Array.isArray(rawCache[targetDir]))
+    ? { ...rawCache[targetDir] }
+    : {};
+  delete prevEntry.gaia_id;
+  delete prevEntry.user_name;
+  prevEntry.is_consented_primary_account = false;
+  prevEntry.is_ephemeral = false;
+  if (displayName && isGenericChromeProfileName(prevEntry.name)) {
+    prevEntry.name = displayName;
+    prevEntry.is_using_default_name = false;
+  }
+  prof.info_cache = { [targetDir]: prevEntry };
+  prof.last_used = targetDir;
+  prof.last_active_profiles = [targetDir];
+  delete prof.profiles_order;
+  const nextStr = `${JSON.stringify(data, null, 2)}\n`;
+  if (exists && nextStr === beforeStr) {
+    return { ok: true, changed: false };
+  }
+  atomicWriteJson(localStatePath, data);
+  return { ok: true, changed: true };
+}
+
 function forkExistingProfile(profile, name, options = {}) {
   if (!profile || !profile.userDataDir || !profile.profileDir) {
     throw new Error('forkExistingProfile requires a valid source profile with userDataDir and profileDir.');
@@ -322,6 +376,8 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
     }
   }
 
+  const cleanDisplayName = meta.name || meta.displayName || (!options.metaDir ? path.basename(userDataDir) : '');
+
   // 4. Mutate <profileDir>/Preferences (atomic/fail-closed JSON)
   if (fs.existsSync(prefsPath)) {
     patchJson(prefsPath, (p) => {
@@ -340,12 +396,20 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
         exit_type: 'Normal',
         exited_cleanly: true,
       };
+      if (cleanDisplayName && isGenericChromeProfileName(p.profile.name)) {
+        p.profile.name = cleanDisplayName;
+        p.profile.using_default_name = false;
+      }
     });
   }
 
   // 5. Mutate <userDataDir>/Local State (if exists)
   const localStatePath = path.join(userDataDir, 'Local State');
-  if (fs.existsSync(localStatePath)) {
+  if (!options.metaDir) {
+    // Isolated Managed Profile: purge any leaked sibling info_cache entries
+    sanitizeManagedLocalState(userDataDir, profileDir, cleanDisplayName);
+  } else if (fs.existsSync(localStatePath)) {
+    // Shared System Chrome target (managed-to-chrome): scrub only target entry
     patchJson(localStatePath, (ls) => {
       const infoCache = ls.profile?.info_cache;
       if (infoCache && infoCache[profileDir]) {
@@ -443,6 +507,7 @@ module.exports = {
   DEFAULT_MAX_NATIVE_CLEAN_PROFILES,
   HARD_MAX_FARM_PROFILES,
   countManagedProfiles,
+  sanitizeManagedLocalState,
   forkExistingProfile,
   detoxForkedManagedProfile,
   detoxAllManagedProfiles,
