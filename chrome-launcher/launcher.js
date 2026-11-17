@@ -10,6 +10,7 @@ const {
   ensureDirs,
   MANAGED_PROFILES_DIR,
   SESSIONS_FILE,
+  patchJson,
 } = require('./config');
 const {
   hasLiveManagedSession,
@@ -72,7 +73,62 @@ function findChromeBinary() {
   return chromeCandidates().find((candidate) => fs.existsSync(candidate)) || null;
 }
 
-const LOCK_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+const LOCK_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'lockfile'];
+
+const MANAGED_SESSION_SHIELD_ARGS = [
+  '--disable-field-trial-config',
+  '--enable-features=BoundSessionCredentialsKillSwitch',
+  `--disable-features=${[
+    'DeviceBoundSessions',
+    'DeviceBoundSessionsBypassDeferralsForRefreshRequests',
+    'DeviceBoundSessionsClientCertSelection',
+    'DeviceBoundSessionsDevTools',
+    'DeviceBoundSessionsFederatedRegistration',
+    'DeviceBoundSessionsPersistExpiryOnRefresh',
+    'DeviceBoundSessionsForRestrictedSites',
+    'DeviceBoundSessionsForSingleSignOn',
+    'DeviceBoundSessionsIncludeAudienceClaim',
+    'DeviceBoundSessionsRetryTransientRefreshErrors',
+    'DeviceBoundSessionsDsePrewarmer',
+    'EnableBoundSessionCredentials',
+    'EnableBoundSessionCredentialsContinuity',
+    'EnableCookieBindingCookieUpgrade',
+    'EnableChromeRefreshTokenBinding',
+    'EnableChromeRefreshTokenBindingUpgrade',
+    'EnableOAuthMultiloginCookiesBinding',
+    'EnableOAuthMultiloginCookiesBindingServerExperiment',
+    'EnableOAuthMultiloginStandardCookiesBinding',
+    'EnableOAuthMultiloginStandardCookiesBindingForSecondaryPartitions',
+    'EnableOAuthMultiloginYoutubeCookiesBinding',
+    'OAuthMultiloginYoutubeCookieBindingEnforced',
+    'RefreshTokenBindingUpgrade',
+    'UseDeviceBoundSessionsStorageMaskForDeletion',
+    'GlicClearDeviceBoundSessionsOnFirstSync',
+    'FlashDeprecationWarning',
+    'EnablePasswordsAccountStorage',
+    'OptimizationGuideOnDeviceModel',
+  ].join(',')}`,
+];
+
+function assertNoForbiddenManagedArgs(extraArgs) {
+  if (!Array.isArray(extraArgs)) return;
+  for (let i = 0; i < extraArgs.length; i++) {
+    const raw = String(extraArgs[i] || '').trim();
+    const lower = raw.toLowerCase();
+    if (
+      lower === '--use-mock-keychain' ||
+      lower.startsWith('--use-mock-keychain=') ||
+      lower === '--password-store=basic' ||
+      (lower === '--password-store' && String(extraArgs[i + 1] || '').trim().toLowerCase() === 'basic')
+    ) {
+      const err = new Error(
+        `ERR_FORBIDDEN_MOCK_KEYCHAIN: Flag "${raw}" is forbidden on Managed profiles because mock/basic password stores break Keychain Safe Storage cookie persistence.`
+      );
+      err.code = 'ERR_FORBIDDEN_MOCK_KEYCHAIN';
+      throw err;
+    }
+  }
+}
 
 /**
  * Remove stale Chrome lock files from a user-data directory.
@@ -233,40 +289,78 @@ function resolveMacAppBundle(chromePath, args = []) {
   return null;
 }
 
-function readLockPid(userDataDir) {
+function readLockDetails(userDataDir) {
   const lockPath = path.join(userDataDir, 'SingletonLock');
   try {
     const target = fs.readlinkSync(lockPath);
-    const match = target.match(/-(\d+)$/);
-    return match ? parseInt(match[1], 10) : null;
-  } catch {
-    return null;
+    const match = target.match(/^(.*)-(\d+)$/);
+    if (match) {
+      return { exists: true, isSymlink: true, host: match[1] || null, pid: parseInt(match[2], 10) };
+    }
+    return { exists: true, isSymlink: true, host: null, pid: null };
+  } catch (err) {
+    if (err.code === 'ENOENT') return { exists: false, isSymlink: false, host: null, pid: null };
+    return { exists: true, isSymlink: false, host: null, pid: null };
   }
+}
+
+function readLockPid(userDataDir) {
+  return readLockDetails(userDataDir).pid;
+}
+
+function findLiveChromePidViaPs(userDataDir) {
+  try {
+    const out = execSync('ps -ax -o pid=,command=', { encoding: 'utf8' });
+    const pid = matchChromePidInPsOutput(out, { userDataDir });
+    if (pid && isPidAlive(pid)) return pid;
+  } catch {}
+  return null;
 }
 
 /**
  * Check whether a Chrome profile directory is locked by a live process.
- * If lock files exist but the owning PID is dead (stale locks), they are
+ * If lock files exist but the owning local PID is dead (stale locks), they are
  * automatically cleaned up and the function returns false.
  */
 function isProfileLocked(userDataDir) {
-  const lockPath = path.join(userDataDir, 'SingletonLock');
-  const pid = readLockPid(userDataDir);
-  if (pid !== null) {
-    if (!isPidAlive(pid)) {
+  const lock = readLockDetails(userDataDir);
+  const hasLockfile = (() => {
+    try { return Boolean(fs.lstatSync(path.join(userDataDir, 'lockfile'))); } catch { return false; }
+  })();
+
+  if (lock.pid !== null) {
+    const shortHost = (h) => String(h || '').trim().toLowerCase().split('.')[0];
+    const localHost = !lock.host || lock.host === os.hostname() || shortHost(lock.host) === shortHost(os.hostname());
+    if (isPidAlive(lock.pid)) {
+      return true;
+    }
+    if (localHost && !hasLockfile) {
+      cleanStaleLocks(userDataDir);
+      return false;
+    }
+    if (findLiveChromePidViaPs(userDataDir)) {
+      return true;
+    }
+    if (localHost) {
       cleanStaleLocks(userDataDir);
       return false;
     }
     return true;
   }
-  if (!fs.existsSync(lockPath)) {
-    return LOCK_FILES.some((f) => {
-      try {
-        return Boolean(fs.lstatSync(path.join(userDataDir, f)));
-      } catch {
-        return false;
-      }
-    });
+
+  const anyLockExists = LOCK_FILES.some((f) => {
+    try {
+      return Boolean(fs.lstatSync(path.join(userDataDir, f)));
+    } catch {
+      return false;
+    }
+  });
+  if (!anyLockExists) {
+    return false;
+  }
+
+  if (findLiveChromePidViaPs(userDataDir)) {
+    return true;
   }
   return true;
 }
@@ -471,6 +565,15 @@ function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
     }
   }
 
+  for (const feat of commaFlagGroups['--enable-features=']) {
+    const baseName = feat.split(':')[0];
+    commaFlagGroups['--disable-features='].delete(feat);
+    commaFlagGroups['--disable-features='].delete(baseName);
+  }
+  for (const feat of commaFlagGroups['--enable-blink-features=']) {
+    commaFlagGroups['--disable-blink-features='].delete(feat);
+  }
+
   for (const [prefix, set] of Object.entries(commaFlagGroups)) {
     if (set.size > 0) {
       otherArgs.push(`${prefix}${Array.from(set).join(',')}`);
@@ -480,10 +583,23 @@ function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
   return otherArgs;
 }
 
+const mergeChromiumFeatureFlags = mergeChromeLaunchArgs;
+
 async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
   const rawBase = baseArgs({ extensionPath, userDataDir, profileDir });
   const args = mergeChromeLaunchArgs(rawBase, extraArgs);
-  const mergedEnv = env ? { ...process.env, ...env } : process.env;
+  const mergedEnv = env ? { ...process.env, ...env } : { ...process.env };
+  if (
+    process.platform !== 'darwin' &&
+    process.platform !== 'win32' &&
+    !mergedEnv.DBUS_SESSION_BUS_ADDRESS &&
+    typeof process.getuid === 'function'
+  ) {
+    const dbusPath = `/run/user/${process.getuid()}/bus`;
+    if (fs.existsSync(dbusPath)) {
+      mergedEnv.DBUS_SESSION_BUS_ADDRESS = `unix:path=${dbusPath}`;
+    }
+  }
 
   if (dryRun) {
     return {
@@ -708,6 +824,8 @@ async function launchChrome(options = {}) {
     return annotate(result);
   }
 
+  assertNoForbiddenManagedArgs(options.extraArgs);
+
   const existingManagedDir = (!options.profile?.userDataDir && !options.forceCreate)
     ? findExistingManagedProfileDir(options.newProfileName, managedProfilesDir)
     : null;
@@ -782,6 +900,9 @@ async function launchChrome(options = {}) {
     if (resolvedTz) effectiveExtraArgs.push(`--timezone=${resolvedTz}`);
   }
 
+  const hasCallerOrMetaOverrides = effectiveExtraArgs.length > 0 || Boolean(spawnEnv?.TZ);
+  const managedExtraArgs = [...MANAGED_SESSION_SHIELD_ARGS, ...effectiveExtraArgs];
+
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
     const spawnRes = await spawnChrome({
       chromePath,
@@ -791,10 +912,10 @@ async function launchChrome(options = {}) {
       mode: 'managed',
       attached: true,
       dryRun: options.dryRun,
-      extraArgs: effectiveExtraArgs,
+      extraArgs: managedExtraArgs,
       env: spawnEnv,
     });
-    if ((effectiveExtraArgs && effectiveExtraArgs.length > 0) || spawnEnv?.TZ) {
+    if (hasCallerOrMetaOverrides) {
       spawnRes.attachWarning = 'Chrome is already running for this profile; extraArgs and env (TZ) require --relaunch to take effect.';
     }
     return annotate(spawnRes);
@@ -871,16 +992,40 @@ async function launchChrome(options = {}) {
     profileDir: effectiveProfileDir,
     mode: 'managed',
     dryRun: options.dryRun,
-    extraArgs: effectiveExtraArgs,
+    extraArgs: managedExtraArgs,
     env: spawnEnv,
   });
   if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
+  if (!options.dryRun && result.ok !== false) {
+    try {
+      const metaPath = path.join(userDataDir, '.webmcp-meta.json');
+      patchJson(metaPath, (m) => {
+        m.sessionDirty = true;
+        m.lastLaunchedAt = new Date().toISOString();
+      });
+    } catch {}
+  }
   return annotate(result);
+}
+
+function markManagedSessionClosed(userDataDir) {
+  if (!userDataDir) return;
+  try {
+    const metaPath = path.join(userDataDir, '.webmcp-meta.json');
+    if (!fs.existsSync(metaPath)) return;
+    patchJson(metaPath, (m) => {
+      m.sessionDirty = false;
+      m.lastClosedAt = new Date().toISOString();
+      m.sessionVersion = (typeof m.sessionVersion === 'number' ? m.sessionVersion : 0) + 1;
+    });
+  } catch {}
 }
 
 async function closeChrome(options = {}) {
   const { profileId, all, gatewayUrl = 'http://127.0.0.1:7865', token = process.env.WEBMCP_GATEWAY_TOKEN } = options;
-  
+  const managedProfilesDir = options.managedProfilesDir || MANAGED_PROFILES_DIR;
+  const closedManagedDirs = new Set();
+
   // 1. Collect connected profiles from the gateway health endpoint if it is running
   let connectedDetails = [];
   let gatewayRunning = false;
@@ -901,20 +1046,21 @@ async function closeChrome(options = {}) {
   const targetsToClose = [];
   if (all) {
     for (const d of connectedDetails) {
-      targetsToClose.push(d.profileId);
+      targetsToClose.push(d);
     }
   } else if (profileId) {
     const q = norm(profileId);
     for (const d of connectedDetails) {
       if (norm(d.profileId) === q || (d.email && norm(d.email) === q) || (d.name && norm(d.name) === q)) {
-        targetsToClose.push(d.profileId);
+        targetsToClose.push(d);
         break;
       }
     }
   }
   
   // 3. Send closeBrowser to targets
-  for (const targetId of targetsToClose) {
+  for (const detail of targetsToClose) {
+    const targetId = detail.profileId;
     try {
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers.Authorization = `Bearer ${token}`;
@@ -929,6 +1075,15 @@ async function closeChrome(options = {}) {
       });
       if (res.ok) {
         closedCount++;
+        if (detail.userDataDir) {
+          closedManagedDirs.add(detail.userDataDir);
+        } else {
+          try {
+            const matched = findManagedProfileByNameOrId(targetId, { managedProfilesDir })
+              || (detail.name ? findManagedProfileByNameOrId(detail.name, { managedProfilesDir }) : null);
+            if (matched?.userDataDir) closedManagedDirs.add(matched.userDataDir);
+          } catch {}
+        }
       }
     } catch (err) {
       // ignore
@@ -974,6 +1129,7 @@ async function closeChrome(options = {}) {
         changed = true;
         closedCount++;
         cleanStaleLocks(userDataDir);
+        closedManagedDirs.add(userDataDir);
       }
     }
     
@@ -982,6 +1138,10 @@ async function closeChrome(options = {}) {
     }
   } catch (err) {
     // ignore
+  }
+
+  for (const userDataDir of closedManagedDirs) {
+    markManagedSessionClosed(userDataDir);
   }
   
   return { ok: true, closedCount };
@@ -1001,12 +1161,15 @@ module.exports = {
   findChromePidForUserDataDir,
   isProfileLocked,
   cleanStaleLocks,
+  LOCK_FILES,
+  MANAGED_SESSION_SHIELD_ARGS,
   slugify,
   nextManagedProfileDir,
   findExistingManagedProfileDir,
   createManagedProfile,
   baseArgs,
   mergeChromeLaunchArgs,
+  mergeChromiumFeatureFlags,
   detectChromeChannel,
   detectChromeInfo,
   loadExtensionSupported,

@@ -32,11 +32,41 @@ function ensureDirs(options = {}) {
   };
 }
 
+function atomicWriteJson(filePath, data) {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`);
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    throw err;
+  }
+}
+
+function patchJson(filePath, mutator) {
+  let data = {};
+  if (fs.existsSync(filePath)) {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`Refusing to overwrite corrupt JSON in ${filePath}: ${err.message}`);
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new Error(`Refusing to overwrite non-object JSON in ${filePath}`);
+    }
+  }
+  mutator(data);
+  atomicWriteJson(filePath, data);
+}
+
 module.exports = {
   getDataDir,
   getManagedProfilesDir,
   getSessionsFile,
   ensureDirs,
+  atomicWriteJson,
+  patchJson,
   DATA_DIR: getDataDir(),
   MANAGED_PROFILES_DIR: getManagedProfilesDir(),
   SESSIONS_FILE: getSessionsFile(),

@@ -2,8 +2,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { MANAGED_PROFILES_DIR } = require('./config');
+const { MANAGED_PROFILES_DIR, atomicWriteJson, patchJson } = require('./config');
 const { isProfileLocked, createManagedProfile } = require('./launcher');
+
+const UNSUPPORTED_KEYCHAIN_BROWSERS = new Set(['brave', 'edge', 'coccoc', 'chromium']);
+const UNSUPPORTED_KEYCHAIN_PATH_RE = /(?:^|[\\/])(BraveSoftware|Microsoft Edge|Microsoft[\\/]Edge|CocCoc|Chromium)(?:[\\/]|$)/i;
 
 const CACHE_RE = /(^|[\\/])(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|CacheStorage)([\\/]|$)/;
 const WEBMCP_STORAGE_RE = /(^|[\\/])(Local|Sync) Extension Settings[\\/]lbodkmkjbcemodklopcfdmpjomdoapae([\\/]|$)/;
@@ -30,34 +33,6 @@ function countManagedProfiles(managedProfilesDir = MANAGED_PROFILES_DIR) {
   } catch {
     return 0;
   }
-}
-
-function atomicWriteJson(filePath, data) {
-  const tmpPath = `${filePath}.tmp-${process.pid}`;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`);
-  try {
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch {}
-    throw err;
-  }
-}
-
-function patchJson(filePath, mutator) {
-  let data = {};
-  if (fs.existsSync(filePath)) {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    try {
-      data = JSON.parse(raw);
-    } catch (err) {
-      throw new Error(`Refusing to overwrite corrupt JSON in ${filePath}: ${err.message}`);
-    }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      throw new Error(`Refusing to overwrite non-object JSON in ${filePath}`);
-    }
-  }
-  mutator(data);
-  atomicWriteJson(filePath, data);
 }
 
 function isSqliteFile(filePath) {
@@ -191,9 +166,44 @@ function sanitizeManagedLocalState(userDataDir, profileDir = 'Default', displayN
   return { ok: true, changed: true };
 }
 
+function detectUnsupportedKeychainBrowser(profile) {
+  const rawBrowser = String(profile?.browser || '').trim();
+  if (rawBrowser && UNSUPPORTED_KEYCHAIN_BROWSERS.has(rawBrowser.toLowerCase())) {
+    return rawBrowser;
+  }
+  const rawId = String(profile?.id || '').trim();
+  const idPrefix = rawId.includes(':') ? rawId.split(':', 1)[0].trim() : '';
+  if (idPrefix && UNSUPPORTED_KEYCHAIN_BROWSERS.has(idPrefix.toLowerCase())) {
+    return idPrefix;
+  }
+  const pathMatch = String(profile?.userDataDir || '').match(UNSUPPORTED_KEYCHAIN_PATH_RE);
+  if (pathMatch) {
+    return pathMatch[1];
+  }
+  return null;
+}
+
+function assertWalCheckpointNotBusy(db) {
+  const ckpt = db.prepare('PRAGMA wal_checkpoint(TRUNCATE);').get();
+  if (ckpt && ckpt.busy !== 0) {
+    throw new Error('SQLITE_WAL_BUSY: WAL checkpoint blocked by active reader');
+  }
+}
+
 function forkExistingProfile(profile, name, options = {}) {
   if (!profile || !profile.userDataDir || !profile.profileDir) {
     throw new Error('forkExistingProfile requires a valid source profile with userDataDir and profileDir.');
+  }
+  const unsupportedBrowser = detectUnsupportedKeychainBrowser(profile);
+  const explicitChromiumAllowed =
+    options.allowChromiumFork === true &&
+    String(profile.browser || '').trim().toLowerCase() === 'chromium';
+  if (unsupportedBrowser && options.allowCrossBrowserFork !== true && !explicitChromiumAllowed) {
+    const err = new Error(
+      `ERR_UNSUPPORTED_SOURCE_BROWSER_KEYCHAIN: Cannot raw-fork from ${unsupportedBrowser} (${profile.userDataDir}) because its Keychain Safe Storage key differs from Google Chrome. Export/import cookies instead or pass allowCrossBrowserFork: true.`
+    );
+    err.code = 'ERR_UNSUPPORTED_SOURCE_BROWSER_KEYCHAIN';
+    throw err;
   }
   if (isProfileLocked(profile.userDataDir)) {
     throw new Error('Source Chrome userDataDir is currently running — close it first so SQLite Cookies are quiescent.');
@@ -338,15 +348,22 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
       const { DatabaseSync } = require('node:sqlite');
       const db = new DatabaseSync(srcCookiePath);
       try {
-        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-        if (!fs.existsSync(prebootPath)) {
-          const tbl = db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='cookies'").get();
-          const rowCount = tbl && tbl.count > 0
-            ? (db.prepare('SELECT count(*) AS count FROM cookies').get()?.count ?? 0)
-            : 0;
-          if (rowCount > 0) {
-            db.exec(`VACUUM INTO '${prebootPath.replace(/'/g, "''")}';`);
-            try { fs.chmodSync(prebootPath, 0o600); } catch {}
+        assertWalCheckpointNotBusy(db);
+        const tbl = db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='cookies'").get();
+        if (tbl && tbl.count > 0) {
+          const cols = new Set(db.prepare('PRAGMA table_info(cookies)').all().map((c) => c.name));
+          if (cols.has('value') && cols.has('encrypted_value')) {
+            const del = db.prepare('DELETE FROM cookies WHERE LENGTH(value) > 0 AND LENGTH(encrypted_value) > 0;').run();
+            if (del.changes > 0) {
+              assertWalCheckpointNotBusy(db);
+            }
+          }
+          if (!fs.existsSync(prebootPath)) {
+            const rowCount = db.prepare('SELECT count(*) AS count FROM cookies').get()?.count ?? 0;
+            if (rowCount > 0) {
+              db.exec(`VACUUM INTO '${prebootPath.replace(/'/g, "''")}';`);
+              try { fs.chmodSync(prebootPath, 0o600); } catch {}
+            }
           }
         }
       } finally {
@@ -361,7 +378,7 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
   // 3. Extract Web Store extension IDs before quarantining Secure Preferences -> .pre-detox
   const secPrefsPath = path.join(targetProfilePath, 'Secure Preferences');
   const discoveredExtensions = extractWebstoreExtensionIds(targetProfilePath, secPrefsPath);
-  if (!options.metaDir && discoveredExtensions.length > 0) {
+  if (options.writeExternalExtensions !== false && discoveredExtensions.length > 0) {
     const extDir = path.join(userDataDir, 'External Extensions');
     fs.mkdirSync(extDir, { recursive: true });
     for (const extId of discoveredExtensions) {
@@ -391,12 +408,18 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
       if (p.google) {
         delete p.google.services;
       }
+      delete p.gaia_cookie;
+      delete p.bound_session_credentials_bound_session_params;
       delete p.protection;
       if (p.prefs) {
         delete p.prefs.tracked_preferences_reset;
         delete p.prefs.preference_reset_time;
       }
-      p.signin = { allowed: false, allowed_on_next_startup: false };
+      p.signin = {
+        allowed: false,
+        allowed_on_next_startup: false,
+        bound_session_credentials_enabled: false,
+      };
       p.profile = {
         ...(p.profile || {}),
         exit_type: 'Normal',
@@ -438,7 +461,7 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
         const tbl = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='token_service'").get();
         if (tbl) {
           db.exec('DELETE FROM token_service;');
-          db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+          assertWalCheckpointNotBusy(db);
         }
       } finally {
         db.close();

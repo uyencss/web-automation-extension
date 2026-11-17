@@ -1115,7 +1115,11 @@ test('detoxForkedManagedProfile safely guards, preserves meta, backs up cookies,
   assert.equal(updatedPrefs.protection, undefined);
   assert.equal(updatedPrefs.prefs?.tracked_preferences_reset, undefined);
   assert.equal(updatedPrefs.prefs?.preference_reset_time, undefined);
-  assert.deepEqual(updatedPrefs.signin, { allowed: false, allowed_on_next_startup: false });
+  assert.deepEqual(updatedPrefs.signin, {
+    allowed: false,
+    allowed_on_next_startup: false,
+    bound_session_credentials_enabled: false,
+  });
   assert.equal(updatedPrefs.profile?.exit_type, 'Normal');
   assert.equal(updatedPrefs.profile?.exited_cleanly, true);
 
