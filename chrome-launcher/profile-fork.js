@@ -13,6 +13,12 @@ const EXT_ID_RE = /^[a-p]{32}$/;
 const BUILTIN_EXTENSION_IDS = new Set([
   'nmmhkkegccagdldgiimedpiccmgmieda',
   'ghbmnnjooekpmoecnnnilnnbdlolhkhi',
+  'pkedcjkdefgpdelpbcmbmeomcjbeemfm',
+  'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+  'ahfgeienlihckogmohjhadlkjgocpleb',
+  'nkeimhogjdpnpccoofpliimaahmaaome',
+  'fignfifoniblkonapihmkfakmlgkbkcf',
+  'admccjkmockfdflocgggjfgdacdodkdf',
 ]);
 // ponytail: 12 native-clean ceiling per host (30 max with --force / micro-farbling) to prevent hardware clustering bans
 const DEFAULT_MAX_NATIVE_CLEAN_PROFILES = 12;
@@ -142,7 +148,7 @@ function isGenericChromeProfileName(name) {
  * so Chrome never displays "Other Chrome Profiles" in the Profile Switcher menu and
  * never creates empty ghost subdirectories inside another managed user-data-dir.
  */
-function sanitizeManagedLocalState(userDataDir, profileDir = 'Default', displayName = '') {
+function sanitizeManagedLocalState(userDataDir, profileDir = 'Default', displayName = '', options = {}) {
   if (!userDataDir) return { ok: false, changed: false };
   const targetDir = profileDir || 'Default';
   const localStatePath = path.join(userDataDir, 'Local State');
@@ -169,7 +175,7 @@ function sanitizeManagedLocalState(userDataDir, profileDir = 'Default', displayN
   delete prevEntry.user_name;
   prevEntry.is_consented_primary_account = false;
   prevEntry.is_ephemeral = false;
-  if (displayName && isGenericChromeProfileName(prevEntry.name)) {
+  if (displayName && (options.forceName === true || isGenericChromeProfileName(prevEntry.name))) {
     prevEntry.name = displayName;
     prevEntry.is_using_default_name = false;
   }

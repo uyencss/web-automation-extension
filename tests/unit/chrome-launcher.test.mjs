@@ -1827,3 +1827,151 @@ test('detoxForkedManagedProfile and launchChrome purge leaked sibling Local Stat
   assert.equal(healedLs.profile.info_cache.Default.name, 'Clean Name');
   assert.equal(typeof sanitizeManagedLocalState, 'function');
 });
+
+test('launcher: expandTilde works without ReferenceError, mode=existing never pollutes managedSessions, and locked existing --proxy-server returns hint', async (t) => {
+  const { homedir } = require('os');
+  const root = tempRoot();
+  t.after(() => { try { spawnSync('rm', ['-rf', root]); } catch {} });
+
+  // 1. expandTilde via matchChromePidInPsOutput
+  assert.equal(
+    launcher.matchChromePidInPsOutput('  777 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=~/my-prof --profile-directory=Default', {
+      userDataDir: path.join(homedir(), 'my-prof'),
+      profileDir: 'Default',
+    }),
+    777,
+  );
+
+  // 2. mode=existing never checks hasLiveManagedSession and never calls rememberManagedSession
+  const existingUdd = path.join(root, 'sys-chrome');
+  mkdirSync(path.join(existingUdd, 'Default'), { recursive: true });
+  const sessionsFile = path.join(root, 'sessions.json');
+  launcher.rememberManagedSession(existingUdd, process.pid, sessionsFile);
+  const fakeBin = path.join(root, 'fake-chrome.sh');
+  writeFileSync(fakeBin, '#!/bin/sh\nexit 0\n');
+  chmodSync(fakeBin, 0o755);
+
+  const existingDry = await launcher.launchChrome({
+    mode: 'existing',
+    profile: { kind: 'existing', userDataDir: existingUdd, profileDir: 'Default' },
+    chromePath: fakeBin,
+    extensionPath: fakeExtensionDir(root),
+    sessionsFile,
+    dryRun: true,
+  });
+  assert.equal(existingDry.ok, true);
+  assert.equal(existingDry.attached, false);
+
+  // Reset sessionsFile and run non-dryRun existing launch -> managedSessions must stay empty
+  launcher.saveSessions({ version: 1, managedSessions: {}, gateway: null }, sessionsFile);
+  const existingRun = await launcher.launchChrome({
+    mode: 'existing',
+    profile: { kind: 'existing', userDataDir: existingUdd, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath: fakeExtensionDir(root),
+    sessionsFile,
+    extraArgs: ['-e', 'process.exit(0)'],
+  });
+  assert.equal(existingRun.ok, true);
+  assert.deepEqual(launcher.loadSessions(sessionsFile).managedSessions, {});
+
+  // 3. Locked existing profile with --proxy-server= returns proxy hint in message
+  writeFileSync(path.join(existingUdd, 'SingletonLock'), '');
+  const lockedProxy = await launcher.launchChrome({
+    mode: 'existing',
+    profile: { kind: 'existing', userDataDir: existingUdd, profileDir: 'Default' },
+    chromePath: fakeBin,
+    extensionPath: fakeExtensionDir(root),
+    sessionsFile,
+    extraArgs: ['--proxy-server=http://127.0.0.1:8080'],
+  });
+  assert.equal(lockedProxy.ok, false);
+  assert.equal(lockedProxy.needsRelaunch, true);
+  assert.match(lockedProxy.message, /--proxy-server requires closing Chrome first or converting this profile to Managed/);
+});
+
+test('launchChrome managed applies meta.proxy (strips creds + sets proxyAuthWarning) and meta.fingerprint (TZ, --lang)', async (t) => {
+  const root = tempRoot();
+  t.after(() => { try { spawnSync('rm', ['-rf', root]); } catch {} });
+  const managedDir = path.join(root, 'managed-profiles');
+  const extensionPath = fakeExtensionDir(root);
+  const sessionsFile = path.join(root, 'sessions.json');
+
+  const pAuth = path.join(managedDir, 'auth-proxy');
+  mkdirSync(path.join(pAuth, 'Default'), { recursive: true });
+  writeFileSync(path.join(pAuth, '.webmcp-meta.json'), JSON.stringify({
+    name: 'auth-proxy',
+    proxy: { url: 'http://user:secret@10.0.0.5:8080', timezone: 'Asia/Ho_Chi_Minh' },
+    fingerprint: { locale: 'vi-VN', timezone: 'America/New_York' },
+  }));
+
+  const resAuth = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: pAuth },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir: managedDir,
+    sessionsFile,
+    dryRun: true,
+  });
+  assert.equal(resAuth.ok, true);
+  assert.ok(resAuth.args.includes('--proxy-server=http://10.0.0.5:8080'));
+  assert.ok(resAuth.args.includes('--force-webrtc-ip-handling-policy=disable_non_proxied_udp'));
+  assert.ok(resAuth.args.includes('--lang=vi-VN'));
+  assert.equal(resAuth.tz, 'Asia/Ho_Chi_Minh');
+  assert.ok(typeof resAuth.proxyAuthWarning === 'string' && resAuth.proxyAuthWarning.length > 0);
+  assert.equal(resAuth.args.some((a) => a.includes('user:secret')), false);
+
+  // Attached branch receives effectiveEnv (TZ from fingerprint when proxy has no timezone)
+  const pFp = path.join(managedDir, 'fp-only');
+  mkdirSync(path.join(pFp, 'Default'), { recursive: true });
+  writeFileSync(path.join(pFp, '.webmcp-meta.json'), JSON.stringify({
+    name: 'fp-only',
+    fingerprint: { locale: 'en-US', timezone: 'Europe/London' },
+  }));
+  launcher.rememberManagedSession(pFp, process.pid, sessionsFile);
+  const resAttached = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: pFp },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir: managedDir,
+    sessionsFile,
+    dryRun: true,
+  });
+  assert.equal(resAttached.attached, true);
+  assert.equal(resAttached.tz, 'Europe/London');
+  assert.ok(resAttached.args.includes('--lang=en-US'));
+});
+
+test('profile-fork ignores all 8 BUILTIN_EXTENSION_IDS and sanitizeManagedLocalState supports options.forceName', (t) => {
+  const { detoxForkedManagedProfile, sanitizeManagedLocalState } = require(path.join(ROOT, 'chrome-launcher', 'profile-fork'));
+  const root = tempRoot();
+  t.after(() => { try { spawnSync('rm', ['-rf', root]); } catch {} });
+  const ud = path.join(root, 'builtins-check');
+  const pdir = path.join(ud, 'Default');
+  const thirdParty = 'dddddddddddddddddddddddddddddddd';
+  const extraBuiltins = [
+    'pkedcjkdefgpdelpbcmbmeomcjbeemfm',
+    'mhjfbmdgcfjbbpaeojofohoefgiehjai',
+    'ahfgeienlihckogmohjhadlkjgocpleb',
+    'nkeimhogjdpnpccoofpliimaahmaaome',
+    'fignfifoniblkonapihmkfakmlgkbkcf',
+    'admccjkmockfdflocgggjfgdacdodkdf',
+  ];
+  mkdirSync(pdir, { recursive: true });
+  const settings = { [thirdParty]: { from_webstore: true, location: 1 } };
+  for (const id of extraBuiltins) settings[id] = { from_webstore: true, location: 1 };
+  writeFileSync(path.join(pdir, 'Preferences'), '{}');
+  writeFileSync(path.join(pdir, 'Secure Preferences'), JSON.stringify({ extensions: { settings } }));
+  writeFileSync(path.join(ud, '.webmcp-meta.json'), JSON.stringify({ name: 'CustomName', profileDir: 'Default' }));
+
+  const detoxRes = detoxForkedManagedProfile(ud, 'Default');
+  assert.deepEqual(detoxRes.discoveredExtensions, [thirdParty]);
+
+  writeFileSync(path.join(ud, 'Local State'), JSON.stringify({ profile: { info_cache: { Default: { name: 'Old Non-Generic Name' } } } }));
+  sanitizeManagedLocalState(ud, 'Default', 'Forced Name', { forceName: true });
+  const ls = JSON.parse(readFileSync(path.join(ud, 'Local State'), 'utf8'));
+  assert.equal(ls.profile.info_cache.Default.name, 'Forced Name');
+  assert.equal(ls.profile.info_cache.Default.is_using_default_name, false);
+});

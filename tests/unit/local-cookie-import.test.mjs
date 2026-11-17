@@ -156,7 +156,7 @@ test('import: imports cookies from Playwright storageState JSON file', async () 
     expires: 1770000000,
   });
 
-  // Session cookie: expires is omitted
+  // Session cookie with host-only domain (no leading dot): domain omitted, expires omitted
   assert.deepEqual(setCalls[1].params, {
     name: 'user_pref',
     value: 'dark_mode',
@@ -164,7 +164,6 @@ test('import: imports cookies from Playwright storageState JSON file', async () 
     path: '/feed',
     secure: true,
     httpOnly: false,
-    domain: 'douyin.com',
     sameSite: 'None',
   });
 
@@ -598,4 +597,66 @@ test('import: also unwraps standard format { status, data: [...] } envelope', as
   assert.equal(res.status, 'success');
   assert.equal(res.appliedCount, 1);
   assert.equal(setCalls[0].name, 'xs');
+});
+
+test('import: enforces __Host-* invariants, hostOnly domain omission, partitionKey, and continues loop on partial failures', async () => {
+  const cookies = [
+    {
+      name: '__Host-1PLSID',
+      value: 'host_val',
+      domain: '.accounts.google.com',
+      path: '/sub',
+      secure: false,
+      httpOnly: true,
+      partitionKey: { topLevelSite: 'https://google.com', hasCrossSiteAncestor: false },
+    },
+    {
+      name: 'bad_cookie',
+      value: 'v_bad',
+      domain: '.example.com',
+      path: '/',
+    },
+    {
+      name: 'host_only_cookie',
+      value: 'v_host',
+      domain: 'sub.example.com',
+      url: 'https://other.host/old',
+      path: '/app',
+      secure: true,
+    },
+  ];
+
+  const setCalls = [];
+  const res = await handleImport(
+    { profileId: 'target-prof', input: 'dummy.json', overwrite: true },
+    {
+      gatewayCall: async (method, params) => {
+        if (method === 'setCookie') {
+          setCalls.push(params);
+          if (params.name === 'bad_cookie') return { success: false };
+          return { success: true };
+        }
+        return {};
+      },
+      inputContent: JSON.stringify(cookies),
+    }
+  );
+
+  assert.equal(setCalls.length, 3, 'Loop must continue past rejected cookie');
+  assert.equal(res.status, 'partial');
+  assert.equal(res.selectedCount, 3);
+  assert.equal(res.appliedCount, 2);
+  assert.equal(res.failedCount, 1);
+  assert.equal(res.error, 'SET_COOKIE_REJECTED');
+
+  // __Host-1PLSID invariants
+  assert.equal(setCalls[0].domain, undefined);
+  assert.equal(setCalls[0].path, '/');
+  assert.equal(setCalls[0].secure, true);
+  assert.equal(setCalls[0].url, 'https://accounts.google.com/');
+  assert.deepEqual(setCalls[0].partitionKey, { topLevelSite: 'https://google.com', hasCrossSiteAncestor: false });
+
+  // Non-__Host- hostOnly invariants
+  assert.equal(setCalls[2].domain, undefined);
+  assert.equal(setCalls[2].url, 'https://sub.example.com/app');
 });

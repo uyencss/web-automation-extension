@@ -182,6 +182,7 @@ test('formatPlaywrightStorageState: correctly produces Playwright StorageState f
       httpOnly: false,
       expires: -1,
       sameSite: 'Strict',
+      partitionKey: { topLevelSite: 'https://tiktok.com', hasCrossSiteAncestor: false },
     },
   ];
 
@@ -194,6 +195,7 @@ test('formatPlaywrightStorageState: correctly produces Playwright StorageState f
     name: 'sessionid',
     value: 'abc123xyz',
     domain: '.tiktok.com',
+    hostOnly: false,
     path: '/',
     expires: 1780000000,
     httpOnly: true,
@@ -201,6 +203,8 @@ test('formatPlaywrightStorageState: correctly produces Playwright StorageState f
     sameSite: 'Lax',
   });
 
+  assert.equal(state.cookies[1].hostOnly, true);
+  assert.deepEqual(state.cookies[1].partitionKey, { topLevelSite: 'https://tiktok.com', hasCrossSiteAncestor: false });
   assert.equal(state.cookies[1].expires, -1);
   assert.equal(state.cookies[1].httpOnly, false);
 });
@@ -830,4 +834,137 @@ test('findConnectedProfileDetail: prioritizes id/name/dir over email and refuses
     )?.profileId,
     'managed:gamma'
   );
+});
+
+test('handleExport: allowOnline uses Direct-CDP export fallback on KEYCHAIN_DENIED when offline & unlocked, and skips when locked', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-direct-cdp-export-'));
+  try {
+    const profile = { id: 'managed:offline-mac', userDataDir: tmpDir, profileDir: 'Default' };
+    const throwKeychain = () => {
+      const err = new Error('macOS keychain denied');
+      err.code = 'KEYCHAIN_DENIED';
+      throw err;
+    };
+
+    // 1. Unlocked offline profile with injectable directCdpExportFn
+    let directCalled = false;
+    const res = await handleExport(
+      { profileId: 'offline-mac', allowOnline: true, domain: 'google.com', format: 'playwright' },
+      {
+        profileResolver: () => profile,
+        cookieExporter: throwKeychain,
+        gatewayHealthLookup: async () => ({ profileDetails: [] }),
+        directCdpExportFn: async () => {
+          directCalled = true;
+          return [
+            { name: '__Host-1PLSID', value: 'lsid_val', domain: 'accounts.google.com', path: '/', secure: true, httpOnly: true },
+            { name: 'other', value: 'skip_me', domain: '.example.com', path: '/', secure: true, httpOnly: false },
+          ];
+        },
+      }
+    );
+    assert.equal(directCalled, true);
+    assert.equal(res.exportedCount, 1);
+    assert.equal(res.data.cookies[0].name, '__Host-1PLSID');
+    assert.equal(res.data.cookies[0].hostOnly, true);
+
+    // 2. Locked profile refuses Direct-CDP launch and rethrows KEYCHAIN_DENIED
+    fs.symlinkSync(`${os.hostname()}-${process.pid}`, path.join(tmpDir, 'SingletonLock'));
+    let calledWhenLocked = false;
+    await assert.rejects(
+      () => handleExport(
+        { profileId: 'offline-mac', allowOnline: true },
+        {
+          profileResolver: () => profile,
+          cookieExporter: throwKeychain,
+          gatewayHealthLookup: async () => ({ profileDetails: [] }),
+          directCdpExportFn: async () => {
+            calledWhenLocked = true;
+            return [];
+          },
+        }
+      ),
+      (err) => err.code === 'KEYCHAIN_DENIED'
+    );
+    assert.equal(calledWhenLocked, false);
+    fs.rmSync(path.join(tmpDir, 'SingletonLock'), { force: true });
+
+    // 3. Real directCdpExportCookies against synthetic mock Chrome binary (DevToolsActivePort + WebSocket Storage.getCookies + Browser.close)
+    const mockBin = path.join(tmpDir, 'mock-chrome.js');
+    const mockScript = `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const udd = path.resolve(process.argv.find((a) => a.startsWith('--user-data-dir=')).slice('--user-data-dir='.length));
+fs.mkdirSync(udd, { recursive: true });
+fs.symlinkSync('test-' + process.pid, path.join(udd, 'SingletonLock'));
+function sendWsText(socket, obj) {
+  const payload = Buffer.from(JSON.stringify(obj), 'utf8');
+  const hdr = payload.length < 126
+    ? Buffer.from([0x81, payload.length])
+    : Buffer.from([0x81, 126, (payload.length >> 8) & 0xff, payload.length & 0xff]);
+  socket.write(Buffer.concat([hdr, payload]));
+}
+const server = http.createServer();
+server.on('upgrade', (req, socket) => {
+  const accept = crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  socket.write('HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: ' + accept + '\\r\\n\\r\\n');
+  let buf = Buffer.alloc(0);
+  socket.on('data', (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    while (buf.length >= 2) {
+      const opcode = buf[0] & 0x0f;
+      const masked = (buf[1] & 0x80) !== 0;
+      let len = buf[1] & 0x7f;
+      let off = 2;
+      if (len === 126) { if (buf.length < 4) break; len = buf.readUInt16BE(2); off = 4; }
+      const maskLen = masked ? 4 : 0;
+      if (buf.length < off + maskLen + len) break;
+      const mask = masked ? buf.subarray(off, off + 4) : null;
+      const data = Buffer.from(buf.subarray(off + maskLen, off + maskLen + len));
+      if (mask) for (let i = 0; i < data.length; i++) data[i] ^= mask[i % 4];
+      buf = buf.subarray(off + maskLen + len);
+      if (opcode === 0x8) { socket.end(); continue; }
+      if (opcode !== 0x1) continue;
+      const msg = JSON.parse(data.toString('utf8'));
+      if (msg.method === 'Storage.getCookies') {
+        sendWsText(socket, { id: msg.id, result: { cookies: [{ name: 'SID', value: 's1', domain: '.google.com', path: '/', secure: true, httpOnly: true }] } });
+      } else if (msg.method === 'Browser.close') {
+        sendWsText(socket, { id: msg.id, result: {} });
+        try { fs.unlinkSync(path.join(udd, 'SingletonLock')); } catch {}
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 20).unref();
+      }
+    }
+  });
+});
+server.listen(0, '127.0.0.1', () => {
+  const { port } = server.address();
+  fs.writeFileSync(path.join(udd, 'DevToolsActivePort'), port + '\\n/devtools/browser/mock\\n', 'utf8');
+});
+`;
+    fs.writeFileSync(mockBin, mockScript, { mode: 0o755 });
+    const prevBin = process.env.WEBMCP_CHROME_BINARY;
+    process.env.WEBMCP_CHROME_BINARY = mockBin;
+    try {
+      const e2eRes = await handleExport(
+        { profileId: 'offline-mac', allowOnline: true, format: 'playwright' },
+        {
+          profileResolver: () => profile,
+          cookieExporter: throwKeychain,
+          gatewayHealthLookup: async () => ({ profileDetails: [] }),
+        }
+      );
+      assert.equal(e2eRes.status, 'success');
+      assert.equal(e2eRes.exportedCount, 1);
+      assert.equal(e2eRes.data.cookies[0].name, 'SID');
+      assert.equal(fs.existsSync(path.join(tmpDir, 'DevToolsActivePort')), false);
+    } finally {
+      if (prevBin === undefined) delete process.env.WEBMCP_CHROME_BINARY;
+      else process.env.WEBMCP_CHROME_BINARY = prevBin;
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile, execFileSync, execSync, spawn } = require('child_process');
@@ -587,6 +588,39 @@ function validateExtensionPath(extensionPath) {
   }
 }
 
+function resolveManagedProxyConfig(proxy) {
+  if (!proxy) return { cleanUrl: null, warning: null, timezone: null };
+  if (typeof proxy === 'object' && proxy.mode === 'direct' && !proxy.url && !proxy.host) {
+    return { cleanUrl: null, warning: null, timezone: proxy.timezone || null };
+  }
+  const timezone = (typeof proxy === 'object' && proxy.timezone) ? String(proxy.timezone) : null;
+  const objCreds = typeof proxy === 'object' && Boolean(proxy.username || proxy.password);
+  let rawUrl = typeof proxy === 'string' ? proxy.trim() : (typeof proxy.url === 'string' ? proxy.url.trim() : '');
+  if (!rawUrl && typeof proxy === 'object' && proxy.host && proxy.port) {
+    const scheme = String(proxy.protocol || proxy.scheme || 'http').replace(/:$/, '');
+    const hostStr = String(proxy.host).trim();
+    const formattedHost = hostStr.includes(':') && !hostStr.startsWith('[') ? `[${hostStr}]` : hostStr;
+    rawUrl = `${scheme}://${formattedHost}:${proxy.port}`;
+  }
+  if (!rawUrl) return { cleanUrl: null, warning: null, timezone };
+
+  let hasUrlCreds = false;
+  let cleanUrl = rawUrl;
+  try {
+    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawUrl) ? rawUrl : `http://${rawUrl}`;
+    const u = new URL(withScheme);
+    hasUrlCreds = Boolean(u.username || u.password);
+    cleanUrl = `${u.protocol}//${u.host}`;
+  } catch {
+    // Keep non-URL host:port syntax verbatim
+  }
+
+  const warning = (objCreds || hasUrlCreds)
+    ? 'Proxy URL contained inline credentials (username/password), which Chromium ignores in --proxy-server=; credentials were stripped.'
+    : null;
+  return { cleanUrl, warning, timezone };
+}
+
 async function launchChrome(options = {}) {
   const mode = options.mode || (options.profile?.kind === 'existing' ? 'existing' : 'managed');
   const extensionPath = options.extensionPath || defaultExtensionPath();
@@ -601,6 +635,7 @@ async function launchChrome(options = {}) {
 
   const chromeInfo = detectChromeInfo(chromePath);
   const extensionLoadable = loadExtensionSupported(chromeInfo);
+  let proxyAuthWarning = null;
   // Merge Chrome-version + extension-loadability context into a successful
   // launch result so the CLI/skill can warn (instead of silently failing) when
   // the resolved Chrome build no longer honors --load-extension.
@@ -619,6 +654,9 @@ async function launchChrome(options = {}) {
       extras.warning = 'Chrome will open, but the WebMCP extension will not auto-load on this build.';
       extras.guidance = loadExtensionGuidance({ extensionPath, info: chromeInfo });
     }
+    if (proxyAuthWarning) {
+      extras.proxyAuthWarning = proxyAuthWarning;
+    }
     return { ...result, ...extras };
   };
 
@@ -634,26 +672,9 @@ async function launchChrome(options = {}) {
       throw err;
     }
 
-    if (hasLiveManagedSession(userDataDir, sessionsFile)) {
-      const spawnRes = await spawnChrome({
-        chromePath,
-        extensionPath,
-        userDataDir,
-        profileDir,
-        mode: 'existing',
-        attached: true,
-        dryRun: options.dryRun,
-        extraArgs: options.extraArgs,
-        env: options.env,
-      });
-      if ((options.extraArgs && options.extraArgs.length > 0) || options.env?.TZ) {
-        spawnRes.attachWarning = 'Chrome is already running for this profile; extraArgs and env (TZ) require --relaunch to take effect.';
-      }
-      return annotate(spawnRes);
-    }
-
     if (isProfileLocked(userDataDir)) {
       if (!options.relaunch) {
+        const hasProxyArg = Array.isArray(options.extraArgs) && options.extraArgs.some((a) => String(a).startsWith('--proxy-server='));
         return {
           ok: false,
           needsRelaunch: true,
@@ -661,7 +682,8 @@ async function launchChrome(options = {}) {
           profileDir,
           message:
             'Chrome is already running, so the WebMCP extension cannot be injected. ' +
-            'Ask the user before quitting Chrome, then retry with --relaunch if approved.',
+            'Ask the user before quitting Chrome, then retry with --relaunch if approved.' +
+            (hasProxyArg ? ' System Chrome is already running; --proxy-server requires closing Chrome first or converting this profile to Managed.' : ''),
         };
       }
       const lockPid = readLockPid(userDataDir);
@@ -683,7 +705,6 @@ async function launchChrome(options = {}) {
     }
 
     const result = await spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, extraArgs: options.extraArgs, env: options.env });
-    if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
     return annotate(result);
   }
 
@@ -735,10 +756,30 @@ async function launchChrome(options = {}) {
   const effectiveProfileDir = options.profile?.profileDir || meta.profileDir || 'Default';
 
   const effectiveExtraArgs = [...(options.extraArgs || [])];
+  const proxyCfg = resolveManagedProxyConfig(meta.proxy);
+  if (proxyCfg.cleanUrl && !effectiveExtraArgs.some((a) => String(a).startsWith('--proxy-server='))) {
+    effectiveExtraArgs.push(`--proxy-server=${proxyCfg.cleanUrl}`);
+    if (!effectiveExtraArgs.some((a) => String(a).startsWith('--force-webrtc-ip-handling-policy='))) {
+      effectiveExtraArgs.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
+    }
+    if (proxyCfg.warning) {
+      proxyAuthWarning = proxyCfg.warning;
+    }
+  }
+  if (meta.fingerprint?.locale && !effectiveExtraArgs.some((a) => String(a).startsWith('--lang='))) {
+    effectiveExtraArgs.push(`--lang=${meta.fingerprint.locale}`);
+  }
+
+  const effectiveEnv = { ...(options.env || {}) };
+  const resolvedTz = effectiveEnv.TZ || proxyCfg.timezone || meta.fingerprint?.timezone;
+  if (!effectiveEnv.TZ && resolvedTz) {
+    effectiveEnv.TZ = String(resolvedTz);
+  }
+  const spawnEnv = Object.keys(effectiveEnv).length > 0 ? effectiveEnv : options.env;
+
   if (chromeInfo.channel === 'chromium' && typeof meta.fingerprintSeed === 'number') {
     effectiveExtraArgs.push(`--fingerprint=${meta.fingerprintSeed}`);
-    const tz = options.env?.TZ || meta.proxy?.timezone;
-    if (tz) effectiveExtraArgs.push(`--timezone=${tz}`);
+    if (resolvedTz) effectiveExtraArgs.push(`--timezone=${resolvedTz}`);
   }
 
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
@@ -751,9 +792,9 @@ async function launchChrome(options = {}) {
       attached: true,
       dryRun: options.dryRun,
       extraArgs: effectiveExtraArgs,
-      env: options.env,
+      env: spawnEnv,
     });
-    if ((effectiveExtraArgs && effectiveExtraArgs.length > 0) || options.env?.TZ) {
+    if ((effectiveExtraArgs && effectiveExtraArgs.length > 0) || spawnEnv?.TZ) {
       spawnRes.attachWarning = 'Chrome is already running for this profile; extraArgs and env (TZ) require --relaunch to take effect.';
     }
     return annotate(spawnRes);
@@ -831,7 +872,7 @@ async function launchChrome(options = {}) {
     mode: 'managed',
     dryRun: options.dryRun,
     extraArgs: effectiveExtraArgs,
-    env: options.env,
+    env: spawnEnv,
   });
   if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
   return annotate(result);
