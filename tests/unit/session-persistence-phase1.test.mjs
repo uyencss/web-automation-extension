@@ -450,3 +450,120 @@ test('exportLocalCookies and handleExport preserve sameSite=undefined for samesi
   );
   assert.equal(cliPw.data.cookies[0].sameSite, 'Lax');
 });
+
+test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-upgrades on launchChrome', async (t) => {
+  assert.equal(launcher.DETOX_SCHEMA_VERSION, 2);
+  const root = tempRoot(t);
+
+  // 1. Both Network/Cookies and Cookies cleaned + DBSC preserved unless stripDbsc or migratedFrom
+  const udForked = path.join(root, 'forked-dual');
+  const pForked = path.join(udForked, 'Default');
+  mkdirSync(path.join(pForked, 'Network'), { recursive: true });
+  writeFileSync(path.join(udForked, '.webmcp-meta.json'), JSON.stringify({ name: 'forked-dual', profileDir: 'Default' }));
+  writeFileSync(path.join(pForked, 'Preferences'), '{}');
+  writeFileSync(path.join(pForked, 'Device Bound Sessions'), 'keep-dbsc');
+
+  const netCk = path.join(pForked, 'Network', 'Cookies');
+  const rootCk = path.join(pForked, 'Cookies');
+  for (const [idx, ckPath] of [netCk, rootCk].entries()) {
+    const db = new DatabaseSync(ckPath);
+    db.exec(`
+      CREATE TABLE cookies (name TEXT, value TEXT, encrypted_value BLOB);
+      INSERT INTO cookies VALUES ('good_${idx}', 'v', X'');
+      INSERT INTO cookies VALUES ('dual_${idx}', 'plain', X'763130');
+    `);
+    db.close();
+  }
+
+  const detoxRes = launcher.detoxForkedManagedProfile(udForked, 'Default');
+  assert.equal(detoxRes.ok, true);
+  assert.equal(existsSync(path.join(pForked, 'Device Bound Sessions')), true, 'DBSC must stay intact without stripDbsc/migratedFrom');
+
+  for (const [idx, ckPath] of [netCk, rootCk].entries()) {
+    const db = new DatabaseSync(ckPath, { readOnly: true });
+    const rows = db.prepare('SELECT name FROM cookies').all().map((r) => r.name);
+    db.close();
+    assert.deepEqual(rows, [`good_${idx}`], `Dual-value row must be deleted from ${ckPath}`);
+  }
+  const forkedMeta = JSON.parse(readFileSync(path.join(udForked, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(forkedMeta.detoxVersion, 2);
+
+  // stripDbsc=true and migratedFrom strip Device Bound Sessions*
+  const udMig = path.join(root, 'migrated-dbsc');
+  const pMig = path.join(udMig, 'Default');
+  mkdirSync(pMig, { recursive: true });
+  writeFileSync(path.join(udMig, '.webmcp-meta.json'), JSON.stringify({ profileDir: 'Default', migratedFrom: { node: 'n1' } }));
+  writeFileSync(path.join(pMig, 'Preferences'), '{}');
+  writeFileSync(path.join(pMig, 'Device Bound Sessions'), 'wipe-me');
+  writeFileSync(path.join(pMig, 'Device Bound Sessions-wal'), 'wipe-wal');
+  launcher.detoxForkedManagedProfile(udMig, 'Default');
+  assert.equal(existsSync(path.join(pMig, 'Device Bound Sessions')), false);
+  assert.equal(existsSync(path.join(pMig, 'Device Bound Sessions-wal')), false);
+
+  // 2. launchChrome auto-upgrades legacy detoxedForManaged: true without detoxVersion: 2 AND dirty Preferences
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const extensionPath = fakeExtensionDir(root);
+  const sessionsFile = path.join(root, 'sessions.json');
+  const legacyDir = path.join(managedProfilesDir, 'legacy-v1');
+  mkdirSync(path.join(legacyDir, 'Default'), { recursive: true });
+  writeFileSync(path.join(legacyDir, '.webmcp-meta.json'), JSON.stringify({
+    name: 'legacy-v1',
+    profileDir: 'Default',
+    forkedFrom: 'Chrome:Default',
+    detoxedForManaged: true,
+  }));
+  writeFileSync(path.join(legacyDir, 'Default', 'Preferences'), JSON.stringify({
+    signin: { allowed: true },
+    google: { services: { signin_scoped_device_id: 'dev-1' } },
+  }));
+
+  const resUpgrade1 = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: legacyDir, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+    extraArgs: ['-e', 'process.exit(0)'],
+  });
+  assert.equal(resUpgrade1.ok, true);
+  while (resUpgrade1.pid && launcher.isPidAlive(resUpgrade1.pid)) {
+    await new Promise((r) => setTimeout(r, 15));
+  }
+
+  const upgradedMeta = JSON.parse(readFileSync(path.join(legacyDir, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(upgradedMeta.detoxVersion, 2);
+  const upgradedPrefs = JSON.parse(readFileSync(path.join(legacyDir, 'Default', 'Preferences'), 'utf8'));
+  assert.equal(upgradedPrefs.signin.allowed, false);
+  assert.equal(upgradedPrefs.google?.services, undefined);
+
+  // Also upgrade when detoxVersion === 2 if Preferences.signin.allowed was flipped back to true
+  writeFileSync(path.join(legacyDir, 'Default', 'Preferences'), JSON.stringify({ signin: { allowed: true } }));
+  const resUpgrade2 = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: legacyDir, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+    extraArgs: ['-e', 'process.exit(0)'],
+  });
+  assert.equal(resUpgrade2.ok, true);
+  assert.equal(resUpgrade2.attached, false);
+  while (resUpgrade2.pid && launcher.isPidAlive(resUpgrade2.pid)) {
+    await new Promise((r) => setTimeout(r, 15));
+  }
+  const reHealedPrefs = JSON.parse(readFileSync(path.join(legacyDir, 'Default', 'Preferences'), 'utf8'));
+  assert.equal(reHealedPrefs.signin.allowed, false);
+});
+
+test('atomicWriteJson cleans up temporary files if rename fails', (t) => {
+  const root = tempRoot(t);
+  const targetDirAsFileConflict = path.join(root, 'target-dir');
+  mkdirSync(targetDirAsFileConflict, { recursive: true });
+  // Renaming a file onto an existing non-empty directory fails with EISDIR/ENOTEMPTY
+  writeFileSync(path.join(targetDirAsFileConflict, 'inside.txt'), 'x');
+  assert.throws(() => launcher.atomicWriteJson(targetDirAsFileConflict, { a: 1 }));
+  const leftovers = require('node:fs').readdirSync(root).filter((f) => f.includes('.tmp-'));
+  assert.deepEqual(leftovers, []);
+});

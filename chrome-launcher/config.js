@@ -34,8 +34,8 @@ function ensureDirs(options = {}) {
 
 function atomicWriteJson(filePath, data) {
   const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`);
   try {
+    fs.writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`);
     fs.renameSync(tmpPath, filePath);
   } catch (err) {
     try { fs.unlinkSync(tmpPath); } catch {}

@@ -359,9 +359,6 @@ function isProfileLocked(userDataDir) {
     return false;
   }
 
-  if (findLiveChromePidViaPs(userDataDir)) {
-    return true;
-  }
   return true;
 }
 
@@ -968,16 +965,38 @@ async function launchChrome(options = {}) {
     }
   }
 
-  if (!options.dryRun && !meta.detoxedForManaged && Boolean(meta.forkedFrom || meta.convertedFrom || meta.migratedFrom) && !isProfileLocked(userDataDir)) {
-    try {
-      const { detoxForkedManagedProfile } = require('./profile-fork');
-      detoxForkedManagedProfile(userDataDir, effectiveProfileDir);
-      try {
-        meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
-      } catch {
-        meta.detoxedForManaged = true;
+  const hasProvenance = Boolean(meta.forkedFrom || meta.convertedFrom || meta.migratedFrom);
+  if (!options.dryRun && hasProvenance && !isProfileLocked(userDataDir)) {
+    const { DETOX_SCHEMA_VERSION, detoxForkedManagedProfile, sanitizeManagedLocalState } = require('./profile-fork');
+    let needsDetoxUpgrade = !meta.detoxedForManaged || (Number(meta.detoxVersion) || 0) < DETOX_SCHEMA_VERSION;
+    if (!needsDetoxUpgrade) {
+      const prefsPath = path.join(userDataDir, effectiveProfileDir, 'Preferences');
+      if (fs.existsSync(prefsPath)) {
+        try {
+          const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
+          if (prefs?.signin?.allowed !== false || Boolean(prefs?.google?.services?.signin_scoped_device_id)) {
+            needsDetoxUpgrade = true;
+          }
+        } catch {}
       }
-    } catch {}
+    }
+    if (needsDetoxUpgrade) {
+      try {
+        detoxForkedManagedProfile(userDataDir, effectiveProfileDir);
+        try {
+          meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
+        } catch (readErr) {
+          console.warn('[webmcp-browser-kit]', readErr.message || readErr);
+          meta.detoxedForManaged = true;
+        }
+      } catch (err) {
+        console.warn('[webmcp-browser-kit]', err.message || err);
+      }
+    } else {
+      try {
+        sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir));
+      } catch {}
+    }
   } else if (!options.dryRun && !isProfileLocked(userDataDir)) {
     try {
       const { sanitizeManagedLocalState } = require('./profile-fork');
@@ -1003,7 +1022,9 @@ async function launchChrome(options = {}) {
         m.sessionDirty = true;
         m.lastLaunchedAt = new Date().toISOString();
       });
-    } catch {}
+    } catch (err) {
+      console.warn('[webmcp-browser-kit]', err.message || err);
+    }
   }
   return annotate(result);
 }
@@ -1018,7 +1039,9 @@ function markManagedSessionClosed(userDataDir) {
       m.lastClosedAt = new Date().toISOString();
       m.sessionVersion = (typeof m.sessionVersion === 'number' ? m.sessionVersion : 0) + 1;
     });
-  } catch {}
+  } catch (err) {
+    console.warn('[webmcp-browser-kit]', err.message || err);
+  }
 }
 
 async function closeChrome(options = {}) {
@@ -1141,7 +1164,10 @@ async function closeChrome(options = {}) {
   }
 
   for (const userDataDir of closedManagedDirs) {
-    markManagedSessionClosed(userDataDir);
+    const unlocked = await waitForUnlock(userDataDir, 4000);
+    if (unlocked) {
+      markManagedSessionClosed(userDataDir);
+    }
   }
   
   return { ok: true, closedCount };

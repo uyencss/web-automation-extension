@@ -5,6 +5,7 @@ const path = require('path');
 const { MANAGED_PROFILES_DIR, atomicWriteJson, patchJson } = require('./config');
 const { isProfileLocked, createManagedProfile } = require('./launcher');
 
+const DETOX_SCHEMA_VERSION = 2;
 const UNSUPPORTED_KEYCHAIN_BROWSERS = new Set(['brave', 'edge', 'coccoc', 'chromium']);
 const UNSUPPORTED_KEYCHAIN_PATH_RE = /(?:^|[\\/])(BraveSoftware|Microsoft Edge|Microsoft[\\/]Edge|CocCoc|Chromium)(?:[\\/]|$)/i;
 
@@ -326,27 +327,19 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
     }
   }
 
-  // 2. Snapshot <profileDir>/Network/Cookies or <profileDir>/Cookies via VACUUM INTO before mutating prefs
+  // 2. Clean dual-value rows & WAL-checkpoint ALL cookie candidates; snapshot first non-empty into .cookies-preboot.sqlite
   const cookieCandidates = [
     path.join(targetProfilePath, 'Network', 'Cookies'),
     path.join(targetProfilePath, 'Cookies'),
   ];
-  let srcCookiePath = null;
-  for (const cand of cookieCandidates) {
-    if (fs.existsSync(cand)) {
-      const stat = fs.statSync(cand);
-      if (stat.size > 0) {
-        srcCookiePath = cand;
-        break;
-      }
-    }
-  }
-
   const prebootPath = path.join(metaDir, '.cookies-preboot.sqlite');
-  if (srcCookiePath) {
-    if (isSqliteFile(srcCookiePath)) {
+  for (const cand of cookieCandidates) {
+    if (!fs.existsSync(cand)) continue;
+    const stat = fs.statSync(cand);
+    if (stat.size <= 0) continue;
+    if (isSqliteFile(cand)) {
       const { DatabaseSync } = require('node:sqlite');
-      const db = new DatabaseSync(srcCookiePath);
+      const db = new DatabaseSync(cand);
       try {
         assertWalCheckpointNotBusy(db);
         const tbl = db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type='table' AND name='cookies'").get();
@@ -370,7 +363,7 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
         db.close();
       }
     } else if (!fs.existsSync(prebootPath)) {
-      fs.copyFileSync(srcCookiePath, prebootPath);
+      fs.copyFileSync(cand, prebootPath);
       try { fs.chmodSync(prebootPath, 0o600); } catch {}
     }
   }
@@ -469,8 +462,17 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
     }
   }
 
+  if (options.stripDbsc === true || Boolean(meta.migratedFrom)) {
+    for (const dbscName of ['Device Bound Sessions', 'Device Bound Sessions-journal', 'Device Bound Sessions-wal', 'Device Bound Sessions-shm']) {
+      try {
+        fs.rmSync(path.join(targetProfilePath, dbscName), { recursive: true, force: true });
+      } catch {}
+    }
+  }
+
   // 7. Write detoxedForManaged: true LAST and ONLY after all JSON/SQLite steps succeed
   meta.detoxedForManaged = true;
+  meta.detoxVersion = DETOX_SCHEMA_VERSION;
   meta.detoxedAt = new Date().toISOString();
   atomicWriteJson(metaPath, meta);
 
@@ -531,6 +533,7 @@ function detoxAllManagedProfiles(managedProfilesDir = MANAGED_PROFILES_DIR) {
 }
 
 module.exports = {
+  DETOX_SCHEMA_VERSION,
   CACHE_RE,
   WEBMCP_STORAGE_RE,
   DEFAULT_MAX_NATIVE_CLEAN_PROFILES,
