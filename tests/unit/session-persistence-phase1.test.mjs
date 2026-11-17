@@ -456,17 +456,19 @@ test('exportLocalCookies and handleExport preserve sameSite=undefined for samesi
   assert.equal(cliPw.data.cookies[0].sameSite, 'Lax');
 });
 
-test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-upgrades on launchChrome', async (t) => {
+test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, defaults DBSC strip true (honors stripDbsc:false), and auto-upgrades/strips DBSC on launchChrome', async (t) => {
   assert.equal(launcher.DETOX_SCHEMA_VERSION, 2);
   const root = tempRoot(t);
 
-  // 1. Both Network/Cookies and Cookies cleaned + DBSC preserved unless stripDbsc or migratedFrom
+  // 1. Both Network/Cookies and Cookies cleaned + DBSC stripped by default for Managed profiles
   const udForked = path.join(root, 'forked-dual');
   const pForked = path.join(udForked, 'Default');
   mkdirSync(path.join(pForked, 'Network'), { recursive: true });
   writeFileSync(path.join(udForked, '.webmcp-meta.json'), JSON.stringify({ name: 'forked-dual', profileDir: 'Default' }));
   writeFileSync(path.join(pForked, 'Preferences'), '{}');
-  writeFileSync(path.join(pForked, 'Device Bound Sessions'), 'keep-dbsc');
+  writeFileSync(path.join(pForked, 'Device Bound Sessions'), 'wipe-default-dbsc');
+  writeFileSync(path.join(pForked, 'Device Bound Sessions-wal'), 'wipe-default-wal');
+  writeFileSync(path.join(pForked, 'Network', 'Device Bound Sessions'), 'wipe-net-dbsc');
 
   const netCk = path.join(pForked, 'Network', 'Cookies');
   const rootCk = path.join(pForked, 'Cookies');
@@ -482,7 +484,9 @@ test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-
 
   const detoxRes = launcher.detoxForkedManagedProfile(udForked, 'Default');
   assert.equal(detoxRes.ok, true);
-  assert.equal(existsSync(path.join(pForked, 'Device Bound Sessions')), true, 'DBSC must stay intact without stripDbsc/migratedFrom');
+  assert.equal(existsSync(path.join(pForked, 'Device Bound Sessions')), false, 'DBSC must be stripped by default');
+  assert.equal(existsSync(path.join(pForked, 'Device Bound Sessions-wal')), false, 'DBSC wal must be stripped by default');
+  assert.equal(existsSync(path.join(pForked, 'Network', 'Device Bound Sessions')), false, 'Network DBSC must be stripped by default');
 
   for (const [idx, ckPath] of [netCk, rootCk].entries()) {
     const db = new DatabaseSync(ckPath, { readOnly: true });
@@ -493,7 +497,17 @@ test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-
   const forkedMeta = JSON.parse(readFileSync(path.join(udForked, '.webmcp-meta.json'), 'utf8'));
   assert.equal(forkedMeta.detoxVersion, 2);
 
-  // stripDbsc=true and migratedFrom strip Device Bound Sessions*
+  // Explicit stripDbsc: false preserves Device Bound Sessions*
+  const udKeep = path.join(root, 'keep-dbsc');
+  const pKeep = path.join(udKeep, 'Default');
+  mkdirSync(pKeep, { recursive: true });
+  writeFileSync(path.join(udKeep, '.webmcp-meta.json'), JSON.stringify({ profileDir: 'Default' }));
+  writeFileSync(path.join(pKeep, 'Preferences'), '{}');
+  writeFileSync(path.join(pKeep, 'Device Bound Sessions'), 'keep-me');
+  launcher.detoxForkedManagedProfile(udKeep, 'Default', { stripDbsc: false });
+  assert.equal(existsSync(path.join(pKeep, 'Device Bound Sessions')), true, 'Explicit stripDbsc:false must keep DBSC');
+
+  // migratedFrom also strips Device Bound Sessions* by default
   const udMig = path.join(root, 'migrated-dbsc');
   const pMig = path.join(udMig, 'Default');
   mkdirSync(pMig, { recursive: true });
@@ -542,8 +556,10 @@ test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-
   assert.equal(upgradedPrefs.signin.allowed, false);
   assert.equal(upgradedPrefs.google?.services, undefined);
 
-  // When detoxVersion === 2 and signin.allowed === false, Chrome recreating signin_scoped_device_id must NOT trigger re-detox loop
+  // When detoxVersion === 2 and signin.allowed === false, Chrome recreating signin_scoped_device_id must NOT trigger re-detox loop,
+  // while legacy Device Bound Sessions* files are still stripped automatically
   const prevDetoxedAt = upgradedMeta.detoxedAt;
+  writeFileSync(path.join(legacyDir, 'Default', 'Device Bound Sessions'), 'legacy-dbsc');
   writeFileSync(path.join(legacyDir, 'Default', 'Preferences'), JSON.stringify({
     signin: { allowed: false, allowed_on_next_startup: false, bound_session_credentials_enabled: false },
     google: { services: { signin_scoped_device_id: 'recreated-by-chrome' } },
@@ -563,6 +579,7 @@ test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-
   }
   const noLoopMeta = JSON.parse(readFileSync(path.join(legacyDir, '.webmcp-meta.json'), 'utf8'));
   assert.equal(noLoopMeta.detoxedAt, prevDetoxedAt);
+  assert.equal(existsSync(path.join(legacyDir, 'Default', 'Device Bound Sessions')), false);
   const noLoopPrefs = JSON.parse(readFileSync(path.join(legacyDir, 'Default', 'Preferences'), 'utf8'));
   assert.equal(noLoopPrefs.google?.services?.signin_scoped_device_id, 'recreated-by-chrome');
 

@@ -282,6 +282,22 @@ function forkExistingProfile(profile, name, options = {}) {
   };
 }
 
+function stripDbscFiles(targetProfilePath) {
+  if (!targetProfilePath) return;
+  for (const baseDir of [targetProfilePath, path.join(targetProfilePath, 'Network')]) {
+    if (!fs.existsSync(baseDir)) continue;
+    let entries = [];
+    try { entries = fs.readdirSync(baseDir); } catch { continue; }
+    for (const name of entries) {
+      if (name === 'Device Bound Sessions' || name.startsWith('Device Bound Sessions-')) {
+        try {
+          fs.rmSync(path.join(baseDir, name), { recursive: true, force: true });
+        } catch {}
+      }
+    }
+  }
+}
+
 function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
   if (!userDataDir || !profileDir) {
     return { ok: false, skipped: true };
@@ -462,12 +478,8 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
     }
   }
 
-  if (options.stripDbsc === true || Boolean(meta.migratedFrom)) {
-    for (const dbscName of ['Device Bound Sessions', 'Device Bound Sessions-journal', 'Device Bound Sessions-wal', 'Device Bound Sessions-shm']) {
-      try {
-        fs.rmSync(path.join(targetProfilePath, dbscName), { recursive: true, force: true });
-      } catch {}
-    }
+  if (options.stripDbsc !== false) {
+    stripDbscFiles(targetProfilePath);
   }
 
   // 7. Write detoxedForManaged: true LAST and ONLY after all JSON/SQLite steps succeed
@@ -543,4 +555,5 @@ module.exports = {
   forkExistingProfile,
   detoxForkedManagedProfile,
   detoxAllManagedProfiles,
+  stripDbscFiles,
 };

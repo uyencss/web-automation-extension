@@ -969,7 +969,7 @@ async function launchChrome(options = {}) {
 
   const hasProvenance = Boolean(meta.forkedFrom || meta.convertedFrom || meta.migratedFrom);
   if (!options.dryRun && hasProvenance && !isProfileLocked(userDataDir)) {
-    const { DETOX_SCHEMA_VERSION, detoxForkedManagedProfile, sanitizeManagedLocalState } = require('./profile-fork');
+    const { DETOX_SCHEMA_VERSION, detoxForkedManagedProfile, sanitizeManagedLocalState, stripDbscFiles } = require('./profile-fork');
     let needsDetoxUpgrade = !meta.detoxedForManaged || (Number(meta.detoxVersion) || 0) < DETOX_SCHEMA_VERSION;
     if (!needsDetoxUpgrade) {
       const prefsPath = path.join(userDataDir, effectiveProfileDir, 'Preferences');
@@ -984,7 +984,11 @@ async function launchChrome(options = {}) {
     }
     if (needsDetoxUpgrade) {
       try {
-        detoxForkedManagedProfile(userDataDir, effectiveProfileDir);
+        detoxForkedManagedProfile(
+          userDataDir,
+          effectiveProfileDir,
+          options.stripDbsc !== undefined ? { stripDbsc: options.stripDbsc } : {}
+        );
         try {
           meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
         } catch (readErr) {
@@ -1007,11 +1011,17 @@ async function launchChrome(options = {}) {
       try {
         sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir));
       } catch {}
+      if (options.stripDbsc !== false) {
+        stripDbscFiles(path.join(userDataDir, effectiveProfileDir));
+      }
     }
   } else if (!options.dryRun && !isProfileLocked(userDataDir)) {
     try {
-      const { sanitizeManagedLocalState } = require('./profile-fork');
+      const { sanitizeManagedLocalState, stripDbscFiles } = require('./profile-fork');
       sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir));
+      if (options.stripDbsc !== false) {
+        stripDbscFiles(path.join(userDataDir, effectiveProfileDir));
+      }
     } catch {}
   }
 
