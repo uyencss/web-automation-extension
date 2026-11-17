@@ -14,6 +14,7 @@ import {
   exportLocalCookies,
   formatPlaywrightStorageState,
   formatNetscapeCookies,
+  convertChromeTimestamp,
   mapSameSite,
   getPlatformKeyContext,
   CHROME_EPOCH_OFFSET_SECONDS,
@@ -964,6 +965,82 @@ server.listen(0, '127.0.0.1', () => {
       if (prevBin === undefined) delete process.env.WEBMCP_CHROME_BINARY;
       else process.env.WEBMCP_CHROME_BINARY = prevBin;
     }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('convertChromeTimestamp & exportLocalCookies standard format: includes numeric createdAt/updatedAt while playwright keeps exact schema', async () => {
+  assert.equal(convertChromeTimestamp(null), undefined);
+  assert.equal(convertChromeTimestamp(undefined), undefined);
+  assert.equal(convertChromeTimestamp(''), undefined);
+  assert.equal(convertChromeTimestamp('0'), undefined);
+  assert.equal(convertChromeTimestamp(0n), undefined);
+  assert.equal(convertChromeTimestamp(-5), undefined);
+  assert.equal(convertChromeTimestamp('not-a-number'), undefined);
+  assert.equal(convertChromeTimestamp('1000'), undefined); // pre-1970
+  assert.equal(convertChromeTimestamp(false), undefined);
+
+  const createdSec = 1750000000;
+  const updatedSec = 1750005500;
+  const createdUs = toChromeMicroseconds(createdSec);
+  const updatedUs = toChromeMicroseconds(updatedSec);
+  assert.ok(Math.abs(convertChromeTimestamp(createdUs.toString()) - createdSec) < 0.001);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-export-ts-test-'));
+  try {
+    const dbPath = path.join(tmpDir, 'Default', 'Network', 'Cookies');
+    createSyntheticCookieDb(dbPath, [
+      {
+        host_key: '.google.com',
+        name: 'SID',
+        value: 'sid_plain',
+        creation_utc: createdUs,
+        last_update_utc: updatedUs,
+      },
+      {
+        host_key: '.facebook.com',
+        name: 'c_user',
+        value: '10001',
+        creation_utc: createdUs,
+        last_update_utc: 0n,
+      },
+    ]);
+
+    const profile = { id: 'Chrome:Default', userDataDir: tmpDir, profileDir: 'Default' };
+    const stdRes = exportLocalCookies(profile, {
+      dbPathOverride: dbPath,
+      format: 'standard',
+      checkProcess: false,
+    });
+    assert.equal(stdRes.exportedCount, 2);
+    const sid = stdRes.data.find((c) => c.name === 'SID');
+    const fb = stdRes.data.find((c) => c.name === 'c_user');
+    assert.equal(typeof sid.createdAt, 'number');
+    assert.equal(typeof sid.updatedAt, 'number');
+    assert.ok(Math.abs(sid.createdAt - createdSec) < 0.001);
+    assert.ok(Math.abs(sid.updatedAt - updatedSec) < 0.001);
+    assert.ok(Math.abs(fb.createdAt - createdSec) < 0.001);
+    assert.ok(Math.abs(fb.updatedAt - createdSec) < 0.001, 'updatedAt must fall back to createdAt when last_update_utc is 0');
+
+    // CLI handleExport --format standard preserves createdAt & updatedAt
+    const cliStd = await handleExport(
+      { profileId: 'Chrome:Default', format: 'standard', dbPathOverride: dbPath, checkProcess: false },
+      { profileResolver: () => profile }
+    );
+    const cliSid = cliStd.data.find((c) => c.name === 'SID');
+    assert.ok(Math.abs(cliSid.createdAt - createdSec) < 0.001);
+    assert.ok(Math.abs(cliSid.updatedAt - updatedSec) < 0.001);
+
+    // Playwright format keeps exact schema without createdAt / updatedAt
+    const pwRes = exportLocalCookies(profile, {
+      dbPathOverride: dbPath,
+      format: 'playwright',
+      checkProcess: false,
+    });
+    const pwSid = pwRes.data.cookies.find((c) => c.name === 'SID');
+    assert.equal('createdAt' in pwSid, false);
+    assert.equal('updatedAt' in pwSid, false);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
