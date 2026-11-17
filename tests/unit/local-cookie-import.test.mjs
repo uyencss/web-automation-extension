@@ -660,3 +660,84 @@ test('import: enforces __Host-* invariants, hostOnly domain omission, partitionK
   assert.equal(setCalls[2].domain, undefined);
   assert.equal(setCalls[2].url, 'https://sub.example.com/app');
 });
+
+test('import: --clear-first invokes executeCDP Network.clearBrowserCookies before setCookie unless --domain or --dry-run', async () => {
+  const parsedWithFlag = parseImportArgs(['--profile-id', 'p1', '-i', '-', '--clear-first']);
+  assert.equal(parsedWithFlag.profileId, 'p1');
+  assert.equal(parsedWithFlag.input, '-');
+  assert.equal(parsedWithFlag.clearFirst, true);
+
+  const parsedDefault = parseImportArgs(['--profile-id', 'p1', '-i', '-']);
+  assert.equal(parsedDefault.clearFirst, false);
+
+  const stdinCookies = [
+    { name: 'sid', value: 'v1', domain: '.example.com', path: '/', secure: true },
+    { name: 'other', value: 'v2', domain: '.other.org', path: '/', secure: true },
+  ];
+  const mockFs = {
+    readFileSync(fd) {
+      if (fd === 0) return JSON.stringify(stdinCookies);
+      throw new Error(`Unexpected fd: ${fd}`);
+    },
+    existsSync() {
+      return true;
+    },
+  };
+
+  // 1. clearFirst without domain invokes executeCDP Network.clearBrowserCookies strictly before setCookie
+  const calls1 = [];
+  const res1 = await handleImport(
+    { profileId: 'p1', input: '-', clearFirst: true, overwrite: true },
+    {
+      fs: mockFs,
+      gatewayCall: async (method, params) => {
+        calls1.push({ method, params });
+        return { success: true };
+      },
+    }
+  );
+  assert.equal(res1.status, 'success');
+  assert.equal(res1.appliedCount, 2);
+  assert.deepEqual(
+    calls1.map((c) => c.method),
+    ['executeCDP', 'setCookie', 'setCookie']
+  );
+  assert.deepEqual(calls1[0].params, {
+    method: 'Network.clearBrowserCookies',
+    params: {},
+  });
+
+  // 2. clearFirst with --domain skips Network.clearBrowserCookies
+  const calls2 = [];
+  const res2 = await handleImport(
+    { profileId: 'p1', input: '-', clearFirst: true, overwrite: true, domain: 'example.com' },
+    {
+      fs: mockFs,
+      gatewayCall: async (method, params) => {
+        calls2.push({ method, params });
+        return { success: true };
+      },
+    }
+  );
+  assert.equal(res2.status, 'success');
+  assert.equal(res2.appliedCount, 1);
+  assert.deepEqual(
+    calls2.map((c) => c.method),
+    ['setCookie']
+  );
+
+  // 3. clearFirst with --dry-run does not mutate or call executeCDP
+  const calls3 = [];
+  const res3 = await handleImport(
+    { profileId: 'p1', input: '-', clearFirst: true, overwrite: true, dryRun: true },
+    {
+      fs: mockFs,
+      gatewayCall: async (method, params) => {
+        calls3.push({ method, params });
+        return { success: true };
+      },
+    }
+  );
+  assert.equal(res3.status, 'dry-run');
+  assert.equal(calls3.length, 0);
+});
