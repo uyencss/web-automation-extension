@@ -1178,6 +1178,7 @@ module.exports = {
   waitForUnlock,
   launchChrome,
   closeChrome,
+  markManagedSessionClosed,
   resolveMacAppBundle,
   spawnChrome,
 };
