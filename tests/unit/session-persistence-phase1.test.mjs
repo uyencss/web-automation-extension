@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -293,10 +294,14 @@ test('detoxForkedManagedProfile cleans bucket-8 rows, scrubs gaia/DBSC prefs, wr
   dbAfter.close();
   assert.deepEqual(namesAfter, ['valid_enc', 'valid_plain']);
 
-  const prebootDb = new DatabaseSync(path.join(pdir, '.cookies-preboot.sqlite'), { readOnly: true });
+  const prebootPath = path.join(pdir, '.cookies-preboot.sqlite');
+  const prebootDb = new DatabaseSync(prebootPath, { readOnly: true });
   const prebootNames = prebootDb.prepare('SELECT name FROM cookies ORDER BY name').all().map((r) => r.name);
   prebootDb.close();
   assert.deepEqual(prebootNames, ['valid_enc', 'valid_plain']);
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(prebootPath).mode & 0o777, 0o600);
+  }
 
   // Preferences scrubbed
   const prefs = JSON.parse(readFileSync(path.join(pdir, 'Preferences'), 'utf8'));
@@ -537,6 +542,30 @@ test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-
   assert.equal(upgradedPrefs.signin.allowed, false);
   assert.equal(upgradedPrefs.google?.services, undefined);
 
+  // When detoxVersion === 2 and signin.allowed === false, Chrome recreating signin_scoped_device_id must NOT trigger re-detox loop
+  const prevDetoxedAt = upgradedMeta.detoxedAt;
+  writeFileSync(path.join(legacyDir, 'Default', 'Preferences'), JSON.stringify({
+    signin: { allowed: false, allowed_on_next_startup: false, bound_session_credentials_enabled: false },
+    google: { services: { signin_scoped_device_id: 'recreated-by-chrome' } },
+  }));
+  const resNoLoop = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: legacyDir, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+    extraArgs: ['-e', 'process.exit(0)'],
+  });
+  assert.equal(resNoLoop.ok, true);
+  while (resNoLoop.pid && launcher.isPidAlive(resNoLoop.pid)) {
+    await new Promise((r) => setTimeout(r, 15));
+  }
+  const noLoopMeta = JSON.parse(readFileSync(path.join(legacyDir, '.webmcp-meta.json'), 'utf8'));
+  assert.equal(noLoopMeta.detoxedAt, prevDetoxedAt);
+  const noLoopPrefs = JSON.parse(readFileSync(path.join(legacyDir, 'Default', 'Preferences'), 'utf8'));
+  assert.equal(noLoopPrefs.google?.services?.signin_scoped_device_id, 'recreated-by-chrome');
+
   // Also upgrade when detoxVersion === 2 if Preferences.signin.allowed was flipped back to true
   writeFileSync(path.join(legacyDir, 'Default', 'Preferences'), JSON.stringify({ signin: { allowed: true } }));
   const resUpgrade2 = await launcher.launchChrome({
@@ -555,6 +584,69 @@ test('DETOX_SCHEMA_VERSION=2 cleans both Cookie DBs, gates DBSC strip, and auto-
   }
   const reHealedPrefs = JSON.parse(readFileSync(path.join(legacyDir, 'Default', 'Preferences'), 'utf8'));
   assert.equal(reHealedPrefs.signin.allowed, false);
+});
+
+test('launchChrome fails closed with SQLITE_WAL_BUSY when Web Data is WAL-locked during detox', async (t) => {
+  const root = tempRoot(t);
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const extensionPath = fakeExtensionDir(root);
+  const sessionsFile = path.join(root, 'sessions.json');
+  const profDir = path.join(managedProfilesDir, 'wal-busy-launch');
+  const pDef = path.join(profDir, 'Default');
+  mkdirSync(pDef, { recursive: true });
+  writeFileSync(path.join(profDir, '.webmcp-meta.json'), JSON.stringify({
+    name: 'wal-busy-launch',
+    profileDir: 'Default',
+    forkedFrom: 'Chrome:Default',
+  }));
+  writeFileSync(path.join(pDef, 'Preferences'), '{}');
+
+  const webDataPath = path.join(pDef, 'Web Data');
+  const wdb = new DatabaseSync(webDataPath);
+  wdb.exec("PRAGMA journal_mode=WAL; CREATE TABLE token_service (service TEXT PRIMARY KEY); INSERT INTO token_service VALUES ('s1');");
+  wdb.close();
+
+  const locker = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const { DatabaseSync } = require('node:sqlite');
+       const db = new DatabaseSync(${JSON.stringify(webDataPath)});
+       db.exec('BEGIN; SELECT * FROM token_service;');
+       process.stdout.write('READ_LOCKED\\n');
+       setTimeout(() => process.exit(0), 10000);`,
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  t.after(() => { try { locker.kill('SIGKILL'); } catch {} });
+
+  await new Promise((resolve, reject) => {
+    locker.stdout.on('data', (chunk) => {
+      if (chunk.toString().includes('READ_LOCKED')) resolve();
+    });
+    locker.on('error', reject);
+  });
+
+  const writer = new DatabaseSync(webDataPath);
+  writer.exec("PRAGMA wal_autocheckpoint=0; INSERT INTO token_service VALUES ('s2');");
+  writer.close();
+
+  const res = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: profDir, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+  });
+  locker.kill('SIGKILL');
+
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 'SQLITE_WAL_BUSY');
+  assert.equal(res.error, 'SQLITE_WAL_BUSY');
+  assert.equal(res.pid, undefined);
+  const metaAfter = JSON.parse(readFileSync(path.join(profDir, '.webmcp-meta.json'), 'utf8'));
+  assert.notEqual(metaAfter.detoxedForManaged, true);
 });
 
 test('atomicWriteJson cleans up temporary files if rename fails', (t) => {

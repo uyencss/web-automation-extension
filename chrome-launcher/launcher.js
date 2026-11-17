@@ -734,6 +734,8 @@ function resolveManagedProxyConfig(proxy) {
   return { cleanUrl, warning, timezone };
 }
 
+const warn = (err) => console.warn('[webmcp-browser-kit]', err?.message || err);
+
 async function launchChrome(options = {}) {
   const mode = options.mode || (options.profile?.kind === 'existing' ? 'existing' : 'managed');
   const extensionPath = options.extensionPath || defaultExtensionPath();
@@ -974,7 +976,7 @@ async function launchChrome(options = {}) {
       if (fs.existsSync(prefsPath)) {
         try {
           const prefs = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
-          if (prefs?.signin?.allowed !== false || Boolean(prefs?.google?.services?.signin_scoped_device_id)) {
+          if (prefs?.signin?.allowed === true) {
             needsDetoxUpgrade = true;
           }
         } catch {}
@@ -986,11 +988,20 @@ async function launchChrome(options = {}) {
         try {
           meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
         } catch (readErr) {
-          console.warn('[webmcp-browser-kit]', readErr.message || readErr);
-          meta.detoxedForManaged = true;
+          warn(readErr);
         }
       } catch (err) {
-        console.warn('[webmcp-browser-kit]', err.message || err);
+        if (String(err?.message || err).includes('SQLITE_WAL_BUSY')) {
+          return annotate({
+            ok: false,
+            code: 'SQLITE_WAL_BUSY',
+            error: 'SQLITE_WAL_BUSY',
+            userDataDir,
+            profileDir: effectiveProfileDir,
+            message: err?.message || String(err),
+          });
+        }
+        warn(err);
       }
     } else {
       try {
@@ -1023,7 +1034,7 @@ async function launchChrome(options = {}) {
         m.lastLaunchedAt = new Date().toISOString();
       });
     } catch (err) {
-      console.warn('[webmcp-browser-kit]', err.message || err);
+      warn(err);
     }
   }
   return annotate(result);
@@ -1040,7 +1051,7 @@ function markManagedSessionClosed(userDataDir) {
       m.sessionVersion = (typeof m.sessionVersion === 'number' ? m.sessionVersion : 0) + 1;
     });
   } catch (err) {
-    console.warn('[webmcp-browser-kit]', err.message || err);
+    warn(err);
   }
 }
 
@@ -1163,12 +1174,10 @@ async function closeChrome(options = {}) {
     // ignore
   }
 
-  for (const userDataDir of closedManagedDirs) {
+  await Promise.all([...closedManagedDirs].map(async (userDataDir) => {
     const unlocked = await waitForUnlock(userDataDir, 4000);
-    if (unlocked) {
-      markManagedSessionClosed(userDataDir);
-    }
-  }
+    if (unlocked !== false) markManagedSessionClosed(userDataDir);
+  }));
   
   return { ok: true, closedCount };
 }
