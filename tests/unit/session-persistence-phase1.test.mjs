@@ -676,3 +676,116 @@ test('atomicWriteJson cleans up temporary files if rename fails', (t) => {
   const leftovers = require('node:fs').readdirSync(root).filter((f) => f.includes('.tmp-'));
   assert.deepEqual(leftovers, []);
 });
+
+test('launchChrome focusIfRunning attaches and focuses locked managed/existing profiles and live managed sessions (dryRun)', async (t) => {
+  const root = tempRoot(t);
+  const managedProfilesDir = path.join(root, 'managed-profiles');
+  const extensionPath = fakeExtensionDir(root);
+  const sessionsFile = path.join(root, 'sessions.json');
+  writeFileSync(sessionsFile, JSON.stringify({ version: 1, managedSessions: {}, gateway: null }));
+
+  // 1. Locked managed profile with empty sessions.json
+  const lockedManaged = path.join(managedProfilesDir, 'locked-managed');
+  mkdirSync(path.join(lockedManaged, 'Default'), { recursive: true });
+  writeFileSync(path.join(lockedManaged, '.webmcp-meta.json'), JSON.stringify({ name: 'locked-managed', profileDir: 'Default' }));
+  symlinkSync(`${hostname()}-${process.pid}`, path.join(lockedManaged, 'SingletonLock'));
+
+  const managedNeedsRelaunch = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: lockedManaged, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+    dryRun: true,
+  });
+  assert.equal(managedNeedsRelaunch.ok, false);
+  assert.equal(managedNeedsRelaunch.needsRelaunch, true);
+
+  const managedFocused = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: lockedManaged, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+    focusIfRunning: true,
+    extraArgs: ['https://example.com'],
+    dryRun: true,
+  });
+  assert.equal(managedFocused.ok, true);
+  assert.equal(managedFocused.dryRun, true);
+  assert.equal(managedFocused.attached, true);
+  assert.equal(managedFocused.focused, true);
+  assert.equal(managedFocused.pid, process.pid);
+  assert.equal(managedFocused.mode, 'managed');
+
+  // 2. Locked existing profile
+  const lockedExisting = path.join(root, 'locked-existing');
+  mkdirSync(path.join(lockedExisting, 'Default'), { recursive: true });
+  symlinkSync(`${hostname()}-${process.pid}`, path.join(lockedExisting, 'SingletonLock'));
+
+  const existingNeedsRelaunch = await launcher.launchChrome({
+    mode: 'existing',
+    profile: { kind: 'existing', userDataDir: lockedExisting, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    sessionsFile,
+    dryRun: true,
+  });
+  assert.equal(existingNeedsRelaunch.ok, false);
+  assert.equal(existingNeedsRelaunch.needsRelaunch, true);
+
+  const existingFocused = await launcher.launchChrome({
+    mode: 'existing',
+    profile: { kind: 'existing', userDataDir: lockedExisting, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    sessionsFile,
+    focusIfRunning: true,
+    dryRun: true,
+  });
+  assert.equal(existingFocused.ok, true);
+  assert.equal(existingFocused.dryRun, true);
+  assert.equal(existingFocused.attached, true);
+  assert.equal(existingFocused.focused, true);
+  assert.equal(existingFocused.pid, process.pid);
+  assert.equal(existingFocused.mode, 'existing');
+
+  // 3. hasLiveManagedSession returns focused: true, attached: true, ok: true
+  const liveManaged = path.join(managedProfilesDir, 'live-managed');
+  mkdirSync(path.join(liveManaged, 'Default'), { recursive: true });
+  writeFileSync(path.join(liveManaged, '.webmcp-meta.json'), JSON.stringify({ name: 'live-managed', profileDir: 'Default' }));
+  launcher.rememberManagedSession(liveManaged, process.pid, sessionsFile);
+
+  const liveDefaultRes = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: liveManaged, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+    extraArgs: ['https://example.com'],
+    dryRun: true,
+  });
+  assert.equal(liveDefaultRes.ok, true);
+  assert.equal(liveDefaultRes.attached, true);
+  assert.equal(liveDefaultRes.focused, true);
+  assert.match(liveDefaultRes.attachWarning || '', /require --relaunch/);
+
+  const liveFocusRes = await launcher.launchChrome({
+    mode: 'managed',
+    profile: { kind: 'managed', userDataDir: liveManaged, profileDir: 'Default' },
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    sessionsFile,
+    focusIfRunning: true,
+    extraArgs: ['https://example.com'],
+    dryRun: true,
+  });
+  assert.equal(liveFocusRes.ok, true);
+  assert.equal(liveFocusRes.attached, true);
+  assert.equal(liveFocusRes.focused, true);
+  assert.equal(liveFocusRes.attachWarning, undefined);
+});

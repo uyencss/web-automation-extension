@@ -686,6 +686,67 @@ async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir,
   };
 }
 
+function activateMacPid(targetPid) {
+  const num = Number(targetPid);
+  if (!Number.isInteger(num) || num <= 0) return;
+  try {
+    execFileSync('osascript', [
+      '-l', 'JavaScript', '-e',
+      `ObjC.import("AppKit"); const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${num}); if (a && !a.isNil()) { a.unhide; a.activateWithOptions(3); }`,
+    ], { timeout: 1500, stdio: 'ignore' });
+  } catch {}
+}
+
+async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun }) {
+  const effectivePdir = profileDir || 'Default';
+  const lockPid = readLockPid(userDataDir);
+  const pid = (lockPid && isPidAlive(lockPid)) ? lockPid : await findRunningChromePidAsync({ userDataDir, profileDir: effectivePdir, mode });
+  const base = { ok: true, pid: pid || null, chromePath, userDataDir, profileDir: effectivePdir, mode: mode || 'managed', attached: true, focused: true };
+  if (dryRun) return { ...base, dryRun: true };
+
+  const spawnDetached = (args) => {
+    const child = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
+    child.on('error', () => {});
+    child.unref();
+  };
+
+  if (process.platform === 'darwin') {
+    let winCount = 0;
+    if (pid && Number.isInteger(Number(pid)) && Number(pid) > 0) {
+      try {
+        const raw = execFileSync('osascript', ['-e', `tell application "System Events" to count windows of (first process whose unix id is ${Number(pid)})`], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
+        winCount = parseInt(String(raw || '').trim(), 10) || 0;
+      } catch { winCount = 0; }
+    }
+    if (winCount > 0) {
+      activateMacPid(pid);
+      try {
+        execFileSync('osascript', ['-e', `tell application "System Events" to tell (first process whose unix id is ${Number(pid)}) to set value of attribute "AXMinimized" of every window to false`], { timeout: 1000, stdio: 'ignore' });
+      } catch {}
+      return { ...base, openedNewWindow: false };
+    }
+    spawnDetached([`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, '--new-window', initialUrl || 'chrome://newtab']);
+    await new Promise((r) => setTimeout(r, 250));
+    const finalPid = pid || readLockPid(userDataDir) || await findRunningChromePidAsync({ userDataDir, profileDir: effectivePdir, mode });
+    if (finalPid) activateMacPid(finalPid);
+    return { ...base, pid: finalPid || null, openedNewWindow: true };
+  }
+
+  if (process.platform !== 'win32' && pid && !initialUrl) {
+    try {
+      const wmOut = execFileSync('wmctrl', ['-lp'], { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] });
+      const winLine = wmOut.split('\n').find((l) => l.trim().split(/\s+/)[2] === String(Number(pid)));
+      if (winLine) {
+        execFileSync('wmctrl', ['-ia', winLine.trim().split(/\s+/)[0]], { timeout: 1500, stdio: 'ignore' });
+        return { ...base, openedNewWindow: false };
+      }
+    } catch {}
+  }
+
+  spawnDetached([`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, ...(initialUrl ? [initialUrl] : [])]);
+  return base;
+}
+
 function validateExtensionPath(extensionPath) {
   const parts = String(extensionPath || '')
     .split(',')
@@ -775,6 +836,8 @@ async function launchChrome(options = {}) {
     return { ...result, ...extras };
   };
 
+  const focusUrl = (Array.isArray(options.extraArgs) ? options.extraArgs : []).find((a) => /^https?:\/\//i.test(String(a || '')));
+
   if (mode === 'existing') {
     if (!options.profile?.userDataDir) throw new Error('Missing existing profile info.');
     const userDataDir = options.profile.userDataDir;
@@ -789,6 +852,9 @@ async function launchChrome(options = {}) {
 
     if (isProfileLocked(userDataDir)) {
       if (!options.relaunch) {
+        if (options.focusIfRunning) {
+          return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode: 'existing', initialUrl: focusUrl, dryRun: options.dryRun }));
+        }
         const hasProxyArg = Array.isArray(options.extraArgs) && options.extraArgs.some((a) => String(a).startsWith('--proxy-server='));
         return {
           ok: false,
@@ -903,25 +969,23 @@ async function launchChrome(options = {}) {
   const managedExtraArgs = [...MANAGED_SESSION_SHIELD_ARGS, ...effectiveExtraArgs];
 
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
-    const spawnRes = await spawnChrome({
-      chromePath,
-      extensionPath,
-      userDataDir,
-      profileDir: effectiveProfileDir,
-      mode: 'managed',
-      attached: true,
-      dryRun: options.dryRun,
-      extraArgs: managedExtraArgs,
-      env: spawnEnv,
-    });
-    if (hasCallerOrMetaOverrides) {
-      spawnRes.attachWarning = 'Chrome is already running for this profile; extraArgs and env (TZ) require --relaunch to take effect.';
+    const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun });
+    if (options.dryRun) {
+      focusRes.args = mergeChromeLaunchArgs(baseArgs({ extensionPath, userDataDir, profileDir: effectiveProfileDir }), managedExtraArgs);
+      focusRes.env = spawnEnv || null;
+      focusRes.tz = spawnEnv?.TZ || null;
     }
-    return annotate(spawnRes);
+    if (hasCallerOrMetaOverrides && !options.focusIfRunning) {
+      focusRes.attachWarning = 'Chrome is already running for this profile; extraArgs and env (TZ) require --relaunch to take effect.';
+    }
+    return annotate(focusRes);
   }
 
   if (isProfileLocked(userDataDir)) {
     if (!options.relaunch) {
+      if (options.focusIfRunning) {
+        return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun }));
+      }
       return annotate({
         ok: false,
         mode: 'managed',
@@ -1226,4 +1290,5 @@ module.exports = {
   markManagedSessionClosed,
   resolveMacAppBundle,
   spawnChrome,
+  focusOrOpenRunningChrome,
 };
