@@ -230,46 +230,53 @@ function forkExistingProfile(profile, name, options = {}) {
   const forkedFrom = srcMeta.forkedFrom || profile.id || `${profile.browser || 'Chrome'}:${profile.profileDir}`;
   const dst = createManagedProfile(name || profile.name || profile.profileDir, {
     ...options,
-    skipFingerprintSeed: true,
+    skipFingerprintSeed: options.skipFingerprintSeed !== undefined ? options.skipFingerprintSeed : true,
   });
 
-  let srcLs = null;
-  const srcLocalState = path.join(profile.userDataDir, 'Local State');
-  if (fs.existsSync(srcLocalState)) {
-    try {
-      srcLs = JSON.parse(fs.readFileSync(srcLocalState, 'utf8'));
-    } catch (err) {
-      throw new Error(`Refusing to fork with corrupt JSON in ${srcLocalState}: ${err.message}`);
+  try {
+    let srcLs = null;
+    const srcLocalState = path.join(profile.userDataDir, 'Local State');
+    if (fs.existsSync(srcLocalState)) {
+      try {
+        srcLs = JSON.parse(fs.readFileSync(srcLocalState, 'utf8'));
+      } catch (err) {
+        throw new Error(`Refusing to fork with corrupt JSON in ${srcLocalState}: ${err.message}`);
+      }
     }
+    const srcInfo = srcLs?.profile?.info_cache?.[profile.profileDir];
+    const minimalLocalState = {
+      ...(srcLs?.os_crypt !== undefined ? { os_crypt: srcLs.os_crypt } : {}),
+      profile: {
+        last_used: profile.profileDir,
+        info_cache: srcInfo && typeof srcInfo === 'object' ? { [profile.profileDir]: { ...srcInfo } } : {},
+      },
+    };
+
+    fs.cpSync(srcProfilePath, path.join(dst, profile.profileDir), {
+      recursive: true,
+      filter: (src) => {
+        const rel = path.relative(srcProfilePath, src);
+        return !CACHE_RE.test(rel) && !WEBMCP_STORAGE_RE.test(rel);
+      },
+    });
+
+    atomicWriteJson(path.join(dst, 'Local State'), minimalLocalState);
+    patchJson(path.join(dst, profile.profileDir, 'Preferences'), (j) => {
+      (j.profile ??= {}).exit_type = 'Normal';
+      j.profile.exited_cleanly = true;
+    });
+    patchJson(path.join(dst, '.webmcp-meta.json'), (j) => {
+      j.profileDir = profile.profileDir;
+      j.forkedFrom = forkedFrom;
+    });
+
+    detoxForkedManagedProfile(dst, profile.profileDir);
+  } catch (err) {
+    try {
+      fs.rmSync(dst, { recursive: true, force: true });
+    } catch {}
+    throw err;
   }
-  const srcInfo = srcLs?.profile?.info_cache?.[profile.profileDir];
-  const minimalLocalState = {
-    ...(srcLs?.os_crypt !== undefined ? { os_crypt: srcLs.os_crypt } : {}),
-    profile: {
-      last_used: profile.profileDir,
-      info_cache: srcInfo && typeof srcInfo === 'object' ? { [profile.profileDir]: { ...srcInfo } } : {},
-    },
-  };
-
-  fs.cpSync(srcProfilePath, path.join(dst, profile.profileDir), {
-    recursive: true,
-    filter: (src) => {
-      const rel = path.relative(srcProfilePath, src);
-      return !CACHE_RE.test(rel) && !WEBMCP_STORAGE_RE.test(rel);
-    },
-  });
-
-  atomicWriteJson(path.join(dst, 'Local State'), minimalLocalState);
-  patchJson(path.join(dst, profile.profileDir, 'Preferences'), (j) => {
-    (j.profile ??= {}).exit_type = 'Normal';
-    j.profile.exited_cleanly = true;
-  });
-  patchJson(path.join(dst, '.webmcp-meta.json'), (j) => {
-    j.profileDir = profile.profileDir;
-    j.forkedFrom = forkedFrom;
-  });
-
-  detoxForkedManagedProfile(dst, profile.profileDir);
 
   return {
     ok: true,
