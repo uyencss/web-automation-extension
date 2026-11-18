@@ -924,6 +924,12 @@ async function launchChrome(options = {}) {
     }
   }
 
+  if (options.profile?.userDataDir && !options.dryRun && !fs.existsSync(userDataDir)) {
+    const err = new Error(`Managed Chrome profile directory does not exist: ${userDataDir}`);
+    err.code = 'MANAGED_PROFILE_DIR_NOT_FOUND';
+    throw err;
+  }
+
   let meta = {};
   try {
     meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
