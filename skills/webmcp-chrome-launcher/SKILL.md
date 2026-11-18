@@ -27,10 +27,17 @@ webmcp launch --gateway
 webmcp launch --profile-id "managed:scum" --gateway --json
 ```
 
-   - **DO NOT** use `--name` in bound projects to invent new profile names. Guardrails strictly block rogue profile creation (`[GUARDRAIL BLOCKED]`).
-   - Outside bound projects, to launch an existing native profile or managed profile:
+   - **DO NOT** use `--create` or `--name` in bound projects to invent new profile names. Guardrails strictly block rogue profile creation (`[GUARDRAIL BLOCKED]`).
+   - Outside bound projects, resolve any requested profile via `webmcp profiles list --json` using **2-tier priority**:
+     1. **Tier 1 (Priority #1) — WebMCP `managed` profiles (`~/.webmcp/managed-profiles/<slug>`, `managed:<slug>`)**: Always match here first (by slug, display name, email, or `profileDir`).
+     2. **Tier 2 (Fallback) — Chrome `User Data` (`Chrome:<ProfileDir>`)**: Only fall back to `existing` profiles in Chrome `User Data` when not found in managed profiles (or when the user explicitly specifies `Chrome:<ProfileDir>` / System Chrome).
 
 ```bash
+# Tier 1: Launch a matched managed profile (or resolve by query)
+webmcp launch --profile-id "managed:<slug>" --gateway --json
+webmcp launch "<profile-query>" --gateway --json
+
+# Tier 2 (Fallback): Launch from Chrome User Data only if not in managed profiles
 webmcp launch --profile-id "Chrome:Profile 11" --gateway --json
 ```
 
@@ -53,21 +60,29 @@ do not silently substitute `curl` or direct HTTP action calls.
 
 ## Profile Selection
 
-List available profiles when the user asks to use a real Chrome profile or account:
+List available profiles before launching when the user asks to open any profile or account:
 
 ```bash
 webmcp profiles list --json
 ```
 
-Managed profiles are isolated WebMCP-owned user-data dirs under `~/.webmcp/managed-profiles` unless `WEBMCP_HOME` (or its back-compat alias `WEBMCP_DATA_DIR`) overrides the location. Existing profiles are read-only detections from Chrome/Chromium/Edge profile metadata.
+Managed profiles (`managed` in the JSON output) are isolated WebMCP-owned user-data dirs under `~/.webmcp/managed-profiles` unless `WEBMCP_HOME` (or its back-compat alias `WEBMCP_DATA_DIR`) overrides the location. Existing profiles (`existing` in the JSON output) are detections from the Chrome/Chromium/Edge `User Data` directory (`~/Library/Application Support/Google/Chrome` on macOS, `~/.config/google-chrome` on Linux).
 
-Launch a selected profile:
+Follow the **2-tier resolution order**:
+
+1. **Tier 1 (Priority #1) — WebMCP `managed` profiles**: Match against `managed` profiles (`~/.webmcp/managed-profiles/<slug>`, `managed:<slug>`) first and launch with `webmcp launch --profile-id "managed:<slug>" --gateway --json` (or `webmcp launch "<profile-query>" --gateway --json`).
+2. **Tier 2 (Fallback) — Chrome `User Data` (`Chrome:<ProfileDir>`)**: Only fall back to `existing` when no `managed` profile matches (or when the user explicitly requests `Chrome:<ProfileDir>` / System Chrome), and launch with `webmcp launch --profile-id "Chrome:<ProfileDir>" --gateway --json`:
 
 ```bash
+# Tier 1: WebMCP managed profile (or auto-resolve query: managed first -> Chrome User Data fallback)
+webmcp launch --profile-id "managed:<slug>" --gateway --json
+webmcp launch "<profile-query>" --gateway --json
+
+# Tier 2 (Fallback): Chrome User Data dir
 webmcp launch --profile-id "Chrome:Default" --gateway --json
 ```
 
-Use `--name` for a new managed profile. Use `--profile-id managed:<slug>` to reopen an existing managed profile.
+Only use `--create` or `--name <new-slug>` when the user explicitly asks to create a new blank managed profile sandbox; never auto-create an empty profile when a requested profile is missing.
 
 ### Forking an Existing Profile for Dedicated Proxy Isolation
 

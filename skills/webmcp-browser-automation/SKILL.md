@@ -21,10 +21,11 @@ Every browser action must pass through the WebMCP MCP server.
    path for tab discovery, navigation, reading, and interaction. These tools
    already use the WebMCP MCP server, so do not start a duplicate server.
 2. If no usable WebMCP MCP tool is exposed, initialize the gateway first:
-   `webmcp gateway start`. When Chrome/the extension also needs bootstrapping, **ALWAYS prioritize opening an existing Native Chrome Profile** (`Chrome:<ProfileDir>`) rather than a blank `managed_profiles` directory:
-   - Run `webmcp profiles --json` (or inspect `config/binding.local.json`) to resolve the target native Chrome profile.
-   - Launch with `--profile-id "Chrome:<ProfileDir>"` (for example `webmcp launch --profile-id "Chrome:Profile 11" --gateway --json` or `"Chrome:Default"`).
-   - **NEVER** default to `webmcp launch --name <slug>` (`~/.webmcp/managed-profiles`) unless the user explicitly asks for an empty sandbox.
+   `webmcp gateway start`. When Chrome/the extension also needs bootstrapping, follow the **2-tier Profile Resolution Priority (WebMCP Managed Profiles First → Chrome User Data Fallback)**:
+   - First check profiles already connected to the gateway via MCP `list_profiles` (or `webmcp health --json`), and list local profiles on the machine with `webmcp profiles list --json` (or inspect `config/binding.local.json` / `config/fb_growth_config.json`).
+   - **Tier 1 (Priority #1) — WebMCP Managed Profiles (`~/.webmcp/managed-profiles/<slug>`, `managed:<slug>`)**: Always search the `managed` list first (matching by slug, display name, email, or `profileDir`; in projects with `config/fb_growth_config.json`, `webmcp launch --gateway` auto-binds to `managed:<channel-slug>`). Launch with `webmcp launch --profile-id "managed:<slug>" --gateway --json` (or `webmcp launch "<profile-query>" --gateway --json`).
+   - **Tier 2 (Fallback) — Chrome `User Data` Dir (`Chrome:<ProfileDir>`)**: Only when **not found** in `~/.webmcp/managed-profiles` (or when the user explicitly specifies System Chrome / `Chrome:<ProfileDir>`), fall back to `existing` in the Chrome `User Data` directory (`~/Library/Application Support/Google/Chrome` on macOS, `~/.config/google-chrome` on Linux) and launch with `webmcp launch --profile-id "Chrome:<ProfileDir>" --gateway --json`.
+   - **Never auto-create a blank profile**: Never use `--create` or an unknown `--name <new-slug>` to create a new empty profile unless the user explicitly asks to create a new sandbox.
 3. Start or connect the stdio MCP adapter with `webmcp mcp`, then
    refresh/discover the runtime tool surface and continue with
    `mcp__webmcp__*` tool calls.
@@ -113,13 +114,21 @@ webmcp gateway start
 ```
 
 If the gateway is unreachable or `/health` reports `extensionConnected: false`,
-bootstrap Chrome with the bundled extension using an existing Native Chrome Profile (`--profile-id "Chrome:<ProfileDir>"`, never default to `--name` / `managed_profiles`):
+check `webmcp profiles list --json` and bootstrap Chrome using the 2-tier priority:
+match **WebMCP Managed Profiles** (`managed:<slug>` under `~/.webmcp/managed-profiles`) first,
+and only fall back to **Chrome `User Data`** (`Chrome:<ProfileDir>`) when no managed profile matches
+(or when System Chrome / `Chrome:<ProfileDir>` is explicitly requested). Never use `--create` or a non-existent `--name <new-slug>` unless explicitly creating a new sandbox:
 
 ```bash
+# Tier 1 (Priority #1): WebMCP Managed Profile (or `webmcp launch "<profile-query>" --gateway --json`;
+# in bound projects with config/fb_growth_config.json, `webmcp launch --gateway` auto-binds)
+webmcp launch --profile-id "managed:<slug>" --gateway --json
+
+# Tier 2 (Fallback): Chrome User Data dir (only if not in ~/.webmcp/managed-profiles)
 webmcp launch --profile-id "Chrome:Profile 11" --gateway --json
 ```
 
-Use the `webmcp-chrome-launcher` skill for profile selection, managed browser sessions,
+Use the `webmcp-chrome-launcher` skill for 2-tier profile selection, managed browser sessions,
 and safe `--relaunch` handling for already-running user Chrome profiles.
 
 Then start or attach the MCP adapter:

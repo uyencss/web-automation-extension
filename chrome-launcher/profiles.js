@@ -5,7 +5,13 @@ const os = require('os');
 const path = require('path');
 const { MANAGED_PROFILES_DIR } = require('./config');
 
-function chromeUserDataDirs() {
+function chromeUserDataDirs(options = {}) {
+  if (Array.isArray(options.chromeUserDataDirs)) {
+    return options.chromeUserDataDirs;
+  }
+  if (process.env.WEBMCP_CHROME_USER_DATA_DIR) {
+    return [['Chrome', process.env.WEBMCP_CHROME_USER_DATA_DIR]];
+  }
   const home = os.homedir();
   if (process.platform === 'darwin') {
     return [
@@ -156,7 +162,7 @@ function readManagedProfiles(options = {}) {
 
       let name = meta.name || entry.name;
       let email = meta.email || '';
-      let gaiaName = '';
+      let gaiaName = meta.gaiaName || '';
       let avatarUrl = '';
 
       const profileDir = meta.profileDir || 'Default';
@@ -214,7 +220,7 @@ function listAllProfiles(options = {}) {
   const detected = [];
   const seenDirs = new Set();
 
-  for (const [browser, dir] of chromeUserDataDirs()) {
+  for (const [browser, dir] of chromeUserDataDirs(options)) {
     if (!fs.existsSync(dir) || seenDirs.has(dir)) continue;
     seenDirs.add(dir);
     detected.push(...readBrowserProfiles(browser, dir));
@@ -231,26 +237,61 @@ function norm(s) {
   return String(s || '').normalize('NFC').trim().toLowerCase();
 }
 
+function slugifyQuery(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 40);
+}
+
 function findManagedProfilesMatching(query, options = {}) {
   const raw = String(query || '').trim();
   if (!raw) return [];
   const qNorm = norm(raw);
   const qStripped = qNorm.startsWith('managed:') ? qNorm.slice('managed:'.length) : qNorm;
+  if (!qStripped) return [];
+  const qSlug = slugifyQuery(raw);
   const managed = readManagedProfiles(options);
 
-  // 1. Exact match on id or dirName
+  // 1. Exact match on id or dirName (including slugified unprefixed query)
   const idOrDirMatches = managed.filter((p) => {
     const pIdNorm = norm(p.id);
     const pDirNorm = norm(path.basename(p.userDataDir));
-    return pIdNorm === qNorm || pDirNorm === qStripped || pDirNorm === qNorm;
+    return (
+      pIdNorm === qNorm ||
+      pDirNorm === qStripped ||
+      pDirNorm === qNorm ||
+      (!raw.includes(':') && qSlug && pDirNorm === qSlug)
+    );
   });
   if (idOrDirMatches.length > 0) {
     return idOrDirMatches;
   }
 
-  // 2. Exact match on displayName (meta.name)
-  const nameMatches = managed.filter((p) => norm(p.name) === qNorm);
-  return nameMatches;
+  // 2. Exact match on displayName (meta.name) or gaiaName
+  const nameMatches = managed.filter((p) => (
+    norm(p.name) === qStripped ||
+    norm(p.name) === qNorm ||
+    (p.gaiaName && (norm(p.gaiaName) === qStripped || norm(p.gaiaName) === qNorm))
+  ));
+  if (nameMatches.length > 0) {
+    return nameMatches;
+  }
+
+  // 3. Exact match on email or email local-part
+  const emailMatches = managed.filter((p) => (
+    (p.email && (norm(p.email) === qStripped || norm(p.email) === qNorm)) ||
+    (!qStripped.includes('@') && p.email && norm(p.email.split('@')[0]) === qStripped)
+  ));
+  if (emailMatches.length > 0) {
+    return emailMatches;
+  }
+
+  // 4. Exact match on profileDir
+  return managed.filter((p) => (
+    p.profileDir && (norm(p.profileDir) === qStripped || norm(p.profileDir) === qNorm)
+  ));
 }
 
 function findManagedProfileByNameOrId(query, options = {}) {
@@ -265,23 +306,77 @@ function findManagedProfileByNameOrId(query, options = {}) {
   return matches[0] || null;
 }
 
+function findExistingProfilesMatching(query, existingProfiles = []) {
+  const raw = String(query || '').trim();
+  if (!raw || !Array.isArray(existingProfiles) || existingProfiles.length === 0) return [];
+  const qNorm = norm(raw);
+
+  // 1. Exact id
+  const idMatches = existingProfiles.filter((p) => p.id === raw || norm(p.id) === qNorm);
+  if (idMatches.length > 0) {
+    return idMatches;
+  }
+
+  // 2. Exact name or gaiaName
+  const nameMatches = existingProfiles.filter((p) => (
+    norm(p.name) === qNorm ||
+    (p.gaiaName && norm(p.gaiaName) === qNorm)
+  ));
+  if (nameMatches.length > 0) {
+    return nameMatches;
+  }
+
+  // 3. Exact email or email local-part
+  const emailMatches = existingProfiles.filter((p) => (
+    (p.email && norm(p.email) === qNorm) ||
+    (!qNorm.includes('@') && p.email && norm(p.email.split('@')[0]) === qNorm)
+  ));
+  if (emailMatches.length > 0) {
+    return emailMatches;
+  }
+
+  // 4. Exact profileDir (prefer Chrome when multiple browsers share the dir)
+  const dirMatches = existingProfiles.filter((p) => p.profileDir && norm(p.profileDir) === qNorm);
+  if (dirMatches.length > 1) {
+    const chromeMatches = dirMatches.filter((p) => p.browser === 'Chrome');
+    if (chromeMatches.length === 1) {
+      return chromeMatches;
+    }
+  }
+  return dirMatches;
+}
+
 function findProfileById(profileId, options = {}) {
   const raw = String(profileId || '').trim();
   if (!raw) return null;
   const qNorm = norm(raw);
-  const profiles = listAllProfiles(options);
-  const all = [...profiles.managed, ...profiles.existing];
 
-  // 1. Direct exact id match
-  const exactId = all.find((p) => p.id === raw || norm(p.id) === qNorm);
-  if (exactId) return exactId;
+  // Explicit managed: prefix resolves only inside managed profiles.
+  if (qNorm.startsWith('managed:')) {
+    return findManagedProfileByNameOrId(raw, options);
+  }
 
-  // 2. Exact match in managed profiles by dirName or displayName
+  // Explicit <Browser>:<ProfileDir> prefix resolves only exact existing id.
+  if (raw.includes(':')) {
+    const existing = listAllProfiles(options).existing;
+    return existing.find((p) => p.id === raw) || existing.find((p) => norm(p.id) === qNorm) || null;
+  }
+
+  // Tier 1: Managed Profiles
   const managedMatch = findManagedProfileByNameOrId(raw, options);
   if (managedMatch) return managedMatch;
 
-  // 3. Exact match on existing profile name
-  return all.find((p) => norm(p.name) === qNorm) || null;
+  // Tier 2: Chrome User Data
+  const existing = listAllProfiles(options).existing;
+  const matches = findExistingProfilesMatching(raw, existing);
+  if (matches.length > 1) {
+    const err = new Error(
+      `Ambiguous Chrome profile query "${profileId}" matches multiple profiles: ${matches.map((m) => m.id).join(', ')}`
+    );
+    err.code = 'AMBIGUOUS_PROFILE';
+    throw err;
+  }
+  return matches[0] || null;
 }
 
 module.exports = {
@@ -293,5 +388,6 @@ module.exports = {
   norm,
   findManagedProfilesMatching,
   findManagedProfileByNameOrId,
+  findExistingProfilesMatching,
   findProfileById,
 };
