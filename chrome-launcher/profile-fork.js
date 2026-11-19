@@ -9,8 +9,11 @@ const DETOX_SCHEMA_VERSION = 2;
 const UNSUPPORTED_KEYCHAIN_BROWSERS = new Set(['brave', 'edge', 'coccoc', 'chromium']);
 const UNSUPPORTED_KEYCHAIN_PATH_RE = /(?:^|[\\/])(BraveSoftware|Microsoft Edge|Microsoft[\\/]Edge|CocCoc|Chromium)(?:[\\/]|$)/i;
 
-const CACHE_RE = /(^|[\\/])(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|CacheStorage)([\\/]|$)/;
+const CACHE_RE = /(^|[\\/])(Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|CacheStorage|OptGuideOnDeviceModel|OptGuideOnDeviceClassifierModel|optimization_guide_model_store|OptimizationGuidePredictionModels|download_cache|component_crx_cache|WasmTtsEngine|screen_ai)([\\/]|$)/;
 const WEBMCP_STORAGE_RE = /(^|[\\/])(Local|Sync) Extension Settings[\\/]lbodkmkjbcemodklopcfdmpjomdoapae([\\/]|$)/;
+const ON_DEVICE_AI_LAB_DISABLE = 'optimization-guide-on-device-model@2';
+const ON_DEVICE_AI_LAB_ENABLE = 'optimization-guide-on-device-model@1';
+const LARGE_CRX_THRESHOLD_BYTES = 100 * 1024 * 1024;
 const SQLITE_MAGIC = Buffer.from('SQLite format 3\0', 'utf8');
 const CHROME_WEBSTORE_UPDATE_URL = 'https://clients2.google.com/service/update2/crx';
 const EXT_ID_RE = /^[a-p]{32}$/;
@@ -119,6 +122,108 @@ function isGenericChromeProfileName(name) {
   return !trimmed || trimmed === 'Your Chrome' || trimmed === 'Your Chromium' || trimmed === 'Default' || /^Person \d+$/i.test(trimmed);
 }
 
+function applyOnDeviceAiLocalStatePolicy(data, allowOnDeviceAi = false) {
+  if (allowOnDeviceAi === true) {
+    if (data.optimization_guide && typeof data.optimization_guide === 'object' && !Array.isArray(data.optimization_guide)) {
+      if (data.optimization_guide.gen_ai_local_foundational_model_settings === 1) {
+        delete data.optimization_guide.gen_ai_local_foundational_model_settings;
+      }
+      if (
+        data.optimization_guide.model_execution &&
+        typeof data.optimization_guide.model_execution === 'object' &&
+        !Array.isArray(data.optimization_guide.model_execution) &&
+        data.optimization_guide.model_execution.genai_local_foundational_model_settings === 1
+      ) {
+        delete data.optimization_guide.model_execution.genai_local_foundational_model_settings;
+      }
+    }
+    if (Array.isArray(data.browser?.enabled_labs_experiments)) {
+      data.browser.enabled_labs_experiments = data.browser.enabled_labs_experiments.filter(
+        (flag) => flag !== ON_DEVICE_AI_LAB_DISABLE,
+      );
+    }
+    return;
+  }
+
+  const optGuide = (data.optimization_guide && typeof data.optimization_guide === 'object' && !Array.isArray(data.optimization_guide))
+    ? data.optimization_guide
+    : {};
+  data.optimization_guide = optGuide;
+  optGuide.gen_ai_local_foundational_model_settings = 1;
+  delete optGuide.on_device;
+
+  const modelExec = (optGuide.model_execution && typeof optGuide.model_execution === 'object' && !Array.isArray(optGuide.model_execution))
+    ? optGuide.model_execution
+    : {};
+  optGuide.model_execution = modelExec;
+  modelExec.genai_local_foundational_model_settings = 1;
+  delete modelExec.manifest_asset_ledger;
+  delete modelExec.last_usage_by_feature;
+
+  const browser = (data.browser && typeof data.browser === 'object' && !Array.isArray(data.browser))
+    ? data.browser
+    : {};
+  data.browser = browser;
+  const prevLabs = Array.isArray(browser.enabled_labs_experiments) ? browser.enabled_labs_experiments : [];
+  browser.enabled_labs_experiments = [
+    ...prevLabs.filter((flag) => flag !== ON_DEVICE_AI_LAB_ENABLE && flag !== ON_DEVICE_AI_LAB_DISABLE),
+    ON_DEVICE_AI_LAB_DISABLE,
+  ];
+}
+
+function purgeOnDeviceAiBloat(userDataDir, profileDir = 'Default', options = {}) {
+  if (options.allowOnDeviceAi === true || !userDataDir || !fs.existsSync(userDataDir)) {
+    return { ok: true, skipped: true, removedPaths: [] };
+  }
+  if (options.skipLockCheck !== true && isProfileLocked(userDataDir)) {
+    return { ok: true, skipped: true, reason: 'PROFILE_IN_USE', removedPaths: [] };
+  }
+  const removedPaths = [];
+  const dirTargets = [
+    path.join(userDataDir, 'OptGuideOnDeviceModel'),
+    path.join(userDataDir, 'OptGuideOnDeviceClassifierModel'),
+    path.join(userDataDir, 'download_cache'),
+    path.join(userDataDir, 'optimization_guide_model_store'),
+    ...(profileDir ? [path.join(userDataDir, profileDir, 'optimization_guide_model_store')] : []),
+  ];
+  for (const target of dirTargets) {
+    try {
+      if (fs.existsSync(target) || fs.lstatSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true });
+        removedPaths.push(target);
+      }
+    } catch {
+      // ENOENT or transient permission issue
+    }
+  }
+
+  const crxCacheDir = path.join(userDataDir, 'component_crx_cache');
+  const threshold = Number.isFinite(Number(options.largeCrxThresholdBytes))
+    ? Number(options.largeCrxThresholdBytes)
+    : LARGE_CRX_THRESHOLD_BYTES;
+  if (fs.existsSync(crxCacheDir)) {
+    const pruneLargeCrxEntries = (dir) => {
+      let entries = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        try {
+          if (entry.isDirectory()) {
+            pruneLargeCrxEntries(full);
+          } else if (entry.isFile() && fs.statSync(full).size >= threshold) {
+            fs.unlinkSync(full);
+            removedPaths.push(full);
+          }
+        } catch {
+          // ignore transient entry error
+        }
+      }
+    };
+    pruneLargeCrxEntries(crxCacheDir);
+  }
+  return { ok: true, skipped: false, removedPaths };
+}
+
 /**
  * Strip leaked sibling profile entries from an isolated Managed Profile's `Local State`
  * so Chrome never displays "Other Chrome Profiles" in the Profile Switcher menu and
@@ -129,7 +234,8 @@ function sanitizeManagedLocalState(userDataDir, profileDir = 'Default', displayN
   const targetDir = profileDir || 'Default';
   const localStatePath = path.join(userDataDir, 'Local State');
   const exists = fs.existsSync(localStatePath);
-  if (!exists && !displayName) {
+  const applyAiPolicy = options.enforceOnDeviceAiPolicy !== false || options.allowOnDeviceAi !== undefined;
+  if (!exists && !displayName && options.enforceOnDeviceAiPolicy !== true && options.allowOnDeviceAi === undefined) {
     return { ok: false, changed: false };
   }
   let data = {};
@@ -159,6 +265,9 @@ function sanitizeManagedLocalState(userDataDir, profileDir = 'Default', displayN
   prof.last_used = targetDir;
   prof.last_active_profiles = [targetDir];
   delete prof.profiles_order;
+  if (applyAiPolicy) {
+    applyOnDeviceAiLocalStatePolicy(data, options.allowOnDeviceAi === true);
+  }
   const nextStr = `${JSON.stringify(data, null, 2)}\n`;
   if (exists && nextStr === beforeStr) {
     return { ok: true, changed: false };
@@ -448,11 +557,19 @@ function detoxForkedManagedProfile(userDataDir, profileDir, options = {}) {
     });
   }
 
+  const allowOnDeviceAi = options.allowOnDeviceAi !== undefined
+    ? Boolean(options.allowOnDeviceAi)
+    : Boolean(meta.allowOnDeviceAi);
+
   // 5. Mutate <userDataDir>/Local State (if exists)
   const localStatePath = path.join(userDataDir, 'Local State');
   if (!options.metaDir) {
-    // Isolated Managed Profile: purge any leaked sibling info_cache entries
-    sanitizeManagedLocalState(userDataDir, profileDir, cleanDisplayName);
+    // Isolated Managed Profile: purge any leaked sibling info_cache entries & enforce per-profile AI policy
+    sanitizeManagedLocalState(userDataDir, profileDir, cleanDisplayName, {
+      allowOnDeviceAi,
+      enforceOnDeviceAiPolicy: true,
+    });
+    purgeOnDeviceAiBloat(userDataDir, profileDir, { allowOnDeviceAi, skipLockCheck: true });
   } else if (fs.existsSync(localStatePath)) {
     // Shared System Chrome target (managed-to-chrome): scrub only target entry
     patchJson(localStatePath, (ls) => {
@@ -559,6 +676,7 @@ module.exports = {
   HARD_MAX_FARM_PROFILES,
   countManagedProfiles,
   sanitizeManagedLocalState,
+  purgeOnDeviceAiBloat,
   forkExistingProfile,
   detoxForkedManagedProfile,
   detoxAllManagedProfiles,

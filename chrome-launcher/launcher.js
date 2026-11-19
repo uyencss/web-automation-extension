@@ -75,40 +75,70 @@ function findChromeBinary() {
 
 const LOCK_FILES = ['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'lockfile'];
 
-const MANAGED_SESSION_SHIELD_ARGS = [
-  '--disable-field-trial-config',
-  '--enable-features=BoundSessionCredentialsKillSwitch',
-  `--disable-features=${[
-    'DeviceBoundSessions',
-    'DeviceBoundSessionsBypassDeferralsForRefreshRequests',
-    'DeviceBoundSessionsClientCertSelection',
-    'DeviceBoundSessionsDevTools',
-    'DeviceBoundSessionsFederatedRegistration',
-    'DeviceBoundSessionsPersistExpiryOnRefresh',
-    'DeviceBoundSessionsForRestrictedSites',
-    'DeviceBoundSessionsForSingleSignOn',
-    'DeviceBoundSessionsIncludeAudienceClaim',
-    'DeviceBoundSessionsRetryTransientRefreshErrors',
-    'DeviceBoundSessionsDsePrewarmer',
-    'EnableBoundSessionCredentials',
-    'EnableBoundSessionCredentialsContinuity',
-    'EnableCookieBindingCookieUpgrade',
-    'EnableChromeRefreshTokenBinding',
-    'EnableChromeRefreshTokenBindingUpgrade',
-    'EnableOAuthMultiloginCookiesBinding',
-    'EnableOAuthMultiloginCookiesBindingServerExperiment',
-    'EnableOAuthMultiloginStandardCookiesBinding',
-    'EnableOAuthMultiloginStandardCookiesBindingForSecondaryPartitions',
-    'EnableOAuthMultiloginYoutubeCookiesBinding',
-    'OAuthMultiloginYoutubeCookieBindingEnforced',
-    'RefreshTokenBindingUpgrade',
-    'UseDeviceBoundSessionsStorageMaskForDeletion',
-    'GlicClearDeviceBoundSessionsOnFirstSync',
-    'FlashDeprecationWarning',
-    'EnablePasswordsAccountStorage',
-    'OptimizationGuideOnDeviceModel',
-  ].join(',')}`,
+const ON_DEVICE_AI_DISABLED_FEATURES = [
+  'OptimizationGuideOnDeviceModel',
+  'OnDeviceModelBackgroundDownload',
+  'AIApiFoundationalModel',
+  'OptimizationGuideModelDownloading',
+  'OptimizationGuideModelExecution',
+  'OptimizationHintsFetching',
+  'OptimizationTargetPrediction',
+  'ClientSideDetectionBrandAndIntentForScamDetection',
+  'PromptAPIForGeminiNano',
+  'SummarizationAPIForGeminiNano',
+  'WriterAPIForGeminiNano',
+  'RewriterAPIForGeminiNano',
+  'AIPromptAPI',
+  'AISummarizationAPI',
+  'AIWriterAPI',
+  'AIRewriterAPI',
+  'AIProofreadingAPI',
 ];
+
+const ON_DEVICE_AI_DISABLED_SET = new Set(ON_DEVICE_AI_DISABLED_FEATURES);
+
+const BASE_MANAGED_DISABLED_FEATURES = [
+  'DeviceBoundSessions',
+  'DeviceBoundSessionsBypassDeferralsForRefreshRequests',
+  'DeviceBoundSessionsClientCertSelection',
+  'DeviceBoundSessionsDevTools',
+  'DeviceBoundSessionsFederatedRegistration',
+  'DeviceBoundSessionsPersistExpiryOnRefresh',
+  'DeviceBoundSessionsForRestrictedSites',
+  'DeviceBoundSessionsForSingleSignOn',
+  'DeviceBoundSessionsIncludeAudienceClaim',
+  'DeviceBoundSessionsRetryTransientRefreshErrors',
+  'DeviceBoundSessionsDsePrewarmer',
+  'EnableBoundSessionCredentials',
+  'EnableBoundSessionCredentialsContinuity',
+  'EnableCookieBindingCookieUpgrade',
+  'EnableChromeRefreshTokenBinding',
+  'EnableChromeRefreshTokenBindingUpgrade',
+  'EnableOAuthMultiloginCookiesBinding',
+  'EnableOAuthMultiloginCookiesBindingServerExperiment',
+  'EnableOAuthMultiloginStandardCookiesBinding',
+  'EnableOAuthMultiloginStandardCookiesBindingForSecondaryPartitions',
+  'EnableOAuthMultiloginYoutubeCookiesBinding',
+  'OAuthMultiloginYoutubeCookieBindingEnforced',
+  'RefreshTokenBindingUpgrade',
+  'UseDeviceBoundSessionsStorageMaskForDeletion',
+  'GlicClearDeviceBoundSessionsOnFirstSync',
+  'FlashDeprecationWarning',
+  'EnablePasswordsAccountStorage',
+];
+
+function buildManagedShieldArgs({ allowOnDeviceAi = false } = {}) {
+  const features = allowOnDeviceAi
+    ? BASE_MANAGED_DISABLED_FEATURES.filter((f) => !ON_DEVICE_AI_DISABLED_SET.has(f))
+    : [...BASE_MANAGED_DISABLED_FEATURES, ...ON_DEVICE_AI_DISABLED_FEATURES];
+  return [
+    '--disable-field-trial-config',
+    '--enable-features=BoundSessionCredentialsKillSwitch',
+    `--disable-features=${features.join(',')}`,
+  ];
+}
+
+const MANAGED_SESSION_SHIELD_ARGS = buildManagedShieldArgs({ allowOnDeviceAi: false });
 
 function assertNoForbiddenManagedArgs(extraArgs) {
   if (!Array.isArray(extraArgs)) return;
@@ -971,8 +1001,9 @@ async function launchChrome(options = {}) {
     if (resolvedTz) effectiveExtraArgs.push(`--timezone=${resolvedTz}`);
   }
 
+  const allowOnDeviceAi = meta.allowOnDeviceAi === true;
   const hasCallerOrMetaOverrides = effectiveExtraArgs.length > 0 || Boolean(spawnEnv?.TZ);
-  const managedExtraArgs = [...MANAGED_SESSION_SHIELD_ARGS, ...effectiveExtraArgs];
+  const managedExtraArgs = [...buildManagedShieldArgs({ allowOnDeviceAi }), ...effectiveExtraArgs];
 
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
     const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun });
@@ -1039,7 +1070,13 @@ async function launchChrome(options = {}) {
 
   const hasProvenance = Boolean(meta.forkedFrom || meta.convertedFrom || meta.migratedFrom);
   if (!options.dryRun && hasProvenance && !isProfileLocked(userDataDir)) {
-    const { DETOX_SCHEMA_VERSION, detoxForkedManagedProfile, sanitizeManagedLocalState, stripDbscFiles } = require('./profile-fork');
+    const {
+      DETOX_SCHEMA_VERSION,
+      detoxForkedManagedProfile,
+      sanitizeManagedLocalState,
+      purgeOnDeviceAiBloat,
+      stripDbscFiles,
+    } = require('./profile-fork');
     let needsDetoxUpgrade = !meta.detoxedForManaged || (Number(meta.detoxVersion) || 0) < DETOX_SCHEMA_VERSION;
     if (!needsDetoxUpgrade) {
       const prefsPath = path.join(userDataDir, effectiveProfileDir, 'Preferences');
@@ -1057,7 +1094,10 @@ async function launchChrome(options = {}) {
         detoxForkedManagedProfile(
           userDataDir,
           effectiveProfileDir,
-          options.stripDbsc !== undefined ? { stripDbsc: options.stripDbsc } : {}
+          {
+            ...(options.stripDbsc !== undefined ? { stripDbsc: options.stripDbsc } : {}),
+            allowOnDeviceAi,
+          }
         );
         try {
           meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
@@ -1079,7 +1119,11 @@ async function launchChrome(options = {}) {
       }
     } else {
       try {
-        sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir));
+        sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir), {
+          allowOnDeviceAi,
+          enforceOnDeviceAiPolicy: true,
+        });
+        purgeOnDeviceAiBloat(userDataDir, effectiveProfileDir, { allowOnDeviceAi, skipLockCheck: true });
       } catch {}
       if (options.stripDbsc !== false) {
         stripDbscFiles(path.join(userDataDir, effectiveProfileDir));
@@ -1087,8 +1131,12 @@ async function launchChrome(options = {}) {
     }
   } else if (!options.dryRun && !isProfileLocked(userDataDir)) {
     try {
-      const { sanitizeManagedLocalState, stripDbscFiles } = require('./profile-fork');
-      sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir));
+      const { sanitizeManagedLocalState, purgeOnDeviceAiBloat, stripDbscFiles } = require('./profile-fork');
+      sanitizeManagedLocalState(userDataDir, effectiveProfileDir, meta.name || meta.displayName || path.basename(userDataDir), {
+        allowOnDeviceAi,
+        enforceOnDeviceAiPolicy: true,
+      });
+      purgeOnDeviceAiBloat(userDataDir, effectiveProfileDir, { allowOnDeviceAi, skipLockCheck: true });
       if (options.stripDbsc !== false) {
         stripDbscFiles(path.join(userDataDir, effectiveProfileDir));
       }
@@ -1277,6 +1325,8 @@ module.exports = {
   isProfileLocked,
   cleanStaleLocks,
   LOCK_FILES,
+  ON_DEVICE_AI_DISABLED_FEATURES,
+  buildManagedShieldArgs,
   MANAGED_SESSION_SHIELD_ARGS,
   slugify,
   nextManagedProfileDir,
