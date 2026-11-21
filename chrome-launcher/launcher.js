@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile, execFileSync, execSync, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const { isPidAlive } = require('./sessions');
 const {
   ensureDirs,
@@ -249,7 +249,7 @@ function matchChromePidInPsOutput(psOutput, { userDataDir, profileDir } = {}) {
     if (!uddVal || !pathsMatch(uddVal, userDataDir)) continue;
     if (profileDir) {
       const pdirVal = extractCliFlagValue(line, '--profile-directory');
-      if (pdirVal !== profileDir) continue;
+      if (pdirVal ? pdirVal !== profileDir : profileDir !== 'Default') continue;
     }
     const match = line.trim().match(/^(\d+)/);
     if (match) {
