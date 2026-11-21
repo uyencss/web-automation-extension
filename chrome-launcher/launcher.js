@@ -259,6 +259,32 @@ function matchChromePidInPsOutput(psOutput, { userDataDir, profileDir } = {}) {
   return null;
 }
 
+function getPsArgs() {
+  return process.platform === 'linux' ? ['-wweo', 'pid=,args='] : ['-axww', '-o', 'pid=,command='];
+}
+
+function resolveFingerprintSeedInt(meta = {}) {
+  if (typeof meta.fingerprintSeedInt === 'number' && Number.isFinite(meta.fingerprintSeedInt)) {
+    return meta.fingerprintSeedInt >>> 0;
+  }
+  const raw = meta.fingerprintSeed;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    return raw >>> 0;
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (/^\d+$/.test(trimmed)) return Number(trimmed) >>> 0;
+    let hash = 2166136261;
+    for (let i = 0; i < trimmed.length; i += 1) {
+      hash ^= trimmed.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash >>> 0;
+  }
+  return null;
+}
+
 function findChromePidForUserDataDir(userDataDir) {
   return findRunningChromePid({ userDataDir, mode: 'existing' });
 }
@@ -269,7 +295,7 @@ function findRunningChromePid({ userDataDir, profileDir, mode }) {
     if (lockPid && isPidAlive(lockPid)) return lockPid;
   }
   try {
-    const out = execSync('ps -ax -o pid=,command=', { encoding: 'utf8' });
+    const out = execFileSync('ps', getPsArgs(), { encoding: 'utf8' });
     const pid = matchChromePidInPsOutput(out, { userDataDir, profileDir });
     if (pid && isPidAlive(pid)) return pid;
   } catch {}
@@ -287,7 +313,7 @@ async function findRunningChromePidAsync({ userDataDir, profileDir, mode, psOutp
       out = await psOutputFn();
     } else {
       out = await new Promise((resolve) => {
-        execFile('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+        execFile('ps', getPsArgs(), { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
           if (err) resolve('');
           else resolve(stdout || '');
         });
@@ -340,7 +366,7 @@ function readLockPid(userDataDir) {
 
 function findLiveChromePidViaPs(userDataDir) {
   try {
-    const out = execSync('ps -ax -o pid=,command=', { encoding: 'utf8' });
+    const out = execFileSync('ps', getPsArgs(), { encoding: 'utf8' });
     const pid = matchChromePidInPsOutput(out, { userDataDir });
     if (pid && isPidAlive(pid)) return pid;
   } catch {}
@@ -996,8 +1022,9 @@ async function launchChrome(options = {}) {
   }
   const spawnEnv = Object.keys(effectiveEnv).length > 0 ? effectiveEnv : options.env;
 
-  if (chromeInfo.channel === 'chromium' && typeof meta.fingerprintSeed === 'number') {
-    effectiveExtraArgs.push(`--fingerprint=${meta.fingerprintSeed}`);
+  const resolvedFingerprintSeedInt = resolveFingerprintSeedInt(meta);
+  if (chromeInfo.channel === 'chromium' && resolvedFingerprintSeedInt !== null) {
+    effectiveExtraArgs.push(`--fingerprint=${resolvedFingerprintSeedInt}`);
     if (resolvedTz) effectiveExtraArgs.push(`--timezone=${resolvedTz}`);
   }
 
