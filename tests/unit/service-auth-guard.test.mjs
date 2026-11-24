@@ -387,10 +387,23 @@ test('inspectOnDiskServiceAuth never creates -wal/-shm on live closed WAL DB and
   const highTagSkip = Buffer.from([0x80, 0x80, 0x80, 0x80, 0x08, 0x01]);
   assert.deepEqual(decodeListAccountsPb(highTagSkip.toString('base64')), []);
 
-  // 5. Invalid options.nowMs must not throw RangeError
-  for (const badNow of [Number.NaN, Number.POSITIVE_INFINITY, 'not-a-number']) {
-    const r = inspectOnDiskServiceAuth(walCleanUdd, { services: ['facebook'], nowMs: badNow });
+  // 5. Invalid/non-positive options.nowMs falls back to Date.now() without reviving post-1970 expired cookies
+  for (const badNow of [Number.NaN, Number.POSITIVE_INFINITY, 'not-a-number', 0, -1000, '', false]) {
+    const r = inspectOnDiskServiceAuth(pipeUdd, { services: ['tiktok'], nowMs: badNow });
     assert.equal(r.dbOk, true);
-    assert.equal(r.serviceChecks.facebook.ok, true);
+    assert.equal(r.serviceChecks.tiktok.ok, false);
   }
+
+  // 6. Table lacking host_key (missing col or legacy host alias) executes cleanly in DatabaseSync
+  const legacyUdd = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-legacy-cols-'));
+  t.after(() => fs.rmSync(legacyUdd, { recursive: true, force: true }));
+  const legacyNet = path.join(legacyUdd, 'Default', 'Network');
+  fs.mkdirSync(legacyNet, { recursive: true });
+  const legacyDb = new DatabaseSync(path.join(legacyNet, 'Cookies'));
+  legacyDb.exec('CREATE TABLE cookies (host TEXT, name TEXT, value TEXT);');
+  legacyDb.prepare('INSERT INTO cookies VALUES (?, ?, ?)').run('.douyin.com', 'sessionid', 'tok');
+  legacyDb.close();
+  const legacyRep = inspectOnDiskServiceAuth(legacyUdd, { services: ['douyin'] });
+  assert.equal(legacyRep.dbOk, true);
+  assert.equal(legacyRep.serviceChecks.douyin.ok, true);
 });
