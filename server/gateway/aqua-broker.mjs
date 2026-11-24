@@ -112,6 +112,7 @@ async function waitForConnectedProfile(connectedProfileIdsFn, beforeIds, timeout
 function mapGuardErrorStatus(err) {
   if (err?.code === 'ERR_FORBIDDEN_MOCK_KEYCHAIN' || err?.code === 'INVALID_REQUEST' || err?.code === 'MISSING_PROFILE') return 400;
   if (err?.code === 'EXISTING_PROFILE_DIR_NOT_FOUND' || err?.code === 'MANAGED_PROFILE_DIR_NOT_FOUND' || err?.code === 'SOURCE_PROFILE_NOT_FOUND') return 404;
+  if (err?.needsRelaunch || err?.code === 'ERR_RUNNING_CHROME_MISSING_PROXY' || err?.code === 'ERR_PROXY_UNBOUND_BLOCKED') return 409;
   if (err?.code?.startsWith('ERR_MACOS_') || err?.code === 'KEYCHAIN_DENIED') return 503;
   return 500;
 }
@@ -211,6 +212,7 @@ export async function handleAquaBrokerRequest(req, res, {
         relaunch: Boolean(body.relaunch),
         dryRun: Boolean(body.dryRun),
         focusIfRunning: body.focusIfRunning !== false && body.focus === true ? true : Boolean(body.focusIfRunning),
+        requireProxy: Boolean(body.requireProxy),
         cookieMode: body.cookieMode,
         stripDbsc: body.stripDbsc,
         extraArgs,
@@ -279,6 +281,7 @@ export async function handleAquaBrokerRequest(req, res, {
           userDataDir: udd,
           profileDir: pdir,
           mode,
+          requireProxy: Boolean(body.requireProxy || resolved?.proxy),
           initialUrl: typeof body.url === 'string' && /^https?:\/\//i.test(body.url) ? body.url : undefined,
         });
         return writeAquaJson(res, 200, { ok: true, viaAquaService: true, ...focusRes });
@@ -326,6 +329,7 @@ export async function handleAquaBrokerRequest(req, res, {
       code: err?.code || 'ERR_MACOS_AQUA_CALL_FAILED',
       error: err?.code || 'ERR_MACOS_AQUA_CALL_FAILED',
       message: err?.message || String(err),
+      ...(err?.needsRelaunch ? { needsRelaunch: true } : {}),
       ...(err?.details ? { details: err.details } : {}),
     });
   }

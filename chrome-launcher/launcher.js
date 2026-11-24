@@ -25,7 +25,16 @@ const {
   resolveMacV10Shield,
   probeMacosAquaKeychainSession,
   assertMacosAquaKeychainSession,
+  assertNoForbiddenManagedArgs,
 } = require('./mac-keychain-guard');
+const {
+  resolveManagedProxyConfig,
+  hasProxyServerArg,
+  assertRequireProxy,
+  inspectRunningChromeHasProxy,
+  assertRunningChromeHasProxy,
+  prepareLaunchProxy,
+} = require('./proxy-guard');
 
 const WEBMCP_EXTENSION_ID = 'lbodkmkjbcemodklopcfdmpjomdoapae';
 const WEBMCP_EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/webmcp-tools-provider/${WEBMCP_EXTENSION_ID}`;
@@ -147,26 +156,6 @@ function buildManagedShieldArgs({ allowOnDeviceAi = false, preserveMacV10Keychai
 }
 
 const MANAGED_SESSION_SHIELD_ARGS = buildManagedShieldArgs({ allowOnDeviceAi: false });
-
-function assertNoForbiddenManagedArgs(extraArgs) {
-  if (!Array.isArray(extraArgs)) return;
-  for (let i = 0; i < extraArgs.length; i++) {
-    const raw = String(extraArgs[i] || '').trim();
-    const lower = raw.toLowerCase();
-    if (
-      lower === '--use-mock-keychain' ||
-      lower.startsWith('--use-mock-keychain=') ||
-      lower === '--password-store=basic' ||
-      (lower === '--password-store' && String(extraArgs[i + 1] || '').trim().toLowerCase() === 'basic')
-    ) {
-      const err = new Error(
-        `ERR_FORBIDDEN_MOCK_KEYCHAIN: Flag "${raw}" is forbidden on Managed profiles because mock/basic password stores break Keychain Safe Storage cookie persistence.`
-      );
-      err.code = 'ERR_FORBIDDEN_MOCK_KEYCHAIN';
-      throw err;
-    }
-  }
-}
 
 /**
  * Remove stale Chrome lock files from a user-data directory.
@@ -775,12 +764,15 @@ function activateMacPid(targetPid) {
   } catch {}
 }
 
-async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun, skipGuardForTest = false, cookieMode, env }) {
+async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun, skipGuardForTest = false, cookieMode, env, requireProxy = false, inspectPidCmdlineFn }) {
   const effectivePdir = profileDir || 'Default';
   const lockPid = readLockPid(userDataDir);
   const pid = (lockPid && isPidAlive(lockPid)) ? lockPid : await findRunningChromePidAsync({ userDataDir, profileDir: effectivePdir, mode });
   const base = { ok: true, pid: pid || null, chromePath, userDataDir, profileDir: effectivePdir, mode: mode || 'managed', attached: true, focused: true };
   if (dryRun) return { ...base, dryRun: true };
+  if (requireProxy === true) {
+    await assertRunningChromeHasProxy({ pid, requireProxy: true, dryRun, userDataDir, inspectPidCmdlineFn });
+  }
 
   const spawnDetached = (args) => {
     const child = spawn(chromePath, args, { detached: true, stdio: 'ignore', env: process.env });
@@ -874,37 +866,11 @@ function validateExtensionPath(extensionPath) {
   }
 }
 
-function resolveManagedProxyConfig(proxy) {
-  if (!proxy) return { cleanUrl: null, warning: null, timezone: null };
-  if (typeof proxy === 'object' && proxy.mode === 'direct' && !proxy.url && !proxy.host) {
-    return { cleanUrl: null, warning: null, timezone: proxy.timezone || null };
-  }
-  const timezone = (typeof proxy === 'object' && proxy.timezone) ? String(proxy.timezone) : null;
-  const objCreds = typeof proxy === 'object' && Boolean(proxy.username || proxy.password);
-  let rawUrl = typeof proxy === 'string' ? proxy.trim() : (typeof proxy.url === 'string' ? proxy.url.trim() : '');
-  if (!rawUrl && typeof proxy === 'object' && proxy.host && proxy.port) {
-    const scheme = String(proxy.protocol || proxy.scheme || 'http').replace(/:$/, '');
-    const hostStr = String(proxy.host).trim();
-    const formattedHost = hostStr.includes(':') && !hostStr.startsWith('[') ? `[${hostStr}]` : hostStr;
-    rawUrl = `${scheme}://${formattedHost}:${proxy.port}`;
-  }
-  if (!rawUrl) return { cleanUrl: null, warning: null, timezone };
-
-  let hasUrlCreds = false;
-  let cleanUrl = rawUrl;
-  try {
-    const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawUrl) ? rawUrl : `http://${rawUrl}`;
-    const u = new URL(withScheme);
-    hasUrlCreds = Boolean(u.username || u.password);
-    cleanUrl = `${u.protocol}//${u.host}`;
-  } catch {
-    // Keep non-URL host:port syntax verbatim
-  }
-
-  const warning = (objCreds || hasUrlCreds)
-    ? 'Proxy URL contained inline credentials (username/password), which Chromium ignores in --proxy-server=; credentials were stripped.'
-    : null;
-  return { cleanUrl, warning, timezone };
+async function resolveAttachedChromePid({ userDataDir, profileDir, mode, sessionPid }) {
+  const lockPid = readLockPid(userDataDir);
+  if (lockPid && isPidAlive(lockPid)) return lockPid;
+  if (sessionPid && isPidAlive(sessionPid)) return sessionPid;
+  return await findRunningChromePidAsync({ userDataDir, profileDir, mode });
 }
 
 const warn = (err) => console.warn('[webmcp-browser-kit]', err?.message || err);
@@ -954,6 +920,9 @@ async function launchChrome(options = {}) {
     if (!options.profile?.userDataDir) throw new Error('Missing existing profile info.');
     const userDataDir = options.profile.userDataDir;
     const profileDir = options.profile.profileDir || 'Default';
+    const proxyState = prepareLaunchProxy({ mode: 'existing', userDataDir, profileDir, options });
+    const existingExtraArgs = proxyState.extraArgs;
+    if (proxyState.proxyAuthWarning) proxyAuthWarning = proxyState.proxyAuthWarning;
 
     const targetProfilePath = path.join(userDataDir, profileDir);
     if (!fs.existsSync(targetProfilePath) && !options.dryRun) {
@@ -977,9 +946,10 @@ async function launchChrome(options = {}) {
     if (isProfileLocked(userDataDir)) {
       if (!options.relaunch) {
         if (options.focusIfRunning) {
+          await proxyState.assertAttached(() => resolveAttachedChromePid({ userDataDir, profileDir, mode: 'existing' }));
           return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode: 'existing', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: options.env }));
         }
-        const hasProxyArg = Array.isArray(options.extraArgs) && options.extraArgs.some((a) => String(a).startsWith('--proxy-server='));
+        const hasProxyArg = hasProxyServerArg(existingExtraArgs);
         return {
           ok: false,
           needsRelaunch: true,
@@ -1009,7 +979,7 @@ async function launchChrome(options = {}) {
       }
     }
 
-    const result = await spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, extraArgs: options.extraArgs, env: options.env });
+    const result = await spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, extraArgs: existingExtraArgs, env: options.env });
     return annotate(result);
   }
 
@@ -1072,21 +1042,10 @@ async function launchChrome(options = {}) {
 
   const effectiveProfileDir = options.profile?.profileDir || meta.profileDir || 'Default';
 
-  const effectiveExtraArgs = [...(options.extraArgs || [])];
-  const proxyCfg = resolveManagedProxyConfig(meta.proxy);
-  if ((options.requireProxy === true || meta.requireProxy === true) && !proxyCfg.cleanUrl) {
-    const err = new Error(`Refusing to launch managed Chrome on direct IP without a bound proxy (${userDataDir}).`);
-    err.code = 'ERR_PROXY_UNBOUND_BLOCKED';
-    throw err;
-  }
-  if (proxyCfg.cleanUrl && !effectiveExtraArgs.some((a) => String(a).startsWith('--proxy-server='))) {
-    effectiveExtraArgs.push(`--proxy-server=${proxyCfg.cleanUrl}`);
-    if (!effectiveExtraArgs.some((a) => String(a).startsWith('--force-webrtc-ip-handling-policy='))) {
-      effectiveExtraArgs.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
-    }
-    if (proxyCfg.warning) {
-      proxyAuthWarning = proxyCfg.warning;
-    }
+  const proxyState = prepareLaunchProxy({ mode: 'managed', userDataDir, profileDir: effectiveProfileDir, meta, options });
+  const { proxyCfg, extraArgs: effectiveExtraArgs } = proxyState;
+  if (proxyState.proxyAuthWarning) {
+    proxyAuthWarning = proxyState.proxyAuthWarning;
   }
   if (meta.fingerprint?.locale && !effectiveExtraArgs.some((a) => String(a).startsWith('--lang='))) {
     effectiveExtraArgs.push(`--lang=${meta.fingerprint.locale}`);
@@ -1112,7 +1071,15 @@ async function launchChrome(options = {}) {
     ...effectiveExtraArgs,
   ];
 
-  if (hasLiveManagedSession(userDataDir, sessionsFile)) {
+  const sessionPid = hasLiveManagedSession(userDataDir, sessionsFile)
+    ? (loadSessions(sessionsFile).managedSessions?.[userDataDir]?.pid || null)
+    : null;
+  const checkAttachedProxy = () => proxyState.assertAttached(
+    () => resolveAttachedChromePid({ userDataDir, profileDir: effectiveProfileDir, mode: 'managed', sessionPid }),
+  );
+
+  if (!options.relaunch && sessionPid) {
+    await checkAttachedProxy();
     const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv });
     if (options.dryRun) {
       const dryShield = resolveMacV10Shield({
@@ -1136,9 +1103,10 @@ async function launchChrome(options = {}) {
     return annotate(focusRes);
   }
 
-  if (isProfileLocked(userDataDir)) {
+  if (isProfileLocked(userDataDir) || (options.relaunch && sessionPid)) {
     if (!options.relaunch) {
       if (options.focusIfRunning) {
+        await checkAttachedProxy();
         return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv }));
       }
       return annotate({
@@ -1159,7 +1127,7 @@ async function launchChrome(options = {}) {
     }
     assertMacosAquaKeychainSession({ dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: spawnEnv });
     resolveMacV10Shield({ userDataDir, profileDir: effectiveProfileDir, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: spawnEnv, cookieMode: options.cookieMode });
-    let lockPid = readLockPid(userDataDir);
+    let lockPid = readLockPid(userDataDir) || sessionPid;
     if (!lockPid) {
       lockPid = findChromePidForUserDataDir(userDataDir);
     }
@@ -1488,4 +1456,8 @@ module.exports = {
   resolveMacAppBundle,
   spawnChrome,
   focusOrOpenRunningChrome,
+  resolveManagedProxyConfig,
+  assertRequireProxy,
+  inspectRunningChromeHasProxy,
+  assertRunningChromeHasProxy,
 };

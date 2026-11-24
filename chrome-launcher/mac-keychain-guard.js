@@ -284,6 +284,26 @@ function assertMacosAquaKeychainSession({ dryRun = false, skipGuardForTest = fal
   return res;
 }
 
+function assertNoForbiddenManagedArgs(extraArgs) {
+  if (!Array.isArray(extraArgs)) return;
+  for (let i = 0; i < extraArgs.length; i += 1) {
+    const raw = String(extraArgs[i] || '').trim();
+    const lower = raw.toLowerCase();
+    if (
+      lower === '--use-mock-keychain' ||
+      lower.startsWith('--use-mock-keychain=') ||
+      lower === '--password-store=basic' ||
+      (lower === '--password-store' && String(extraArgs[i + 1] || '').trim().toLowerCase() === 'basic')
+    ) {
+      const err = new Error(
+        `ERR_FORBIDDEN_MOCK_KEYCHAIN: Flag "${raw}" is forbidden on Managed profiles because mock/basic password stores break Keychain Safe Storage cookie persistence.`,
+      );
+      err.code = 'ERR_FORBIDDEN_MOCK_KEYCHAIN';
+      throw err;
+    }
+  }
+}
+
 module.exports = {
   MAC_V10_KEYCHAIN_SHIELD_FEATURES,
   ALLOWED_COOKIE_MODES,
@@ -291,4 +311,5 @@ module.exports = {
   resolveMacV10Shield,
   probeMacosAquaKeychainSession,
   assertMacosAquaKeychainSession,
+  assertNoForbiddenManagedArgs,
 };
