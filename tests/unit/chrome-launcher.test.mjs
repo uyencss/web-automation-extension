@@ -80,6 +80,23 @@ test('launchChrome dry-run returns Chrome args without spawning', async () => {
   assert.equal(result.userDataDir, path.join(managedProfilesDir, 'dry-run'));
   assert.ok(result.args.includes(`--user-data-dir=${result.userDataDir}`));
   assert.ok(result.args.includes(`--load-extension=${extensionPath}`));
+  assert.ok(
+    result.args.some((a) => a.startsWith('--disable-blink-features=') && a.slice('--disable-blink-features='.length).split(',').includes('AutomationControlled')),
+    'default Chrome launch args must include --disable-blink-features=AutomationControlled',
+  );
+
+  const dedupRes = await launcher.launchChrome({
+    mode: 'managed',
+    newProfileName: 'Dry Run Dedup',
+    chromePath: process.execPath,
+    extensionPath,
+    managedProfilesDir,
+    extraArgs: ['--disable-blink-features=AutomationControlled,CustomBlinkFeat'],
+    dryRun: true,
+  });
+  const blinkArgs = dedupRes.args.filter((a) => a.startsWith('--disable-blink-features='));
+  assert.equal(blinkArgs.length, 1);
+  assert.deepEqual(blinkArgs[0].slice('--disable-blink-features='.length).split(','), ['AutomationControlled', 'CustomBlinkFeat']);
 });
 
 test('detectChromeChannel classifies builds from path and version string', () => {

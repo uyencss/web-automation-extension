@@ -473,6 +473,7 @@ function baseArgs({ extensionPath, userDataDir, profileDir }) {
     '--no-first-run',
     '--no-default-browser-check',
     '--silent-debugger-extension-api',
+    '--disable-blink-features=AutomationControlled',
   ];
   if (profileDir) args.push(`--profile-directory=${profileDir}`);
   return args;

@@ -286,6 +286,8 @@ export const cdpInputHandlers = {
       modifiers: modifierFlags, ...(keyText ? { text: keyText, unmodifiedText: keyText } : {}),
     });
 
+    if (params.human !== false) await sleep(rnd(45, 115));
+
     await sendCDPCommand(tabId, 'Input.dispatchKeyEvent', {
       type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode,
       modifiers: modifierFlags,

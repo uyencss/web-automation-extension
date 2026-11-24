@@ -440,3 +440,32 @@ test('CHIPS partitionKey & getExtensionInfo: setCookie normalizes partitionKey w
   const extInfo = await fullControlHandlers.getExtensionInfo();
   assert.equal(extInfo.websocketUrl, 'ws://localhost:7865', 'getExtensionInfo must resolve static ws-client gateway URL');
 });
+
+test('pressKey applies realistic key-dwell pause by default and skips dwell when human: false', async () => {
+  const tabId = 703;
+  const timestamps = [];
+  sendCommandImpl = (_target, method, params, callback) => {
+    if (method === 'Input.dispatchKeyEvent') {
+      timestamps.push({ type: params.type, time: performance.now() });
+    }
+    callback({});
+  };
+
+  try {
+    sentCDPCommands.length = 0;
+    await cdpInputHandlers.pressKey({ tabId, key: 'ArrowDown' });
+    assert.equal(timestamps.length, 2);
+    assert.equal(timestamps[0].type, 'keyDown');
+    assert.equal(timestamps[1].type, 'keyUp');
+    const humanDwellMs = timestamps[1].time - timestamps[0].time;
+    assert.ok(humanDwellMs >= 40 && humanDwellMs < 300, `Expected human key dwell >= 40ms, got ${humanDwellMs.toFixed(1)}ms`);
+
+    timestamps.length = 0;
+    await cdpInputHandlers.pressKey({ tabId, key: 'ArrowDown', human: false });
+    assert.equal(timestamps.length, 2);
+    const fastDwellMs = timestamps[1].time - timestamps[0].time;
+    assert.ok(fastDwellMs < 35, `Expected human:false key dwell < 35ms, got ${fastDwellMs.toFixed(1)}ms`);
+  } finally {
+    sendCommandImpl = null;
+  }
+});
