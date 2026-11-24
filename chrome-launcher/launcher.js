@@ -19,6 +19,14 @@ const {
   saveSessions,
 } = require('./sessions');
 const { norm, findManagedProfileByNameOrId } = require('./profiles');
+const {
+  MAC_V10_KEYCHAIN_SHIELD_FEATURES,
+  stripMacSshEnv,
+  detectMacCookieEncryptionMode,
+  isRealChromeBinary,
+  probeMacosAquaKeychainSession,
+  assertMacosAquaKeychainSession,
+} = require('./mac-keychain-guard');
 
 const WEBMCP_EXTENSION_ID = 'lbodkmkjbcemodklopcfdmpjomdoapae';
 const WEBMCP_EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/webmcp-tools-provider/${WEBMCP_EXTENSION_ID}`;
@@ -126,65 +134,6 @@ const BASE_MANAGED_DISABLED_FEATURES = [
   'FlashDeprecationWarning',
   'EnablePasswordsAccountStorage',
 ];
-
-const MAC_V10_KEYCHAIN_SHIELD_FEATURES = [
-  'kKeychainKeyProviderUserDataDirProtection',
-  'KeychainKeyProviderUserDataDirProtection',
-];
-
-/**
- * Inspect a managed profile's SQLite Cookies DB on macOS to determine whether its
- * cookies are still encrypted with legacy `v10` Keychain Safe Storage or `v11`.
- * @param {string} userDataDir
- * @param {string} [profileDir='Default']
- * @returns {'v10'|'v11'|'empty'|'unknown'|'other'}
- */
-function detectMacCookieEncryptionMode(userDataDir, profileDir = 'Default') {
-  if (process.platform !== 'darwin') return 'other';
-  if (!userDataDir) return 'empty';
-  const effectiveProfileDir = profileDir || 'Default';
-  const candidates = [
-    path.join(userDataDir, effectiveProfileDir, 'Cookies'),
-    path.join(userDataDir, effectiveProfileDir, 'Network', 'Cookies'),
-  ];
-  const dbPath = candidates.find((p) => fs.existsSync(p));
-  if (!dbPath) return 'empty';
-
-  try {
-    const uriPath = dbPath
-      .replace(/%/g, '%25')
-      .replace(/\?/g, '%3F')
-      .replace(/#/g, '%23')
-      .replace(/ /g, '%20');
-    const out = execFileSync(
-      '/usr/bin/sqlite3',
-      [
-        '-noheader',
-        '-batch',
-        `file:${uriPath}?mode=ro&immutable=1`,
-        'SELECT CAST(substr(encrypted_value,1,3) AS TEXT), count(*) FROM cookies WHERE length(encrypted_value)>=3 GROUP BY 1;',
-      ],
-      { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    let v10 = 0;
-    let v11 = 0;
-    for (const line of String(out || '').split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const sep = trimmed.indexOf('|');
-      if (sep <= 0) continue;
-      const pfx = trimmed.slice(0, sep);
-      const count = Number.parseInt(trimmed.slice(sep + 1), 10) || 0;
-      if (pfx === 'v10') v10 += count;
-      else if (pfx === 'v11') v11 += count;
-    }
-    if (v10 > 0 && v10 >= v11) return 'v10';
-    if (v11 > 0) return 'v11';
-    return 'empty';
-  } catch {
-    return 'unknown';
-  }
-}
 
 function buildManagedShieldArgs({ allowOnDeviceAi = false, preserveMacV10Keychain = false } = {}) {
   const base = allowOnDeviceAi
@@ -699,17 +648,8 @@ function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
 
 const mergeChromiumFeatureFlags = mergeChromeLaunchArgs;
 
-function stripMacSshEnv(baseEnv) {
-  const out = { ...baseEnv };
-  if (process.platform === 'darwin') {
-    delete out.SSH_CONNECTION;
-    delete out.SSH_CLIENT;
-    delete out.SSH_TTY;
-  }
-  return out;
-}
-
 async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
+  assertMacosAquaKeychainSession({ chromePath, dryRun });
   const rawBase = baseArgs({ extensionPath, userDataDir, profileDir });
   const args = mergeChromeLaunchArgs(rawBase, extraArgs);
   const mergedEnv = stripMacSshEnv(env ? { ...process.env, ...env } : process.env);
@@ -833,7 +773,7 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
   if (dryRun) return { ...base, dryRun: true };
 
   const spawnDetached = (args) => {
-    const child = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
+    const child = spawn(chromePath, args, { detached: true, stdio: 'ignore', env: stripMacSshEnv(process.env) });
     child.on('error', () => {});
     child.unref();
   };
@@ -853,7 +793,33 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
       } catch {}
       return { ...base, openedNewWindow: false };
     }
-    spawnDetached([`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, '--new-window', initialUrl || 'chrome://newtab']);
+    assertMacosAquaKeychainSession({ chromePath, dryRun });
+    const v10ShieldArgs = detectMacCookieEncryptionMode(userDataDir, effectivePdir) === 'v10'
+      ? [`--disable-features=${MAC_V10_KEYCHAIN_SHIELD_FEATURES.join(',')}`]
+      : [];
+    const spawnArgs = [
+      `--user-data-dir=${userDataDir}`,
+      `--profile-directory=${effectivePdir}`,
+      ...v10ShieldArgs,
+      '--new-window',
+      initialUrl || 'chrome://newtab',
+    ];
+    const appBundle = resolveMacAppBundle(chromePath, spawnArgs);
+    if (appBundle) {
+      await new Promise((resolve, reject) => {
+        execFile(
+          '/usr/bin/open',
+          ['-na', appBundle, '--args', ...spawnArgs],
+          { timeout: 10000, stdio: 'ignore', env: stripMacSshEnv(process.env) },
+          (err) => {
+            if (err) reject(new Error(`Failed to launch Chrome via LaunchServices (/usr/bin/open): ${err.message}`));
+            else resolve();
+          },
+        );
+      });
+    } else {
+      spawnDetached(spawnArgs);
+    }
     await new Promise((r) => setTimeout(r, 250));
     const finalPid = pid || readLockPid(userDataDir) || await findRunningChromePidAsync({ userDataDir, profileDir: effectivePdir, mode });
     if (finalPid) activateMacPid(finalPid);
@@ -1433,7 +1399,11 @@ module.exports = {
   LOCK_FILES,
   ON_DEVICE_AI_DISABLED_FEATURES,
   MAC_V10_KEYCHAIN_SHIELD_FEATURES,
+  stripMacSshEnv,
   detectMacCookieEncryptionMode,
+  isRealChromeBinary,
+  probeMacosAquaKeychainSession,
+  assertMacosAquaKeychainSession,
   buildManagedShieldArgs,
   MANAGED_SESSION_SHIELD_ARGS,
   slugify,
