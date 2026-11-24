@@ -127,10 +127,70 @@ const BASE_MANAGED_DISABLED_FEATURES = [
   'EnablePasswordsAccountStorage',
 ];
 
-function buildManagedShieldArgs({ allowOnDeviceAi = false } = {}) {
-  const features = allowOnDeviceAi
+const MAC_V10_KEYCHAIN_SHIELD_FEATURES = [
+  'kKeychainKeyProviderUserDataDirProtection',
+  'KeychainKeyProviderUserDataDirProtection',
+];
+
+/**
+ * Inspect a managed profile's SQLite Cookies DB on macOS to determine whether its
+ * cookies are still encrypted with legacy `v10` Keychain Safe Storage or `v11`.
+ * @param {string} userDataDir
+ * @param {string} [profileDir='Default']
+ * @returns {'v10'|'v11'|'empty'|'unknown'|'other'}
+ */
+function detectMacCookieEncryptionMode(userDataDir, profileDir = 'Default') {
+  if (process.platform !== 'darwin') return 'other';
+  if (!userDataDir) return 'empty';
+  const effectiveProfileDir = profileDir || 'Default';
+  const candidates = [
+    path.join(userDataDir, effectiveProfileDir, 'Cookies'),
+    path.join(userDataDir, effectiveProfileDir, 'Network', 'Cookies'),
+  ];
+  const dbPath = candidates.find((p) => fs.existsSync(p));
+  if (!dbPath) return 'empty';
+
+  try {
+    const uriPath = dbPath
+      .replace(/%/g, '%25')
+      .replace(/\?/g, '%3F')
+      .replace(/#/g, '%23')
+      .replace(/ /g, '%20');
+    const out = execFileSync(
+      '/usr/bin/sqlite3',
+      [
+        '-noheader',
+        '-batch',
+        `file:${uriPath}?mode=ro&immutable=1`,
+        'SELECT CAST(substr(encrypted_value,1,3) AS TEXT), count(*) FROM cookies WHERE length(encrypted_value)>=3 GROUP BY 1;',
+      ],
+      { encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    let v10 = 0;
+    let v11 = 0;
+    for (const line of String(out || '').split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const sep = trimmed.indexOf('|');
+      if (sep <= 0) continue;
+      const pfx = trimmed.slice(0, sep);
+      const count = Number.parseInt(trimmed.slice(sep + 1), 10) || 0;
+      if (pfx === 'v10') v10 += count;
+      else if (pfx === 'v11') v11 += count;
+    }
+    if (v10 > 0 && v10 >= v11) return 'v10';
+    if (v11 > 0) return 'v11';
+    return 'empty';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function buildManagedShieldArgs({ allowOnDeviceAi = false, preserveMacV10Keychain = false } = {}) {
+  const base = allowOnDeviceAi
     ? BASE_MANAGED_DISABLED_FEATURES.filter((f) => !ON_DEVICE_AI_DISABLED_SET.has(f))
     : [...BASE_MANAGED_DISABLED_FEATURES, ...ON_DEVICE_AI_DISABLED_FEATURES];
+  const features = preserveMacV10Keychain ? [...base, ...MAC_V10_KEYCHAIN_SHIELD_FEATURES] : base;
   return [
     '--disable-field-trial-config',
     '--enable-features=BoundSessionCredentialsKillSwitch',
@@ -639,10 +699,20 @@ function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
 
 const mergeChromiumFeatureFlags = mergeChromeLaunchArgs;
 
+function stripMacSshEnv(baseEnv) {
+  const out = { ...baseEnv };
+  if (process.platform === 'darwin') {
+    delete out.SSH_CONNECTION;
+    delete out.SSH_CLIENT;
+    delete out.SSH_TTY;
+  }
+  return out;
+}
+
 async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
   const rawBase = baseArgs({ extensionPath, userDataDir, profileDir });
   const args = mergeChromeLaunchArgs(rawBase, extraArgs);
-  const mergedEnv = env ? { ...process.env, ...env } : { ...process.env };
+  const mergedEnv = stripMacSshEnv(env ? { ...process.env, ...env } : process.env);
   if (
     process.platform !== 'darwin' &&
     process.platform !== 'win32' &&
@@ -683,8 +753,9 @@ async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir,
     }
     openArgs.push('--args', ...args);
 
+    const cleanOpenEnv = stripMacSshEnv(process.env);
     await new Promise((resolve, reject) => {
-      execFile('/usr/bin/open', openArgs, { timeout: 10000, stdio: 'ignore' }, (err) => {
+      execFile('/usr/bin/open', openArgs, { timeout: 10000, stdio: 'ignore', env: cleanOpenEnv }, (err) => {
         if (err) {
           reject(new Error(`Failed to launch Chrome via LaunchServices (/usr/bin/open): ${err.message}`));
         } else {
@@ -1030,8 +1101,15 @@ async function launchChrome(options = {}) {
   }
 
   const allowOnDeviceAi = meta.allowOnDeviceAi === true;
+  const macCookieMode = process.platform === 'darwin'
+    ? detectMacCookieEncryptionMode(userDataDir, effectiveProfileDir)
+    : 'other';
+  const preserveMacV10Keychain = macCookieMode === 'v10';
   const hasCallerOrMetaOverrides = effectiveExtraArgs.length > 0 || Boolean(spawnEnv?.TZ);
-  const managedExtraArgs = [...buildManagedShieldArgs({ allowOnDeviceAi }), ...effectiveExtraArgs];
+  const managedExtraArgs = [
+    ...buildManagedShieldArgs({ allowOnDeviceAi, preserveMacV10Keychain }),
+    ...effectiveExtraArgs,
+  ];
 
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
     const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun });
@@ -1354,6 +1432,8 @@ module.exports = {
   cleanStaleLocks,
   LOCK_FILES,
   ON_DEVICE_AI_DISABLED_FEATURES,
+  MAC_V10_KEYCHAIN_SHIELD_FEATURES,
+  detectMacCookieEncryptionMode,
   buildManagedShieldArgs,
   MANAGED_SESSION_SHIELD_ARGS,
   slugify,
