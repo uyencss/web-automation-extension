@@ -1074,6 +1074,11 @@ async function launchChrome(options = {}) {
 
   const effectiveExtraArgs = [...(options.extraArgs || [])];
   const proxyCfg = resolveManagedProxyConfig(meta.proxy);
+  if ((options.requireProxy === true || meta.requireProxy === true) && !proxyCfg.cleanUrl) {
+    const err = new Error(`Refusing to launch managed Chrome on direct IP without a bound proxy (${userDataDir}).`);
+    err.code = 'ERR_PROXY_UNBOUND_BLOCKED';
+    throw err;
+  }
   if (proxyCfg.cleanUrl && !effectiveExtraArgs.some((a) => String(a).startsWith('--proxy-server='))) {
     effectiveExtraArgs.push(`--proxy-server=${proxyCfg.cleanUrl}`);
     if (!effectiveExtraArgs.some((a) => String(a).startsWith('--force-webrtc-ip-handling-policy='))) {
