@@ -54,9 +54,46 @@ function stripMatchingQuotes(val) {
   return str;
 }
 
+function stripEdgeQuotes(val) {
+  return String(val ?? '').trim().replace(/^["']+|["']+$/g, '').trim();
+}
+
+function updateOpenQuote(chunk, openQuote) {
+  let q = openQuote;
+  for (let k = 0; k < chunk.length; k += 1) {
+    const ch = chunk[k];
+    if (q) {
+      if (ch === q) q = null;
+    } else if (ch === '"' || ch === "'") {
+      q = ch;
+    }
+  }
+  return q;
+}
+
+function isWildcardBypassEntry(entry) {
+  const clean = stripEdgeQuotes(entry).toLowerCase();
+  if (!clean) return false;
+  return (
+    /^(([a-z][a-z0-9+.-]*|\*):\/\/)?\*(:(\*|[0-9]+))?(\/\*)?$/.test(clean) ||
+    /^\*\.\*(:(\*|[0-9]+))?$/.test(clean)
+  );
+}
+
 function isNonDirectProxyValue(val) {
   const clean = stripMatchingQuotes(val);
-  return clean.length > 0 && !/^direct:\/\/$/i.test(clean);
+  if (!clean) return false;
+  for (const rawEntry of clean.split(/[,;]/)) {
+    let entry = stripMatchingQuotes(rawEntry);
+    const schemeMatch = entry.match(/^[a-z0-9+.-]+=(.*)$/i);
+    if (schemeMatch) {
+      entry = stripMatchingQuotes(schemeMatch[1]);
+    }
+    if (!entry || /^direct:(\/\/)?$/i.test(entry)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -107,11 +144,12 @@ function tokenizeCmdline(cmdline) {
 
 /**
  * Evaluate tokenized Chromium arguments left-to-right mirroring Chromium's proxy precedence
- * and bypass switches (--no-proxy-server, --proxy-pac-url, --proxy-bypass-list=*, direct://).
+ * and bypass switches (--no-proxy-server, --proxy-auto-detect, --proxy-pac-url, --proxy-bypass-list=*, direct://).
  */
 function evaluateProxyArgs(tokens) {
   if (!Array.isArray(tokens)) return false;
   let hasNoProxy = false;
+  let hasAutoDetect = false;
   let hasPacUrl = false;
   let hasWildcardBypass = false;
   let lastProxyVal = '';
@@ -119,12 +157,13 @@ function evaluateProxyArgs(tokens) {
   for (let i = 0; i < tokens.length; i += 1) {
     const raw = String(tokens[i] ?? '').trim();
     if (raw === '--') break;
+    const lower = raw.toLowerCase();
 
-    if (raw === '--no-proxy-server') {
+    if (lower === '--no-proxy-server') {
       hasNoProxy = true;
       continue;
     }
-    if (raw.startsWith('--no-proxy-server=')) {
+    if (lower.startsWith('--no-proxy-server=')) {
       const val = stripMatchingQuotes(raw.slice('--no-proxy-server='.length)).toLowerCase();
       if (val !== 'false' && val !== '0') {
         hasNoProxy = true;
@@ -132,11 +171,23 @@ function evaluateProxyArgs(tokens) {
       continue;
     }
 
-    if (raw.startsWith('--proxy-pac-url=')) {
+    if (lower === '--proxy-auto-detect') {
+      hasAutoDetect = true;
+      continue;
+    }
+    if (lower.startsWith('--proxy-auto-detect=')) {
+      const val = stripMatchingQuotes(raw.slice('--proxy-auto-detect='.length)).toLowerCase();
+      if (val !== 'false' && val !== '0') {
+        hasAutoDetect = true;
+      }
+      continue;
+    }
+
+    if (lower.startsWith('--proxy-pac-url=')) {
       hasPacUrl = true;
       continue;
     }
-    if (raw === '--proxy-pac-url') {
+    if (lower === '--proxy-pac-url') {
       hasPacUrl = true;
       if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
         i += 1;
@@ -144,28 +195,43 @@ function evaluateProxyArgs(tokens) {
       continue;
     }
 
-    if (raw.startsWith('--proxy-bypass-list=') || raw === '--proxy-bypass-list') {
-      let bypassVal = null;
-      if (raw.startsWith('--proxy-bypass-list=')) {
-        bypassVal = stripMatchingQuotes(raw.slice('--proxy-bypass-list='.length));
+    if (lower.startsWith('--proxy-bypass-list=') || lower === '--proxy-bypass-list') {
+      let firstChunk = null;
+      if (lower.startsWith('--proxy-bypass-list=')) {
+        firstChunk = raw.slice('--proxy-bypass-list='.length);
       } else if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
-        bypassVal = stripMatchingQuotes(tokens[i + 1]);
         i += 1;
+        firstChunk = String(tokens[i] ?? '').trim();
       }
-      if (bypassVal !== null) {
-        const hasStar = bypassVal
-          .split(/[,;]/)
-          .some((entry) => stripMatchingQuotes(entry) === '*');
-        if (hasStar) hasWildcardBypass = true;
+      if (firstChunk !== null) {
+        const chunks = [firstChunk];
+        let openQuote = updateOpenQuote(firstChunk, null);
+        while (i + 1 < tokens.length) {
+          const nextRaw = String(tokens[i + 1] ?? '').trim();
+          if (nextRaw.startsWith('--')) break;
+          const lastChunk = chunks[chunks.length - 1];
+          const continuesFromPrev = openQuote !== null || /[,;]$/.test(lastChunk.trimEnd());
+          const continuesAtNext = /^[,;]/.test(nextRaw);
+          if (!continuesFromPrev && !continuesAtNext) break;
+          chunks.push(nextRaw);
+          openQuote = updateOpenQuote(nextRaw, openQuote);
+          i += 1;
+        }
+        for (const chunk of chunks) {
+          const entries = stripEdgeQuotes(chunk).split(/[,;]/);
+          if (entries.some((entry) => isWildcardBypassEntry(entry))) {
+            hasWildcardBypass = true;
+          }
+        }
       }
       continue;
     }
 
-    if (raw.startsWith('--proxy-server=')) {
+    if (lower.startsWith('--proxy-server=')) {
       lastProxyVal = stripMatchingQuotes(raw.slice('--proxy-server='.length));
       continue;
     }
-    if (raw === '--proxy-server') {
+    if (lower === '--proxy-server') {
       if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
         lastProxyVal = stripMatchingQuotes(tokens[i + 1]);
         i += 1;
@@ -175,7 +241,7 @@ function evaluateProxyArgs(tokens) {
     }
   }
 
-  return !hasNoProxy && !hasPacUrl && !hasWildcardBypass && isNonDirectProxyValue(lastProxyVal);
+  return !hasNoProxy && !hasAutoDetect && !hasPacUrl && !hasWildcardBypass && isNonDirectProxyValue(lastProxyVal);
 }
 
 /**
@@ -191,7 +257,8 @@ function hasExplicitProxyServerFlag(args) {
   for (const arg of args) {
     const s = String(arg ?? '').trim();
     if (s === '--') break;
-    if (s === '--proxy-server' || s.startsWith('--proxy-server=')) return true;
+    const lower = s.toLowerCase();
+    if (lower === '--proxy-server' || lower.startsWith('--proxy-server=')) return true;
   }
   return false;
 }
@@ -429,9 +496,12 @@ function prepareLaunchProxy({ mode = 'managed', userDataDir, profileDir = 'Defau
 
 module.exports = {
   resolveManagedProxyConfig,
+  isWildcardBypassEntry,
+  isNonDirectProxyValue,
   tokenizeCmdline,
   evaluateProxyArgs,
   hasProxyServerArg,
+  hasExplicitProxyServerFlag,
   applyProxyLaunchArgs,
   assertRequireProxy,
   cmdlineHasProxyServer,
