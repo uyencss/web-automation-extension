@@ -10,6 +10,8 @@ import {
   assertOnDiskServiceAuth,
   verifyLiveCdpServiceCookies,
   evaluateCloudBackupRegression,
+  decodeListAccountsPb,
+  snapshotSqliteStable,
 } from '../../lib/profile/service-auth-guard.mjs';
 
 const WEBKIT_OFFSET_US = 11644473600000000n;
@@ -303,4 +305,92 @@ test('inspectOnDiskServiceAuth reads uncheckpointed -wal cookies under exclusive
   const dyRes = assertOnDiskServiceAuth(dyUdd, ['douyin']);
   assert.equal(dyRes.ok, true);
   assert.ok(dyRes.report.platforms.includes('douyin'));
+});
+
+test('inspectOnDiskServiceAuth never creates -wal/-shm on live closed WAL DB and defends torn snapshots, pipe values, protobuf bounds, and nowMs', (t) => {
+  // 1. Live closed WAL-mode DB gets ZERO -wal/-shm sidecars materialized during read
+  const walCleanUdd = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-wal-clean-'));
+  t.after(() => fs.rmSync(walCleanUdd, { recursive: true, force: true }));
+  const walNet = path.join(walCleanUdd, 'Default', 'Network');
+  fs.mkdirSync(walNet, { recursive: true });
+  const cleanDb = path.join(walNet, 'Cookies');
+  const db1 = new DatabaseSync(cleanDb);
+  db1.exec('PRAGMA journal_mode=WAL; CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, expires_utc INTEGER, creation_utc INTEGER, last_access_utc INTEGER);');
+  db1.prepare('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)').run('.facebook.com', 'c_user', '123', Buffer.alloc(0), Number(FUTURE_EXP_US), 0, 0);
+  db1.prepare('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)').run('.facebook.com', 'xs', 'abc', Buffer.alloc(0), Number(FUTURE_EXP_US), 0, 0);
+  db1.close();
+  assert.equal(fs.existsSync(`${cleanDb}-wal`), false);
+  assert.equal(fs.existsSync(`${cleanDb}-shm`), false);
+
+  const cleanRep = inspectOnDiskServiceAuth(walCleanUdd, { services: ['facebook'] });
+  assert.equal(cleanRep.dbOk, true);
+  assert.equal(cleanRep.serviceChecks.facebook.ok, true);
+  assert.equal(fs.existsSync(`${cleanDb}-wal`), false, 'live dir must stay untouched (no -wal created)');
+  assert.equal(fs.existsSync(`${cleanDb}-shm`), false, 'live dir must stay untouched (no -shm created)');
+
+  // 2. Real hot rollback journal + expired cookie containing '|' must stay expired (CLI -json parity)
+  const pipeUdd = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-hot-pipe-'));
+  t.after(() => fs.rmSync(pipeUdd, { recursive: true, force: true }));
+  const pipeNet = path.join(pipeUdd, 'Default', 'Network');
+  fs.mkdirSync(pipeNet, { recursive: true });
+  const pipeDb = path.join(pipeNet, 'Cookies');
+  const writerPipe = new DatabaseSync(pipeDb);
+  writerPipe.exec('CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, expires_utc INTEGER, creation_utc INTEGER, last_access_utc INTEGER);');
+  writerPipe.prepare('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)').run('.tiktok.com', 'sessionid', 'a|b', Buffer.alloc(0), Number(PAST_EXP_US), 0, 0);
+  writerPipe.exec('PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE;');
+  writerPipe.prepare('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)').run('.tiktok.com', 'sid_tt', 'uncommitted', Buffer.alloc(0), Number(FUTURE_EXP_US), 0, 0);
+  const pipeRep = inspectOnDiskServiceAuth(pipeUdd, { services: ['tiktok'] });
+  assert.equal(pipeRep.dbOk, true);
+  assert.equal(pipeRep.serviceChecks.tiktok.ok, false, 'expired pipe cookie must not become valid');
+  writerPipe.exec('ROLLBACK;');
+  writerPipe.close();
+
+  // 3. Torn snapshot retry recovers when attempt 2 settles, and fails closed if every attempt mutates
+  let mutCount = 0;
+  const retryRep = inspectOnDiskServiceAuth(walCleanUdd, {
+    services: ['facebook'],
+    _snapshotOpts: {
+      maxAttempts: 3,
+      retryDelayMs: 1,
+      afterSidecarCopyHook(attempt) {
+        if (attempt === 0) {
+          mutCount++;
+          fs.appendFileSync(cleanDb, Buffer.alloc(0));
+          const nowS = new Date(Date.now() + 10000);
+          fs.utimesSync(cleanDb, nowS, nowS);
+        }
+      },
+    },
+  });
+  assert.equal(mutCount, 1);
+  assert.equal(retryRep.dbOk, true);
+
+  const failClosedRep = inspectOnDiskServiceAuth(walCleanUdd, {
+    services: ['facebook'],
+    _snapshotOpts: {
+      maxAttempts: 2,
+      retryDelayMs: 1,
+      afterSidecarCopyHook(attempt) {
+        const tS = new Date(Date.now() + 20000 + (attempt * 5000));
+        fs.utimesSync(cleanDb, tS, tS);
+      },
+    },
+  });
+  assert.equal(failClosedRep.dbOk, false);
+  assert.equal(snapshotSqliteStable(path.join(walNet, 'Missing'), path.join(walNet, 'Tmp'), { maxAttempts: 1 }), false);
+
+  // 4. Truncated protobuf / 10th-byte overflow / high-bit tag must throw instead of fabricating valid=0
+  assert.throws(() => decodeListAccountsPb(Buffer.from([0x0a, 0x03, 0x09, 0x00, 0x00]).toString('base64')));
+  assert.throws(() => decodeListAccountsPb(Buffer.from([0x09, 0x01]).toString('base64')));
+  assert.throws(() => decodeListAccountsPb(Buffer.from([0x08, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]).toString('base64')));
+  // High-bit tag >= 2^31 skipped cleanly as BigInt unsigned shift
+  const highTagSkip = Buffer.from([0x80, 0x80, 0x80, 0x80, 0x08, 0x01]);
+  assert.deepEqual(decodeListAccountsPb(highTagSkip.toString('base64')), []);
+
+  // 5. Invalid options.nowMs must not throw RangeError
+  for (const badNow of [Number.NaN, Number.POSITIVE_INFINITY, 'not-a-number']) {
+    const r = inspectOnDiskServiceAuth(walCleanUdd, { services: ['facebook'], nowMs: badNow });
+    assert.equal(r.dbOk, true);
+    assert.equal(r.serviceChecks.facebook.ok, true);
+  }
 });
