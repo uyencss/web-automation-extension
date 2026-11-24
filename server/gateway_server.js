@@ -14,6 +14,7 @@ import { digestCanonical } from './gateway/trusted-context-schema.mjs';
 import { GovernorRepository } from '../profile-governor/repository.mjs';
 import { ProfileGovernor } from '../profile-governor/lease-service.mjs';
 import { createGovernorRegistryAdapter } from './gateway/governor-registry-adapter.mjs';
+import { handleAquaBrokerRequest, isLoopbackAddress } from './gateway/aqua-broker.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -746,6 +747,21 @@ function createGatewayServer({
 
   // ── HTTP Server ──────────────────────────────────────────────
   const server = http.createServer((req, res) => {
+    const reqPath = (req.url || '').split('?')[0];
+    if (reqPath.startsWith('/api/aqua/')) {
+      handleAquaBrokerRequest(req, res, { tokenMatches, extractToken, token, connectedProfileIds, port }).catch((err) => {
+        try {
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'INTERNAL', code: 'INTERNAL', message: err?.message || String(err) }));
+          } else if (!res.writableEnded) {
+            res.end();
+          }
+        } catch {}
+      });
+      return;
+    }
+
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-webmcp-token');
@@ -783,6 +799,9 @@ function createGatewayServer({
           mode: runtime.mode,
           hasContext: Boolean(activeCtx),
         },
+        ...(isLoopbackAddress(req.socket?.remoteAddress) && isAuthenticated
+          ? { aquaService: { available: true, statusEndpoint: '/api/aqua/status', launchEndpoint: '/api/aqua/launch' } }
+          : {}),
       };
 
       if (isAuthenticated && runtime.getContextSummary) {

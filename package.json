@@ -17,8 +17,11 @@
   },
   "exports": {
     ".": "./bin/webmcp-browser.mjs",
+    "./aqua-broker-client": "./lib/cli/aqua-broker-client.mjs",
     "./catalog/command-catalog.js": "./catalog/command-catalog.js",
     "./chrome-launcher": "./chrome-launcher/index.js",
+    "./launchd-helper": "./lib/launchd-helper.mjs",
+    "./mac-keychain-guard": "./chrome-launcher/mac-keychain-guard.js",
     "./mobile-cdp": "./webmcp-mobile-cdp/index.mjs",
     "./package.json": "./package.json",
     "./profile-governor": "./profile-governor/lease-service.mjs",

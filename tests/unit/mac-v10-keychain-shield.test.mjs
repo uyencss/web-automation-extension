@@ -32,7 +32,6 @@ function createCookiesDb(dbPath, prefixes = []) {
 test('buildManagedShieldArgs includes macOS v10 UserDataDirProtection disable flags only when preserveMacV10Keychain is true', () => {
   const defaultDisable = launcher.buildManagedShieldArgs().find((a) => a.startsWith('--disable-features='));
   assert.ok(defaultDisable);
-  assert.equal(defaultDisable.includes('kKeychainKeyProviderUserDataDirProtection'), false);
   assert.equal(defaultDisable.includes('KeychainKeyProviderUserDataDirProtection'), false);
 
   const v10Disable = launcher
@@ -211,7 +210,6 @@ test('launchChrome managed gates Chrome 158 UserDataDirProtection disable flags 
     dryRun: true,
   });
   const disableV10 = resV10.args.find((a) => a.startsWith('--disable-features='));
-  assert.ok(disableV10.includes('kKeychainKeyProviderUserDataDirProtection'));
   assert.ok(disableV10.includes('KeychainKeyProviderUserDataDirProtection'));
 
   const pV11 = path.join(managedDir, 'modern-v11');
@@ -228,27 +226,11 @@ test('launchChrome managed gates Chrome 158 UserDataDirProtection disable flags 
     dryRun: true,
   });
   const disableV11 = resV11.args.find((a) => a.startsWith('--disable-features='));
-  assert.equal(disableV11.includes('kKeychainKeyProviderUserDataDirProtection'), false);
   assert.equal(disableV11.includes('KeychainKeyProviderUserDataDirProtection'), false);
 });
 
-test('isRealChromeBinary classifies binaries and stripMacSshEnv is removed to preserve SSH provenance', () => {
-  assert.equal(guard.isRealChromeBinary(''), false);
-  assert.equal(guard.isRealChromeBinary(null), false);
-  assert.equal(guard.isRealChromeBinary(process.execPath), false);
-  assert.equal(guard.isRealChromeBinary('/tmp/fake-chrome.sh'), false);
-  assert.equal(guard.isRealChromeBinary('/tmp/mock-chrome.js'), false);
-  assert.equal(guard.isRealChromeBinary('/tmp/mock-chrome.mjs'), false);
-  assert.equal(guard.isRealChromeBinary('/tmp/run.cmd'), false);
-  assert.equal(guard.isRealChromeBinary('/tmp/run.bat'), false);
-  assert.equal(guard.isRealChromeBinary('/usr/local/bin/node22'), false);
-  assert.equal(guard.isRealChromeBinary('/tmp/fake-launcher'), false);
-
-  assert.equal(guard.isRealChromeBinary('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'), true);
-  assert.equal(guard.isRealChromeBinary('/Applications/Google Chrome.app'), true);
-  assert.equal(guard.isRealChromeBinary('/usr/bin/chromium'), true);
-  assert.equal(guard.isRealChromeBinary('/usr/bin/google-chrome'), true);
-
+test('no fake-binary exemptions or SSH env stripping exist in guard/launcher', () => {
+  assert.equal(guard.isRealChromeBinary, undefined);
   assert.equal(guard.stripMacSshEnv, undefined);
   assert.equal(launcher.stripMacSshEnv, undefined);
 });
@@ -332,23 +314,22 @@ test('probeMacosAquaKeychainSession & assertMacosAquaKeychainSession use JXA sho
   assert.equal(osascriptCalls, 1);
   assert.equal(securityCalls, 0);
 
-  // 5. assertMacosAquaKeychainSession bypasses dryRun & stubs unless forceCheck: true
-  assert.equal(guard.assertMacosAquaKeychainSession({ dryRun: true, chromePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', probe: () => bg }).skipped, 'dryRun');
-  assert.equal(guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, probe: () => bg }).skipped, 'non-chrome-binary');
-  assert.equal(guard.assertMacosAquaKeychainSession({ chromePath: '/tmp/fake-chrome.sh', probe: () => bg }).skipped, 'non-chrome-binary');
+  // 5. assertMacosAquaKeychainSession bypasses dryRun & skipGuardForTest only (never fake binary paths)
+  assert.equal(guard.assertMacosAquaKeychainSession({ dryRun: true, probe: () => bg }).skipped, 'dryRun');
+  assert.equal(guard.assertMacosAquaKeychainSession({ skipGuardForTest: true, probe: () => bg }).skipped, 'test-guard');
 
   for (const badProbe of [bg, { ok: false, platform: 'darwin', managerName: 'Aqua', hasSshEnv: true, keychainOk: true }]) {
     assert.throws(
-      () => guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, forceCheck: true, probe: () => badProbe }),
-      (err) => err.code === 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED' && err.details === badProbe && /gui\/\$uid/.test(err.message),
+      () => guard.assertMacosAquaKeychainSession({ forceCheck: true, probe: () => badProbe }),
+      (err) => err.code === 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED' && err.details === badProbe && /Aqua Gateway/.test(err.message),
     );
   }
   assert.throws(
-    () => guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, forceCheck: true, probe: () => locked }),
+    () => guard.assertMacosAquaKeychainSession({ forceCheck: true, probe: () => locked }),
     (err) => err.code === 'ERR_MACOS_KEYCHAIN_LOCKED' && err.details === locked,
   );
   assert.deepEqual(
-    guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, forceCheck: true, probe: () => okRes }),
+    guard.assertMacosAquaKeychainSession({ forceCheck: true, probe: () => okRes }),
     okRes,
   );
 });

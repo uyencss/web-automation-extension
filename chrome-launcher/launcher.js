@@ -23,7 +23,6 @@ const {
   MAC_V10_KEYCHAIN_SHIELD_FEATURES,
   detectMacCookieEncryptionMode,
   resolveMacV10Shield,
-  isRealChromeBinary,
   probeMacosAquaKeychainSession,
   assertMacosAquaKeychainSession,
 } = require('./mac-keychain-guard');
@@ -648,16 +647,17 @@ function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
 
 const mergeChromiumFeatureFlags = mergeChromeLaunchArgs;
 
-async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
+async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, skipGuardForTest = false, cookieMode, extraArgs, env }) {
   const mergedEnv = env ? { ...process.env, ...env } : { ...process.env };
-  assertMacosAquaKeychainSession({ chromePath, dryRun, env: mergedEnv });
+  assertMacosAquaKeychainSession({ dryRun, skipGuardForTest, env: mergedEnv });
   assertNoForbiddenManagedArgs(extraArgs);
   const shield = resolveMacV10Shield({
     userDataDir,
     profileDir: profileDir || 'Default',
-    chromePath,
     dryRun,
+    skipGuardForTest,
     env: mergedEnv,
+    cookieMode,
   });
   const shieldArgs = shield.preserveMacV10Keychain
     ? [`--disable-features=${MAC_V10_KEYCHAIN_SHIELD_FEATURES.join(',')}`]
@@ -775,7 +775,7 @@ function activateMacPid(targetPid) {
   } catch {}
 }
 
-async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun }) {
+async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun, skipGuardForTest = false, cookieMode, env }) {
   const effectivePdir = profileDir || 'Default';
   const lockPid = readLockPid(userDataDir);
   const pid = (lockPid && isPidAlive(lockPid)) ? lockPid : await findRunningChromePidAsync({ userDataDir, profileDir: effectivePdir, mode });
@@ -803,8 +803,11 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
       } catch {}
       return { ...base, openedNewWindow: false };
     }
-    assertMacosAquaKeychainSession({ chromePath, dryRun });
-    const shield = resolveMacV10Shield({ userDataDir, profileDir: effectivePdir, chromePath, dryRun });
+    const mergedEnv = env ? { ...process.env, ...env } : { ...process.env };
+    assertMacosAquaKeychainSession({ dryRun, skipGuardForTest, env: mergedEnv });
+    const shield = (!pid && !skipGuardForTest)
+      ? resolveMacV10Shield({ userDataDir, profileDir: effectivePdir, dryRun, env: mergedEnv, cookieMode })
+      : { preserveMacV10Keychain: false, mode: 'running' };
     const v10ShieldArgs = shield.preserveMacV10Keychain
       ? [`--disable-features=${MAC_V10_KEYCHAIN_SHIELD_FEATURES.join(',')}`]
       : [];
@@ -959,10 +962,22 @@ async function launchChrome(options = {}) {
       throw err;
     }
 
+    if (!options.focusIfRunning || !isProfileLocked(userDataDir)) {
+      assertMacosAquaKeychainSession({ dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: options.env });
+      resolveMacV10Shield({
+        userDataDir,
+        profileDir,
+        dryRun: options.dryRun,
+        skipGuardForTest: options.skipGuardForTest,
+        env: options.env,
+        cookieMode: options.cookieMode,
+      });
+    }
+
     if (isProfileLocked(userDataDir)) {
       if (!options.relaunch) {
         if (options.focusIfRunning) {
-          return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode: 'existing', initialUrl: focusUrl, dryRun: options.dryRun }));
+          return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode: 'existing', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: options.env }));
         }
         const hasProxyArg = Array.isArray(options.extraArgs) && options.extraArgs.some((a) => String(a).startsWith('--proxy-server='));
         return {
@@ -994,7 +1009,7 @@ async function launchChrome(options = {}) {
       }
     }
 
-    const result = await spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, extraArgs: options.extraArgs, env: options.env });
+    const result = await spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode: 'existing', dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, extraArgs: options.extraArgs, env: options.env });
     return annotate(result);
   }
 
@@ -1003,6 +1018,10 @@ async function launchChrome(options = {}) {
   const existingManagedDir = (!options.profile?.userDataDir && !options.forceCreate)
     ? findExistingManagedProfileDir(options.newProfileName, managedProfilesDir)
     : null;
+
+  if (!options.profile?.userDataDir && !existingManagedDir && !options.dryRun) {
+    assertMacosAquaKeychainSession({ dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: options.env });
+  }
 
   const userDataDir = options.profile?.userDataDir ||
     existingManagedDir ||
@@ -1089,14 +1108,14 @@ async function launchChrome(options = {}) {
   ];
 
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
-    const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun });
+    const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv });
     if (options.dryRun) {
       const dryShield = resolveMacV10Shield({
         userDataDir,
         profileDir: effectiveProfileDir,
-        chromePath,
         dryRun: true,
         env: spawnEnv,
+        cookieMode: options.cookieMode,
       });
       const dryManagedArgs = [
         ...buildManagedShieldArgs({ allowOnDeviceAi, preserveMacV10Keychain: dryShield.preserveMacV10Keychain }),
@@ -1115,7 +1134,7 @@ async function launchChrome(options = {}) {
   if (isProfileLocked(userDataDir)) {
     if (!options.relaunch) {
       if (options.focusIfRunning) {
-        return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun }));
+        return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv }));
       }
       return annotate({
         ok: false,
@@ -1133,6 +1152,8 @@ async function launchChrome(options = {}) {
           'Chrome is already running with this managed profile outside WebMCP session tracking; refusing to spawn a duplicate process (which would drop --proxy-server / --load-extension). Close the existing Chrome window first or relaunch via WebMCP.',
       });
     }
+    assertMacosAquaKeychainSession({ dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: spawnEnv });
+    resolveMacV10Shield({ userDataDir, profileDir: effectiveProfileDir, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: spawnEnv, cookieMode: options.cookieMode });
     let lockPid = readLockPid(userDataDir);
     if (!lockPid) {
       lockPid = findChromePidForUserDataDir(userDataDir);
@@ -1160,6 +1181,11 @@ async function launchChrome(options = {}) {
         message: 'Profile lock file exists without a readable PID; refusing global quitChrome() to protect other running channels. Remove stale Singleton* files in userDataDir or close the specific window manually.',
       });
     }
+  }
+
+  assertMacosAquaKeychainSession({ dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: spawnEnv });
+  if (!options.dryRun) {
+    resolveMacV10Shield({ userDataDir, profileDir: effectiveProfileDir, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, env: spawnEnv, cookieMode: options.cookieMode });
   }
 
   const hasProvenance = Boolean(meta.forkedFrom || meta.convertedFrom || meta.migratedFrom);
@@ -1244,6 +1270,8 @@ async function launchChrome(options = {}) {
     profileDir: effectiveProfileDir,
     mode: 'managed',
     dryRun: options.dryRun,
+    skipGuardForTest: options.skipGuardForTest,
+    cookieMode: options.cookieMode,
     extraArgs: managedExtraArgs,
     env: spawnEnv,
   });
@@ -1423,7 +1451,6 @@ module.exports = {
   MAC_V10_KEYCHAIN_SHIELD_FEATURES,
   detectMacCookieEncryptionMode,
   resolveMacV10Shield,
-  isRealChromeBinary,
   probeMacosAquaKeychainSession,
   assertMacosAquaKeychainSession,
   assertNoForbiddenManagedArgs,
