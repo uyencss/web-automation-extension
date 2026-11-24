@@ -11,7 +11,8 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const launcher = require(path.join(ROOT, 'chrome-launcher'));
 const guard = require(path.join(ROOT, 'chrome-launcher', 'mac-keychain-guard'));
-import { directCdpExportCookies } from '../../lib/cli/commands/cookies-export.mjs';
+import { directCdpExportCookies, handleExport } from '../../lib/cli/commands/cookies-export.mjs';
+import { getMacKeychainPassword } from '../../lib/cookie-crypto.mjs';
 
 function createCookiesDb(dbPath, prefixes = []) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -43,7 +44,7 @@ test('buildManagedShieldArgs includes macOS v10 UserDataDirProtection disable fl
   }
 });
 
-test('detectMacCookieEncryptionMode detects v10 (with spaces in path), v11, and empty DB on darwin', (t) => {
+test('detectMacCookieEncryptionMode supports 5-state fixtures, WAL-only v11, Network/Cookies precedence, and WEBMCP_COOKIE_MODE override', (t) => {
   if (process.platform !== 'darwin') {
     assert.equal(launcher.detectMacCookieEncryptionMode('/tmp/ignored', 'Default'), 'other');
     return;
@@ -60,9 +61,128 @@ test('detectMacCookieEncryptionMode detects v10 (with spaces in path), v11, and 
   createCookiesDb(path.join(pV11, 'Default', 'Cookies'), ['v11', 'v11']);
   assert.equal(launcher.detectMacCookieEncryptionMode(pV11, 'Default'), 'v11');
 
-  const pEmpty = path.join(root, 'fresh-empty');
-  fs.mkdirSync(path.join(pEmpty, 'Default'), { recursive: true });
-  assert.equal(launcher.detectMacCookieEncryptionMode(pEmpty, 'Default'), 'empty');
+  // Empty dir & empty table -> 'none'
+  const pMissing = path.join(root, 'fresh-missing');
+  fs.mkdirSync(path.join(pMissing, 'Default'), { recursive: true });
+  assert.equal(launcher.detectMacCookieEncryptionMode(pMissing, 'Default'), 'none');
+
+  const pEmptyTbl = path.join(root, 'fresh-empty-table');
+  createCookiesDb(path.join(pEmptyTbl, 'Default', 'Network', 'Cookies'), []);
+  assert.equal(launcher.detectMacCookieEncryptionMode(pEmptyTbl, 'Default'), 'none');
+
+  // Mixed v10 + v11 -> 'mixed'
+  const pMixed = path.join(root, 'mixed-cookies');
+  createCookiesDb(path.join(pMixed, 'Default', 'Network', 'Cookies'), ['v10', 'v11']);
+  assert.equal(launcher.detectMacCookieEncryptionMode(pMixed, 'Default'), 'mixed');
+
+  // Corrupt DB -> 'unknown'
+  const pCorrupt = path.join(root, 'corrupt-cookies');
+  fs.mkdirSync(path.join(pCorrupt, 'Default', 'Network'), { recursive: true });
+  fs.writeFileSync(path.join(pCorrupt, 'Default', 'Network', 'Cookies'), 'not-a-sqlite-db');
+  assert.equal(launcher.detectMacCookieEncryptionMode(pCorrupt, 'Default'), 'unknown');
+
+  // Network/Cookies takes precedence over stale root Cookies
+  const pPrecedence = path.join(root, 'precedence');
+  createCookiesDb(path.join(pPrecedence, 'Default', 'Cookies'), ['v10', 'v10']);
+  createCookiesDb(path.join(pPrecedence, 'Default', 'Network', 'Cookies'), ['v11']);
+  assert.equal(launcher.detectMacCookieEncryptionMode(pPrecedence, 'Default'), 'v11');
+
+  // v11-only-in-WAL with open writer (wal_autocheckpoint=0): temp-copy WAL replay detects v11!
+  const pWal = path.join(root, 'wal-live-v11');
+  const walDbPath = path.join(pWal, 'Default', 'Network', 'Cookies');
+  fs.mkdirSync(path.dirname(walDbPath), { recursive: true });
+  const walInit = new DatabaseSync(walDbPath);
+  walInit.exec('PRAGMA journal_mode=WAL; CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB);');
+  walInit.close();
+
+  const liveWriter = new DatabaseSync(walDbPath);
+  t.after(() => { try { liveWriter.close(); } catch {} });
+  liveWriter.exec('PRAGMA wal_autocheckpoint=0;');
+  liveWriter.prepare('INSERT INTO cookies (host_key, name, encrypted_value) VALUES (?, ?, ?)').run(
+    '.facebook.com',
+    'c_wal',
+    Buffer.concat([Buffer.from('v11', 'ascii'), Buffer.from('wal-secret')]),
+  );
+  assert.equal(launcher.detectMacCookieEncryptionMode(pWal, 'Default'), 'v11');
+  liveWriter.close();
+
+  // Explicit WEBMCP_COOKIE_MODE=v10|v11 override
+  assert.equal(launcher.detectMacCookieEncryptionMode(pMixed, 'Default', { env: { WEBMCP_COOKIE_MODE: 'v10' } }), 'v10');
+  assert.equal(launcher.detectMacCookieEncryptionMode(pCorrupt, 'Default', { env: { WEBMCP_COOKIE_MODE: 'v11' } }), 'v11');
+});
+
+test('resolveMacV10Shield fails closed on mixed/unknown for real Chrome unless overridden or dryRun', () => {
+  const realChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const stubChrome = process.execPath;
+
+  assert.deepEqual(
+    guard.resolveMacV10Shield({
+      userDataDir: '/tmp/p',
+      chromePath: realChrome,
+      platform: 'darwin',
+      detectFn: () => 'v10',
+    }),
+    { preserveMacV10Keychain: true, mode: 'v10' },
+  );
+  assert.deepEqual(
+    guard.resolveMacV10Shield({
+      userDataDir: '/tmp/p',
+      chromePath: realChrome,
+      platform: 'darwin',
+      detectFn: () => 'v11',
+    }),
+    { preserveMacV10Keychain: false, mode: 'v11' },
+  );
+  assert.deepEqual(
+    guard.resolveMacV10Shield({
+      userDataDir: '/tmp/p',
+      chromePath: realChrome,
+      platform: 'darwin',
+      detectFn: () => 'none',
+    }),
+    { preserveMacV10Keychain: false, mode: 'none' },
+  );
+
+  assert.throws(
+    () => guard.resolveMacV10Shield({
+      userDataDir: '/tmp/mixed',
+      chromePath: realChrome,
+      platform: 'darwin',
+      detectFn: () => 'mixed',
+    }),
+    (err) => err.code === 'ERR_MACOS_COOKIE_MODE_MIXED' && /WEBMCP_COOKIE_MODE=v10\|v11/.test(err.message),
+  );
+  assert.throws(
+    () => guard.resolveMacV10Shield({
+      userDataDir: '/tmp/unknown',
+      chromePath: realChrome,
+      platform: 'darwin',
+      detectFn: () => 'unknown',
+    }),
+    (err) => err.code === 'ERR_MACOS_COOKIE_MODE_UNKNOWN' && /WEBMCP_COOKIE_MODE=v10\|v11/.test(err.message),
+  );
+
+  // dryRun and test stubs do not fail on mixed/unknown, and still preserve v10
+  assert.deepEqual(
+    guard.resolveMacV10Shield({
+      userDataDir: '/tmp/mixed',
+      chromePath: realChrome,
+      dryRun: true,
+      platform: 'darwin',
+      detectFn: () => 'mixed',
+    }),
+    { preserveMacV10Keychain: false, mode: 'mixed' },
+  );
+  assert.deepEqual(
+    guard.resolveMacV10Shield({
+      userDataDir: '/tmp/v10',
+      chromePath: stubChrome,
+      dryRun: false,
+      platform: 'darwin',
+      detectFn: () => 'v10',
+    }),
+    { preserveMacV10Keychain: true, mode: 'v10' },
+  );
 });
 
 test('launchChrome managed gates Chrome 158 UserDataDirProtection disable flags on v10 vs v11 Cookies DB', { skip: process.platform !== 'darwin' }, async (t) => {
@@ -112,7 +232,7 @@ test('launchChrome managed gates Chrome 158 UserDataDirProtection disable flags 
   assert.equal(disableV11.includes('KeychainKeyProviderUserDataDirProtection'), false);
 });
 
-test('isRealChromeBinary & stripMacSshEnv classify binaries and strip SSH_* safely', () => {
+test('isRealChromeBinary classifies binaries and stripMacSshEnv is removed to preserve SSH provenance', () => {
   assert.equal(guard.isRealChromeBinary(''), false);
   assert.equal(guard.isRealChromeBinary(null), false);
   assert.equal(guard.isRealChromeBinary(process.execPath), false);
@@ -129,31 +249,34 @@ test('isRealChromeBinary & stripMacSshEnv classify binaries and strip SSH_* safe
   assert.equal(guard.isRealChromeBinary('/usr/bin/chromium'), true);
   assert.equal(guard.isRealChromeBinary('/usr/bin/google-chrome'), true);
 
-  const srcEnv = { HOME: '/Users/test', SSH_CONNECTION: '1.2.3.4 1 2 22', SSH_CLIENT: '1.2.3.4 1 22', SSH_TTY: '/dev/ttys001' };
-  const stripped = guard.stripMacSshEnv(srcEnv);
-  assert.equal(stripped.HOME, '/Users/test');
-  assert.equal(srcEnv.SSH_CONNECTION, '1.2.3.4 1 2 22');
-  if (process.platform === 'darwin') {
-    assert.equal('SSH_CONNECTION' in stripped, false);
-    assert.equal('SSH_CLIENT' in stripped, false);
-    assert.equal('SSH_TTY' in stripped, false);
-  }
+  assert.equal(guard.stripMacSshEnv, undefined);
+  assert.equal(launcher.stripMacSshEnv, undefined);
 });
 
-test('probeMacosAquaKeychainSession & assertMacosAquaKeychainSession enforce fail-closed Aqua + Keychain checks', () => {
+test('probeMacosAquaKeychainSession & assertMacosAquaKeychainSession use JXA short-circuit and distinguish non-aqua vs keychain-locked', () => {
   const nonDarwin = guard.probeMacosAquaKeychainSession({ platform: 'linux' });
   assert.deepEqual(nonDarwin, { ok: true, platform: 'linux', skipped: true });
 
+  let osascriptCalls = 0;
+  let securityCalls = 0;
   const makeExec = ({ managerName = 'Aqua', keychainOk = true } = {}) => (bin, args) => {
     if (bin === '/bin/launchctl' && args[0] === 'managername') return `${managerName}\n`;
-    if (bin === '/usr/bin/security' && args[0] === 'show-keychain-info') {
-      if (!keychainOk) throw new Error('User interaction is not allowed');
+    if (bin === '/usr/bin/osascript' && args[0] === '-l' && args[1] === 'JavaScript' && args[2] === '-e') {
+      osascriptCalls += 1;
+      assert.match(args[3], /SecKeychainSetUserInteractionAllowed\(false\)/);
+      assert.match(args[3], /SecKeychainGetStatus/);
+      if (!keychainOk) throw new Error('locked');
       return '';
+    }
+    if (bin === '/usr/bin/security') {
+      securityCalls += 1;
+      throw new Error('security CLI must never be invoked by probe');
     }
     throw new Error(`Unexpected command: ${bin}`);
   };
 
-  // 1. Background launchd session blocked
+  // 1. Background launchd session blocked WITHOUT calling osascript/Keychain
+  osascriptCalls = 0;
   const bg = guard.probeMacosAquaKeychainSession({
     platform: 'darwin',
     env: {},
@@ -161,10 +284,15 @@ test('probeMacosAquaKeychainSession & assertMacosAquaKeychainSession enforce fai
     execFileSyncFn: makeExec({ managerName: 'Background', keychainOk: true }),
   });
   assert.equal(bg.ok, false);
+  assert.equal(bg.reason, 'non-aqua');
+  assert.equal(bg.code, 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED');
   assert.equal(bg.managerName, 'Background');
+  assert.equal(osascriptCalls, 0);
+  assert.equal(securityCalls, 0);
 
-  // 2. SSH_CONNECTION / SSH_CLIENT / SSH_TTY blocked
+  // 2. SSH_CONNECTION / SSH_CLIENT / SSH_TTY blocked WITHOUT calling osascript/Keychain
   for (const sshEnv of [{ SSH_CONNECTION: '10.0.0.1 1 10.0.0.2 22' }, { SSH_CLIENT: '10.0.0.1 1 22' }, { SSH_TTY: '/dev/ttys0' }]) {
+    osascriptCalls = 0;
     const sshRes = guard.probeMacosAquaKeychainSession({
       platform: 'darwin',
       env: sshEnv,
@@ -172,10 +300,14 @@ test('probeMacosAquaKeychainSession & assertMacosAquaKeychainSession enforce fai
       execFileSyncFn: makeExec({ managerName: 'Aqua', keychainOk: true }),
     });
     assert.equal(sshRes.ok, false);
+    assert.equal(sshRes.reason, 'non-aqua');
+    assert.equal(sshRes.code, 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED');
     assert.equal(sshRes.hasSshEnv, true);
+    assert.equal(osascriptCalls, 0);
   }
 
-  // 3. Keychain inaccessible (exit != 0) blocked
+  // 3. Keychain locked inside Aqua -> calls osascript JXA once and returns ERR_MACOS_KEYCHAIN_LOCKED
+  osascriptCalls = 0;
   const locked = guard.probeMacosAquaKeychainSession({
     platform: 'darwin',
     env: {},
@@ -183,28 +315,38 @@ test('probeMacosAquaKeychainSession & assertMacosAquaKeychainSession enforce fai
     execFileSyncFn: makeExec({ managerName: 'Aqua', keychainOk: false }),
   });
   assert.equal(locked.ok, false);
+  assert.equal(locked.reason, 'keychain-locked');
+  assert.equal(locked.code, 'ERR_MACOS_KEYCHAIN_LOCKED');
   assert.equal(locked.keychainOk, false);
+  assert.equal(osascriptCalls, 1);
 
-  // 4. Clean Aqua + no SSH + keychainOk allowed
+  // 4. Clean Aqua + no SSH + unlocked Keychain allowed
+  osascriptCalls = 0;
   const okRes = guard.probeMacosAquaKeychainSession({
     platform: 'darwin',
-    env: { HOME: '/Users/test' },
+    env: { HOME: '/Users/test', SSH_CONNECTION: undefined },
     homedir: '/Users/test',
     execFileSyncFn: makeExec({ managerName: 'Aqua', keychainOk: true }),
   });
   assert.deepEqual(okRes, { ok: true, platform: 'darwin', managerName: 'Aqua', hasSshEnv: false, keychainOk: true });
+  assert.equal(osascriptCalls, 1);
+  assert.equal(securityCalls, 0);
 
   // 5. assertMacosAquaKeychainSession bypasses dryRun & stubs unless forceCheck: true
   assert.equal(guard.assertMacosAquaKeychainSession({ dryRun: true, chromePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', probe: () => bg }).skipped, 'dryRun');
   assert.equal(guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, probe: () => bg }).skipped, 'non-chrome-binary');
   assert.equal(guard.assertMacosAquaKeychainSession({ chromePath: '/tmp/fake-chrome.sh', probe: () => bg }).skipped, 'non-chrome-binary');
 
-  for (const badProbe of [bg, locked, { ok: false, platform: 'darwin', managerName: 'Aqua', hasSshEnv: true, keychainOk: true }]) {
+  for (const badProbe of [bg, { ok: false, platform: 'darwin', managerName: 'Aqua', hasSshEnv: true, keychainOk: true }]) {
     assert.throws(
       () => guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, forceCheck: true, probe: () => badProbe }),
       (err) => err.code === 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED' && err.details === badProbe && /gui\/\$uid/.test(err.message),
     );
   }
+  assert.throws(
+    () => guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, forceCheck: true, probe: () => locked }),
+    (err) => err.code === 'ERR_MACOS_KEYCHAIN_LOCKED' && err.details === locked,
+  );
   assert.deepEqual(
     guard.assertMacosAquaKeychainSession({ chromePath: process.execPath, forceCheck: true, probe: () => okRes }),
     okRes,
@@ -281,9 +423,136 @@ test('directCdpExportCookies injects macOS v10 UserDataDirProtection disable fla
     ),
   );
   const seenArgs = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
-  const disableArg = seenArgs.find((a) => a.startsWith('--disable-features='));
-  assert.ok(disableArg, `expected --disable-features= in ${JSON.stringify(seenArgs)}`);
+  const disableArgs = seenArgs.filter((a) => a.startsWith('--disable-features='));
+  assert.equal(disableArgs.length, 1, `expected single --disable-features= in ${JSON.stringify(seenArgs)}`);
+  const disableArg = disableArgs[0];
   for (const feat of launcher.MAC_V10_KEYCHAIN_SHIELD_FEATURES) {
     assert.ok(disableArg.includes(feat), `expected ${feat} in ${disableArg}`);
   }
+});
+
+test('spawnChrome enforces Aqua guard, forbidden args, and single merged --disable-features across existing and managed modes', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-spawn-guard-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const extDir = path.join(root, 'ext');
+  fs.mkdirSync(extDir, { recursive: true });
+  const udd = path.join(root, 'existing-v10');
+  createCookiesDb(path.join(udd, 'Default', 'Network', 'Cookies'), ['v10', 'v10']);
+
+  // Forbidden args blocked even in mode='existing'
+  await assert.rejects(
+    () => launcher.spawnChrome({
+      chromePath: process.execPath,
+      extensionPath: extDir,
+      userDataDir: udd,
+      profileDir: 'Default',
+      mode: 'existing',
+      extraArgs: ['--use-mock-keychain'],
+      dryRun: true,
+    }),
+    (err) => err.code === 'ERR_FORBIDDEN_MOCK_KEYCHAIN',
+  );
+
+  // Single merged --disable-features= emitted when extraArgs also has --disable-features=
+  const resExisting = await launcher.spawnChrome({
+    chromePath: process.execPath,
+    extensionPath: extDir,
+    userDataDir: udd,
+    profileDir: 'Default',
+    mode: 'existing',
+    extraArgs: ['--disable-features=CustomFeature'],
+    dryRun: true,
+  });
+  const disableFlags = resExisting.args.filter((a) => a.startsWith('--disable-features='));
+  assert.equal(disableFlags.length, 1);
+  assert.ok(disableFlags[0].includes('CustomFeature'));
+  if (process.platform === 'darwin') {
+    for (const feat of launcher.MAC_V10_KEYCHAIN_SHIELD_FEATURES) {
+      assert.ok(disableFlags[0].includes(feat));
+    }
+  }
+
+  // mode='existing' with real Chrome binary blocks when SSH_* is active
+  if (process.platform === 'darwin') {
+    await assert.rejects(
+      () => launcher.spawnChrome({
+        chromePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        extensionPath: extDir,
+        userDataDir: udd,
+        profileDir: 'Default',
+        mode: 'existing',
+        dryRun: false,
+        env: { SSH_CONNECTION: '10.0.0.1 1 10.0.0.2 22' },
+      }),
+      (err) => err.code === 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED',
+    );
+  }
+});
+
+test('cookies-export handleExport rethrows ERR_MACOS_* guard errors instead of swallowing them', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-export-rethrow-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const udd = path.join(root, 'prof');
+  fs.mkdirSync(path.join(udd, 'Default'), { recursive: true });
+  const profile = { id: 'managed:prof', userDataDir: udd, profileDir: 'Default' };
+
+  await assert.rejects(
+    () => handleExport(
+      { profileId: 'managed:prof', allowOnline: true },
+      {
+        profileResolver: () => profile,
+        cookieExporter: () => {
+          const err = new Error('macOS keychain denied');
+          err.code = 'KEYCHAIN_DENIED';
+          throw err;
+        },
+        gatewayHealthLookup: async () => ({ profileDetails: [] }),
+        directCdpExportFn: async () => {
+          const err = new Error('ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED: blocked');
+          err.code = 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED';
+          throw err;
+        },
+      },
+    ),
+    (err) => err.code === 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED',
+  );
+});
+
+test('getMacKeychainPassword checks Aqua/Keychain guard BEFORE invoking security CLI on darwin', () => {
+  let securityInvoked = false;
+  const fakeExec = () => {
+    securityInvoked = true;
+    return 'secret\n';
+  };
+
+  assert.throws(
+    () => getMacKeychainPassword({
+      platform: 'darwin',
+      exec: fakeExec,
+      probe: () => ({
+        ok: false,
+        reason: 'non-aqua',
+        code: 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED',
+        managerName: 'Background',
+        hasSshEnv: true,
+        keychainOk: false,
+      }),
+    }),
+    (err) => err.code === 'ERR_MACOS_NON_AQUA_KEYCHAIN_BLOCKED',
+  );
+  assert.equal(securityInvoked, false, 'security find-generic-password must never run when Aqua guard fails');
+
+  const pw = getMacKeychainPassword({
+    platform: 'darwin',
+    exec: fakeExec,
+    probe: () => ({
+      ok: true,
+      platform: 'darwin',
+      managerName: 'Aqua',
+      hasSshEnv: false,
+      keychainOk: true,
+    }),
+  });
+  assert.equal(pw, 'secret');
+  assert.equal(securityInvoked, true);
 });

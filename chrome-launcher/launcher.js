@@ -21,8 +21,8 @@ const {
 const { norm, findManagedProfileByNameOrId } = require('./profiles');
 const {
   MAC_V10_KEYCHAIN_SHIELD_FEATURES,
-  stripMacSshEnv,
   detectMacCookieEncryptionMode,
+  resolveMacV10Shield,
   isRealChromeBinary,
   probeMacosAquaKeychainSession,
   assertMacosAquaKeychainSession,
@@ -649,10 +649,21 @@ function mergeChromeLaunchArgs(baseArgsList, extraArgs = []) {
 const mergeChromiumFeatureFlags = mergeChromeLaunchArgs;
 
 async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir, mode, attached, dryRun, extraArgs, env }) {
-  assertMacosAquaKeychainSession({ chromePath, dryRun });
+  const mergedEnv = env ? { ...process.env, ...env } : { ...process.env };
+  assertMacosAquaKeychainSession({ chromePath, dryRun, env: mergedEnv });
+  assertNoForbiddenManagedArgs(extraArgs);
+  const shield = resolveMacV10Shield({
+    userDataDir,
+    profileDir: profileDir || 'Default',
+    chromePath,
+    dryRun,
+    env: mergedEnv,
+  });
+  const shieldArgs = shield.preserveMacV10Keychain
+    ? [`--disable-features=${MAC_V10_KEYCHAIN_SHIELD_FEATURES.join(',')}`]
+    : [];
   const rawBase = baseArgs({ extensionPath, userDataDir, profileDir });
-  const args = mergeChromeLaunchArgs(rawBase, extraArgs);
-  const mergedEnv = stripMacSshEnv(env ? { ...process.env, ...env } : process.env);
+  const args = mergeChromeLaunchArgs(rawBase, [...(extraArgs || []), ...shieldArgs]);
   if (
     process.platform !== 'darwin' &&
     process.platform !== 'win32' &&
@@ -693,9 +704,8 @@ async function spawnChrome({ chromePath, extensionPath, userDataDir, profileDir,
     }
     openArgs.push('--args', ...args);
 
-    const cleanOpenEnv = stripMacSshEnv(process.env);
     await new Promise((resolve, reject) => {
-      execFile('/usr/bin/open', openArgs, { timeout: 10000, stdio: 'ignore', env: cleanOpenEnv }, (err) => {
+      execFile('/usr/bin/open', openArgs, { timeout: 10000, stdio: 'ignore' }, (err) => {
         if (err) {
           reject(new Error(`Failed to launch Chrome via LaunchServices (/usr/bin/open): ${err.message}`));
         } else {
@@ -773,7 +783,7 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
   if (dryRun) return { ...base, dryRun: true };
 
   const spawnDetached = (args) => {
-    const child = spawn(chromePath, args, { detached: true, stdio: 'ignore', env: stripMacSshEnv(process.env) });
+    const child = spawn(chromePath, args, { detached: true, stdio: 'ignore', env: process.env });
     child.on('error', () => {});
     child.unref();
   };
@@ -794,14 +804,19 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
       return { ...base, openedNewWindow: false };
     }
     assertMacosAquaKeychainSession({ chromePath, dryRun });
-    const v10ShieldArgs = detectMacCookieEncryptionMode(userDataDir, effectivePdir) === 'v10'
+    const shield = resolveMacV10Shield({ userDataDir, profileDir: effectivePdir, chromePath, dryRun });
+    const v10ShieldArgs = shield.preserveMacV10Keychain
       ? [`--disable-features=${MAC_V10_KEYCHAIN_SHIELD_FEATURES.join(',')}`]
       : [];
     const spawnArgs = [
-      `--user-data-dir=${userDataDir}`,
-      `--profile-directory=${effectivePdir}`,
-      ...v10ShieldArgs,
-      '--new-window',
+      ...mergeChromeLaunchArgs(
+        [
+          `--user-data-dir=${userDataDir}`,
+          `--profile-directory=${effectivePdir}`,
+          '--new-window',
+        ],
+        v10ShieldArgs,
+      ),
       initialUrl || 'chrome://newtab',
     ];
     const appBundle = resolveMacAppBundle(chromePath, spawnArgs);
@@ -810,7 +825,7 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
         execFile(
           '/usr/bin/open',
           ['-na', appBundle, '--args', ...spawnArgs],
-          { timeout: 10000, stdio: 'ignore', env: stripMacSshEnv(process.env) },
+          { timeout: 10000, stdio: 'ignore' },
           (err) => {
             if (err) reject(new Error(`Failed to launch Chrome via LaunchServices (/usr/bin/open): ${err.message}`));
             else resolve();
@@ -1067,20 +1082,27 @@ async function launchChrome(options = {}) {
   }
 
   const allowOnDeviceAi = meta.allowOnDeviceAi === true;
-  const macCookieMode = process.platform === 'darwin'
-    ? detectMacCookieEncryptionMode(userDataDir, effectiveProfileDir)
-    : 'other';
-  const preserveMacV10Keychain = macCookieMode === 'v10';
   const hasCallerOrMetaOverrides = effectiveExtraArgs.length > 0 || Boolean(spawnEnv?.TZ);
   const managedExtraArgs = [
-    ...buildManagedShieldArgs({ allowOnDeviceAi, preserveMacV10Keychain }),
+    ...buildManagedShieldArgs({ allowOnDeviceAi }),
     ...effectiveExtraArgs,
   ];
 
   if (hasLiveManagedSession(userDataDir, sessionsFile)) {
     const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun });
     if (options.dryRun) {
-      focusRes.args = mergeChromeLaunchArgs(baseArgs({ extensionPath, userDataDir, profileDir: effectiveProfileDir }), managedExtraArgs);
+      const dryShield = resolveMacV10Shield({
+        userDataDir,
+        profileDir: effectiveProfileDir,
+        chromePath,
+        dryRun: true,
+        env: spawnEnv,
+      });
+      const dryManagedArgs = [
+        ...buildManagedShieldArgs({ allowOnDeviceAi, preserveMacV10Keychain: dryShield.preserveMacV10Keychain }),
+        ...effectiveExtraArgs,
+      ];
+      focusRes.args = mergeChromeLaunchArgs(baseArgs({ extensionPath, userDataDir, profileDir: effectiveProfileDir }), dryManagedArgs);
       focusRes.env = spawnEnv || null;
       focusRes.tz = spawnEnv?.TZ || null;
     }
@@ -1399,11 +1421,12 @@ module.exports = {
   LOCK_FILES,
   ON_DEVICE_AI_DISABLED_FEATURES,
   MAC_V10_KEYCHAIN_SHIELD_FEATURES,
-  stripMacSshEnv,
   detectMacCookieEncryptionMode,
+  resolveMacV10Shield,
   isRealChromeBinary,
   probeMacosAquaKeychainSession,
   assertMacosAquaKeychainSession,
+  assertNoForbiddenManagedArgs,
   buildManagedShieldArgs,
   MANAGED_SESSION_SHIELD_ARGS,
   slugify,
