@@ -776,4 +776,60 @@ test('import: --clear-first aborts BEFORE Network.clearBrowserCookies when paylo
   );
   assert.equal(rbRes.status, 'partial');
   assert.equal(rbRes.code, 'ERR_COOKIES_IMPORT_READBACK_MISSING');
+
+  // Stale auth export (tracking _ga/datr unexpired while c_user is WebKit-microsecond expired) must NOT trigger --clear-first
+  let staleClearCalled = false;
+  const staleWebkitPast = (BigInt(Date.now() - 86400 * 1000) * 1000n) + 11644473600000000n;
+  await assert.rejects(
+    () => handleImport(
+      { profileId: 'p1', input: 'stale.json', clearFirst: true, overwrite: true },
+      {
+        inputContent: JSON.stringify([
+          { name: 'datr', value: 'valid-tracking', domain: '.facebook.com', path: '/', expires: Math.floor(Date.now() / 1000) + 86400 },
+          { name: 'c_user', value: '10001234', domain: '.facebook.com', path: '/', expires: Number(staleWebkitPast) },
+        ]),
+        gatewayCall: async (method) => {
+          if (method === 'executeCDP') staleClearCalled = true;
+          return { success: true };
+        },
+      }
+    ),
+    { code: 'ERR_COOKIES_IMPORT_EMPTY_OR_EXPIRED' }
+  );
+  assert.equal(staleClearCalled, false, 'Stale tracking cookies must not authorize --clear-first when auth cookies expired');
+
+  // getCookies throwing during readback must NOT swallow error and claim success
+  const throwRb = await handleImport(
+    { profileId: 'p1', input: 'dummy.json', overwrite: true },
+    {
+      verifyReadback: true,
+      inputContent: JSON.stringify([{ name: 'c_user', value: '10001234', domain: '.facebook.com', path: '/', secure: true }]),
+      gatewayCall: async (method) => {
+        if (method === 'setCookie') return { success: true };
+        if (method === 'getCookies') throw new Error('CDP readback disconnected');
+        return {};
+      },
+    }
+  );
+  assert.equal(throwRb.status, 'partial');
+  assert.equal(throwRb.code, 'ERR_COOKIES_IMPORT_READBACK_FAILED');
+
+  // Partial critical cookie persistence (c_user persisted, xs dropped) must flag READBACK_MISSING
+  const partialRb = await handleImport(
+    { profileId: 'p1', input: 'dummy.json', overwrite: true },
+    {
+      verifyReadback: true,
+      inputContent: JSON.stringify([
+        { name: 'c_user', value: '10001234', domain: '.facebook.com', path: '/', secure: true },
+        { name: 'xs', value: 'secret-xs', domain: '.facebook.com', path: '/', secure: true },
+      ]),
+      gatewayCall: async (method) => {
+        if (method === 'setCookie') return { success: true };
+        if (method === 'getCookies') return { cookies: [{ name: 'c_user', value: '10001234', domain: '.facebook.com' }] };
+        return {};
+      },
+    }
+  );
+  assert.equal(partialRb.status, 'partial');
+  assert.equal(partialRb.code, 'ERR_COOKIES_IMPORT_READBACK_MISSING');
 });

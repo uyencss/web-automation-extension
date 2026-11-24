@@ -105,6 +105,50 @@ test('inspectOnDiskServiceAuth respects googleAuthProbe.signedOut unless fresher
   const r2 = inspectOnDiskServiceAuth(healedCookies, { services: ['gmail'] });
   assert.equal(r2.googleSignedOut, false);
   assert.deepEqual(r2.missingServices, []);
+
+  // Bumped last_access_utc alone must NOT clear signedOut (creation_utc < checkedAt governs)
+  const oldCreatUs = (BigInt(Date.now() - 7200_000) * 1000n) + WEBKIT_OFFSET_US;
+  const freshAccessUs = (BigInt(Date.now() + 300_000) * 1000n) + WEBKIT_OFFSET_US;
+  const probeMidIso = new Date(Date.now() - 1800_000).toISOString();
+  const bumpedAccessUdd = createMockProfile(
+    t,
+    rows.map((r) => ({ ...r, creation_utc: Number(oldCreatUs), last_access_utc: Number(freshAccessUs) })),
+    { googleAuthProbe: { signedOut: true, checkedAt: probeMidIso } },
+  );
+  const r3 = inspectOnDiskServiceAuth(bumpedAccessUdd, { services: ['gmail'] });
+  assert.equal(r3.googleSignedOut, true);
+  assert.deepEqual(r3.missingServices, ['google']);
+
+  // Missing checkedAt on signedOut probe is ignored (parity with Python cookie_auth)
+  const noCheckedAtUdd = createMockProfile(t, rows, { googleAuthProbe: { signedOut: true } });
+  const r4 = inspectOnDiskServiceAuth(noCheckedAtUdd, { services: ['gmail'] });
+  assert.equal(r4.googleSignedOut, false);
+
+  // Preferences gaia_cookie.last_list_accounts_binary_data signedOut (field 1 ListedAccount { field 5 valid=0, field 14 signed_out=1 })
+  // Encoded tag1(0x0a), len=4, tag5=0(0x28 0x00), tag14=1(0x70 0x01) -> base64 "CgQoAHA="
+  const gaiaUdd = createMockProfile(
+    t,
+    rows.map((r) => ({ ...r, creation_utc: Number(oldCreatUs) })),
+  );
+  fs.writeFileSync(
+    path.join(gaiaUdd, 'Default', 'Preferences'),
+    JSON.stringify({
+      gaia_cookie: {
+        last_list_accounts_binary_data: Buffer.from([0x0a, 0x04, 0x28, 0x00, 0x70, 0x01]).toString('base64'),
+        changed_time: (Date.now() / 1000) + 60,
+      },
+    }),
+  );
+  const r5 = inspectOnDiskServiceAuth(gaiaUdd, { services: ['gmail'] });
+  assert.equal(r5.googleSignedOut, true);
+
+  // Placeholder string sentinels ('null', 'deleted') must be ignored as empty
+  const sentinelUdd = createMockProfile(t, [
+    { host_key: '.facebook.com', name: 'c_user', value: 'null', encrypted_value: Buffer.alloc(0) },
+    { host_key: '.facebook.com', name: 'xs', value: 'deleted', encrypted_value: Buffer.alloc(0) },
+  ]);
+  const r6 = inspectOnDiskServiceAuth(sentinelUdd, { services: ['facebook'] });
+  assert.equal(r6.serviceChecks.facebook.ok, false);
 });
 
 test('verifyLiveCdpServiceCookies detects decrypt loss (ERR_SESSION_COOKIE_DECRYPT_LOSS) vs logged out', (t) => {
@@ -135,6 +179,12 @@ test('verifyLiveCdpServiceCookies detects decrypt loss (ERR_SESSION_COOKIE_DECRY
   assert.equal(notLoggedIn.ok, false);
   assert.equal(notLoggedIn.code, 'ERR_WARMUP_NOT_LOGGED_IN');
   assert.equal(notLoggedIn.hardQuarantine, false);
+
+  // Failed live cookie read (null/unavailable) returns soft ERR_LIVE_COOKIE_READ_FAILED without hard quarantine
+  const readFailed = verifyLiveCdpServiceCookies(null, ['facebook'], { preLaunchReport: preReport });
+  assert.equal(readFailed.ok, false);
+  assert.equal(readFailed.code, 'ERR_LIVE_COOKIE_READ_FAILED');
+  assert.equal(readFailed.hardQuarantine, false);
 
   // Valid decrypted live cookies pass
   const okLive = verifyLiveCdpServiceCookies(
