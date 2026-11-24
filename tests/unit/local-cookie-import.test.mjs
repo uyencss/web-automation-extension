@@ -741,3 +741,39 @@ test('import: --clear-first invokes executeCDP Network.clearBrowserCookies befor
   assert.equal(res3.status, 'dry-run');
   assert.equal(calls3.length, 0);
 });
+
+test('import: --clear-first aborts BEFORE Network.clearBrowserCookies when payload lacks valid unexpired cookies, and verifyReadback flags missing auth cookie', async () => {
+  let clearCalled = false;
+  await assert.rejects(
+    () => handleImport(
+      { profileId: 'p1', input: 'dummy.json', clearFirst: true, overwrite: true },
+      {
+        inputContent: JSON.stringify([
+          { name: 'SID', value: '', domain: '.google.com', path: '/' },
+          { name: 'old', value: 'v', domain: '.google.com', path: '/', expires: Math.floor(Date.now() / 1000) - 60 },
+        ]),
+        gatewayCall: async (method) => {
+          if (method === 'executeCDP') clearCalled = true;
+          return { success: true };
+        },
+      }
+    ),
+    { code: 'ERR_COOKIES_IMPORT_EMPTY_OR_EXPIRED' }
+  );
+  assert.equal(clearCalled, false, 'Must refuse --clear-first before wiping target cookies');
+
+  const rbRes = await handleImport(
+    { profileId: 'p1', input: 'dummy.json', overwrite: true },
+    {
+      verifyReadback: true,
+      inputContent: JSON.stringify([{ name: 'c_user', value: '10001234', domain: '.facebook.com', path: '/', secure: true }]),
+      gatewayCall: async (method) => {
+        if (method === 'setCookie') return { success: true };
+        if (method === 'getCookies') return { cookies: [] };
+        return {};
+      },
+    }
+  );
+  assert.equal(rbRes.status, 'partial');
+  assert.equal(rbRes.code, 'ERR_COOKIES_IMPORT_READBACK_MISSING');
+});

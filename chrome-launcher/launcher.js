@@ -1263,6 +1263,14 @@ async function launchChrome(options = {}) {
     } catch {}
   }
 
+  let preLaunchCookieSnapshot = null;
+  if (!options.dryRun && fs.existsSync(userDataDir)) {
+    try {
+      const { inspectOnDiskServiceAuth } = await import('../lib/profile/service-auth-guard.mjs');
+      const snap = inspectOnDiskServiceAuth(userDataDir, { profileDir: effectiveProfileDir, ignoreMetaSignal: true });
+      preLaunchCookieSnapshot = { dbOk: snap.dbOk, cookieCount: snap.cookieCount, platforms: snap.platforms, brokenPlatforms: snap.brokenPlatforms };
+    } catch {}
+  }
   const result = await spawnChrome({
     chromePath,
     extensionPath,
@@ -1275,6 +1283,7 @@ async function launchChrome(options = {}) {
     extraArgs: managedExtraArgs,
     env: spawnEnv,
   });
+  if (preLaunchCookieSnapshot) result.preLaunchCookieSnapshot = preLaunchCookieSnapshot;
   if (result.pid) rememberManagedSession(userDataDir, result.pid, sessionsFile);
   if (!options.dryRun && result.ok !== false) {
     try {

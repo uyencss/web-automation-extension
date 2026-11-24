@@ -25,6 +25,7 @@
     "./mobile-cdp": "./webmcp-mobile-cdp/index.mjs",
     "./package.json": "./package.json",
     "./profile-governor": "./profile-governor/lease-service.mjs",
+    "./service-auth-guard": "./lib/profile/service-auth-guard.mjs",
     "./server/gateway_server.js": "./server/gateway_server.js",
     "./server/gateway/coordinator-dispatcher.mjs": "./server/gateway/coordinator-dispatcher.mjs",
     "./server/mcp_server.mjs": "./server/mcp_server.mjs",
