@@ -297,4 +297,10 @@ test('inspectOnDiskServiceAuth reads uncheckpointed -wal cookies under exclusive
   const pbRes = inspectOnDiskServiceAuth(pbUdd, { services: ['gmail'] });
   assert.equal(pbRes.googleSignedOut, true);
   assert.deepEqual(pbRes.missingServices, ['google']);
+
+  // 4. Douyin rule parity (sessionid / sid_tt on .douyin.com)
+  const dyUdd = createMockProfile(t, [{ host_key: '.douyin.com', name: 'sid_tt' }]);
+  const dyRes = assertOnDiskServiceAuth(dyUdd, ['douyin']);
+  assert.equal(dyRes.ok, true);
+  assert.ok(dyRes.report.platforms.includes('douyin'));
 });
