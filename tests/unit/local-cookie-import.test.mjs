@@ -833,3 +833,39 @@ test('import: --clear-first aborts BEFORE Network.clearBrowserCookies when paylo
   assert.equal(partialRb.status, 'partial');
   assert.equal(partialRb.code, 'ERR_COOKIES_IMPORT_READBACK_MISSING');
 });
+
+test('import: normalizes WebKit microsecond and millisecond expires via toUnixSeconds and preserves code: readbackError when failedCount > 0', async () => {
+  const webkitExp = Number((BigInt(1770000000) * 1_000_000n) + 11644473600000000n);
+  const msExp = 1770000000 * 1000;
+  const setCalls = [];
+  const res = await handleImport(
+    { profileId: 'p1', input: 'dummy.json', overwrite: true },
+    {
+      verifyReadback: true,
+      inputContent: JSON.stringify([
+        { name: 'c_user', value: '10001234', domain: '.facebook.com', path: '/', secure: true, expires: webkitExp },
+        { name: 'xs', value: 'secret-xs', domain: '.facebook.com', path: '/', secure: true, expires: msExp },
+        { name: 'bad_cookie', value: 'bad', domain: '.facebook.com', path: '/', secure: true, expires: 1770000000 },
+      ]),
+      gatewayCall: async (method, params) => {
+        if (method === 'setCookie') {
+          setCalls.push(params);
+          if (params.name === 'bad_cookie') return { success: false, error: 'SET_COOKIE_REJECTED' };
+          return { success: true };
+        }
+        if (method === 'getCookies') {
+          return { cookies: [{ name: 'c_user', value: '10001234', domain: '.facebook.com' }] };
+        }
+        return {};
+      },
+    }
+  );
+
+  assert.equal(setCalls[0].expires, 1770000000);
+  assert.equal(setCalls[1].expires, 1770000000);
+  assert.equal(setCalls[2].expires, 1770000000);
+  assert.equal(res.status, 'partial');
+  assert.equal(res.failedCount, 1);
+  assert.equal(res.code, 'ERR_COOKIES_IMPORT_READBACK_MISSING');
+  assert.equal(res.error, 'SET_COOKIE_REJECTED');
+});

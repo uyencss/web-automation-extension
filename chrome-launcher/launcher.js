@@ -1400,20 +1400,28 @@ async function closeChrome(options = {}) {
       }
       
       if (shouldKill && session?.pid) {
+        let unlocked = false;
         try {
-          process.kill(session.pid, 'SIGTERM');
-          const unlocked = await waitForUnlock(userDataDir, options.killTimeoutMs ?? 5000);
+          unlocked = await waitForUnlock(userDataDir, options.gracefulTimeoutMs ?? 10000);
           if (!unlocked && isPidAlive(session.pid)) {
-            process.kill(session.pid, 'SIGKILL');
+            process.kill(session.pid, 'SIGTERM');
+            unlocked = await waitForUnlock(userDataDir, options.killTimeoutMs ?? 5000);
+            if (!unlocked && options.forceKill === true && isPidAlive(session.pid)) {
+              process.kill(session.pid, 'SIGKILL');
+              unlocked = await waitForUnlock(userDataDir, 1000);
+            }
           }
         } catch {
           // already dead or not permitted
+          unlocked = !isProfileLocked(userDataDir);
         }
-        delete state.managedSessions[userDataDir];
-        changed = true;
-        closedCount++;
-        cleanStaleLocks(userDataDir);
-        closedManagedDirs.add(userDataDir);
+        if (unlocked || !isPidAlive(session.pid)) {
+          delete state.managedSessions[userDataDir];
+          changed = true;
+          if (!closedManagedDirs.has(userDataDir)) closedCount++;
+          cleanStaleLocks(userDataDir);
+          closedManagedDirs.add(userDataDir);
+        }
       }
     }
     

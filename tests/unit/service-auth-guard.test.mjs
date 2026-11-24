@@ -225,3 +225,76 @@ test('evaluateCloudBackupRegression blocks wiped, broken, signedOut, lost-platfo
     true
   );
 });
+
+test('inspectOnDiskServiceAuth reads uncheckpointed -wal cookies under exclusive lock and handles 64-bit protobuf varints', (t) => {
+  // 1. Exclusive SQLite lock with uncheckpointed -wal frames (must NOT drop -wal via immutable=1)
+  const udd = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-auth-wal-'));
+  t.after(() => fs.rmSync(udd, { recursive: true, force: true }));
+  const netDir = path.join(udd, 'Default', 'Network');
+  fs.mkdirSync(netDir, { recursive: true });
+  const dbPath = path.join(netDir, 'Cookies');
+
+  const writer = new DatabaseSync(dbPath);
+  try {
+    writer.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;');
+    writer.exec('CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, expires_utc INTEGER, creation_utc INTEGER, last_access_utc INTEGER);');
+    writer.exec('PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE;');
+    const nowUs = Number((BigInt(Date.now()) * 1000n) + WEBKIT_OFFSET_US);
+    const ins = writer.prepare('INSERT INTO cookies VALUES (?, ?, ?, ?, ?, ?, ?)');
+    ins.run('.facebook.com', 'c_user', '', Buffer.from('v10c'), Number(FUTURE_EXP_US), nowUs, nowUs);
+    ins.run('.facebook.com', 'xs', '', Buffer.from('v10x'), Number(FUTURE_EXP_US), nowUs, nowUs);
+    writer.exec('COMMIT;');
+    // Re-acquire exclusive lock so direct DatabaseSync(..., { readOnly: true }) fails with database is locked
+    writer.exec('BEGIN EXCLUSIVE;');
+    writer.exec("INSERT INTO cookies VALUES ('.facebook.com', 'datr', '', X'763130', 0, 0, 0);");
+
+    const walRes = assertOnDiskServiceAuth(udd, ['facebook']);
+    assert.equal(walRes.ok, true);
+    assert.equal(walRes.report.dbOk, true);
+    assert.equal(walRes.report.serviceChecks.facebook.ok, true);
+  } finally {
+    try { writer.exec('ROLLBACK;'); } catch {}
+    try { writer.close(); } catch {}
+  }
+
+  // 2. Hot -journal fallback via temp copy + sqlite3 CLI
+  const journalUdd = createMockProfile(t, [
+    { host_key: '.facebook.com', name: 'c_user' },
+    { host_key: '.facebook.com', name: 'xs' },
+  ]);
+  fs.writeFileSync(path.join(journalUdd, 'Default', 'Network', 'Cookies-journal'), 'dummy rollback journal bytes');
+  const journalRes = assertOnDiskServiceAuth(journalUdd, ['facebook']);
+  assert.equal(journalRes.ok, true);
+  assert.equal(journalRes.report.serviceChecks.facebook.ok, true);
+
+  // 3. 64-bit protobuf varint (e.g. negative int64 field before valid=0, signed_out=1) must not overflow 32-bit
+  const oldCreatUs = (BigInt(Date.now() - 7200_000) * 1000n) + WEBKIT_OFFSET_US;
+  const pbUdd = createMockProfile(
+    t,
+    [
+      { host_key: '.google.com', name: 'SID', creation_utc: Number(oldCreatUs) },
+      { host_key: '.google.com', name: '__Secure-1PSID', creation_utc: Number(oldCreatUs) },
+      { host_key: 'accounts.google.com', name: 'LSID', creation_utc: Number(oldCreatUs) },
+    ],
+  );
+  // Field 20 wireType 0 (0xa0 0x01) + 10-byte negative int64 (-1), then field 5 valid=0 (0x28 0x00), field 14 signed_out=1 (0x70 0x01)
+  const innerAcc = Buffer.from([
+    0xa0, 0x01,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
+    0x28, 0x00,
+    0x70, 0x01,
+  ]);
+  const outerPb = Buffer.concat([Buffer.from([0x0a, innerAcc.length]), innerAcc]);
+  fs.writeFileSync(
+    path.join(pbUdd, 'Default', 'Preferences'),
+    JSON.stringify({
+      gaia_cookie: {
+        last_list_accounts_binary_data: outerPb.toString('base64'),
+        changed_time: (Date.now() / 1000) + 60,
+      },
+    }),
+  );
+  const pbRes = inspectOnDiskServiceAuth(pbUdd, { services: ['gmail'] });
+  assert.equal(pbRes.googleSignedOut, true);
+  assert.deepEqual(pbRes.missingServices, ['google']);
+});
