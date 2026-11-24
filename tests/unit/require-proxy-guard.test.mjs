@@ -505,7 +505,7 @@ test('proxy-guard enforces case-insensitive flags, --proxy-auto-detect, wildcard
   assert.equal(proxyGuard.hasProxyServerArg(['--PROXY-AUTO-DETECT=0', '--proxy-server=http://127.0.0.1:8080']), true);
 
   // 3. Wildcard bypass variants vs legitimate domain suffixes
-  for (const wildcard of ['*', '*.*', '*:*', '*://*', 'http://*', 'https://*', 'http://*/*', 'https://*/*', '*:80', '*:443']) {
+  for (const wildcard of ['*', '*.*', '*:*', '*://*', 'http://*', 'https://*', 'http://*/*', 'https://*/*', '*:80', '*:443', '*/', 'http://*/', 'http://*.*', '*.*/*', '0.0.0.0/0', '::/0']) {
     assert.equal(proxyGuard.isWildcardBypassEntry(wildcard), true, `Expected wildcard=true for ${wildcard}`);
     assert.equal(
       proxyGuard.hasProxyServerArg([`--proxy-bypass-list=localhost,${wildcard}`, '--proxy-server=http://127.0.0.1:8080']),
@@ -526,19 +526,36 @@ test('proxy-guard enforces case-insensitive flags, --proxy-auto-detect, wildcard
   assert.equal(proxyGuard.hasProxyServerArg(['--proxy-bypass-list=localhost', 'https://example.com', '--proxy-server=http://127.0.0.1:8080']), true);
   assert.equal(proxyGuard.hasProxyServerArg(['--proxy-bypass-list="localhost,"', 'https://example.com', '--proxy-server=http://127.0.0.1:8080']), true);
 
-  // 5. Comma/semicolon/scheme-list direct:// and empty entries
+  // 5. Comma/semicolon/scheme-list direct://, empty hosts, and empty-scheme entries
   for (const badProxy of [
     'http://127.0.0.1:8080,direct://',
     'http://127.0.0.1:8080; direct://',
     'http=127.0.0.1:8080;https=direct://',
     'http=127.0.0.1:8080;https=DIRECT:',
     'http=,https=127.0.0.1:8080',
+    'http://',
+    'socks5://',
+    '=http://127.0.0.1:8080',
+    'http=http://;https=http://127.0.0.1:8080',
   ]) {
     assert.equal(proxyGuard.isNonDirectProxyValue(badProxy), false, `Expected isNonDirectProxyValue=false for ${badProxy}`);
+    assert.equal(proxyGuard.evaluateProxyArgs([`--proxy-server=${badProxy}`]), false, `Expected evaluateProxyArgs=false for ${badProxy}`);
     assert.equal(proxyGuard.hasProxyServerArg([`--proxy-server=${badProxy}`]), false, `Expected hasProxyServerArg=false for ${badProxy}`);
+    assert.equal(proxyGuard.resolveManagedProxyConfig(badProxy).cleanUrl, null, `Expected resolveManagedProxyConfig cleanUrl=null for ${badProxy}`);
   }
+  assert.equal(proxyGuard.resolveManagedProxyConfig('socks5:///path').cleanUrl, null);
   assert.equal(proxyGuard.hasProxyServerArg(['--proxy-server=http=127.0.0.1:8080;https=127.0.0.1:8080']), true);
   assert.equal(proxyGuard.hasProxyServerArg(['--proxy-server=socks5://10.0.0.2:1080']), true);
+
+  // 6. Multi-token --proxy-server continuation and `--` end-of-switches
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http=127.0.0.1:8080 ;https=direct://'), false);
+  assert.equal(proxyGuard.evaluateProxyArgs(['--proxy-server=http=127.0.0.1:8080', ';https=direct://']), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http=127.0.0.1:8080; https=127.0.0.1:8080'), true);
+  assert.equal(proxyGuard.evaluateProxyArgs(['--proxy-server=http=127.0.0.1:8080;', 'https=127.0.0.1:8080']), true);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http://127.0.0.1:8080 https://example.com'), true);
+  assert.equal(proxyGuard.evaluateProxyArgs(['--proxy-server=http://127.0.0.1:8080', 'https://example.com']), true);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome -- --proxy-server=http://127.0.0.1:8080'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http://127.0.0.1:8080 -- --no-proxy-server'), true);
 });
 
 

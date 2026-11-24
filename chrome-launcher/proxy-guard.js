@@ -31,6 +31,9 @@ function resolveManagedProxyConfig(proxy) {
   try {
     const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawUrl) ? rawUrl : `http://${rawUrl}`;
     const u = new URL(withScheme);
+    if (!u.host) {
+      return { cleanUrl: null, warning: null, timezone };
+    }
     hasUrlCreds = Boolean(u.username || u.password);
     cleanUrl = `${u.protocol}//${u.host}`;
   } catch {
@@ -74,26 +77,57 @@ function updateOpenQuote(chunk, openQuote) {
 function isWildcardBypassEntry(entry) {
   const clean = stripEdgeQuotes(entry).toLowerCase();
   if (!clean) return false;
-  return (
-    /^(([a-z][a-z0-9+.-]*|\*):\/\/)?\*(:(\*|[0-9]+))?(\/\*)?$/.test(clean) ||
-    /^\*\.\*(:(\*|[0-9]+))?$/.test(clean)
-  );
+  if (clean === '0.0.0.0/0' || clean === '::/0') return true;
+  return /^((\*|[a-z][a-z0-9+.-]*):\/\/)?\*(\.\*)*(:(\*|[0-9]+))?(\/\*?)?$/.test(clean);
 }
 
 function isNonDirectProxyValue(val) {
-  const clean = stripMatchingQuotes(val);
+  const clean = stripEdgeQuotes(val);
   if (!clean) return false;
   for (const rawEntry of clean.split(/[,;]/)) {
-    let entry = stripMatchingQuotes(rawEntry);
-    const schemeMatch = entry.match(/^[a-z0-9+.-]+=(.*)$/i);
-    if (schemeMatch) {
-      entry = stripMatchingQuotes(schemeMatch[1]);
+    let entry = stripEdgeQuotes(rawEntry);
+    if (!entry || entry.startsWith('=')) {
+      return false;
     }
-    if (!entry || /^direct:(\/\/)?$/i.test(entry)) {
+    const eq = entry.indexOf('=');
+    if (eq !== -1) {
+      const scheme = entry.slice(0, eq).trim();
+      if (!/^[a-z0-9+.-]+$/i.test(scheme)) {
+        return false;
+      }
+      entry = stripEdgeQuotes(entry.slice(eq + 1));
+    }
+    if (
+      !entry ||
+      /^direct:(\/\/)?$/i.test(entry) ||
+      /^[a-z0-9+.-]+:\/\/$/i.test(entry)
+    ) {
       return false;
     }
   }
   return true;
+}
+
+function collectFlagContinuation(tokens, startIdx, firstChunk) {
+  const chunks = [firstChunk];
+  let idx = startIdx;
+  let openQuote = updateOpenQuote(firstChunk, null);
+  while (idx + 1 < tokens.length) {
+    const nextRaw = String(tokens[idx + 1] ?? '').trim();
+    if (nextRaw === '--' || (openQuote === null && nextRaw.startsWith('--'))) {
+      break;
+    }
+    const lastChunk = chunks[chunks.length - 1];
+    const continuesFromPrev = openQuote !== null || /[,;]$/.test(lastChunk.trimEnd());
+    const continuesAtNext = /^[,;]/.test(nextRaw);
+    if (!continuesFromPrev && !continuesAtNext) {
+      break;
+    }
+    chunks.push(nextRaw);
+    openQuote = updateOpenQuote(nextRaw, openQuote);
+    idx += 1;
+  }
+  return { nextIdx: idx, chunks };
 }
 
 /**
@@ -204,19 +238,8 @@ function evaluateProxyArgs(tokens) {
         firstChunk = String(tokens[i] ?? '').trim();
       }
       if (firstChunk !== null) {
-        const chunks = [firstChunk];
-        let openQuote = updateOpenQuote(firstChunk, null);
-        while (i + 1 < tokens.length) {
-          const nextRaw = String(tokens[i + 1] ?? '').trim();
-          if (nextRaw.startsWith('--')) break;
-          const lastChunk = chunks[chunks.length - 1];
-          const continuesFromPrev = openQuote !== null || /[,;]$/.test(lastChunk.trimEnd());
-          const continuesAtNext = /^[,;]/.test(nextRaw);
-          if (!continuesFromPrev && !continuesAtNext) break;
-          chunks.push(nextRaw);
-          openQuote = updateOpenQuote(nextRaw, openQuote);
-          i += 1;
-        }
+        const { nextIdx, chunks } = collectFlagContinuation(tokens, i, firstChunk);
+        i = nextIdx;
         for (const chunk of chunks) {
           const entries = stripEdgeQuotes(chunk).split(/[,;]/);
           if (entries.some((entry) => isWildcardBypassEntry(entry))) {
@@ -227,14 +250,18 @@ function evaluateProxyArgs(tokens) {
       continue;
     }
 
-    if (lower.startsWith('--proxy-server=')) {
-      lastProxyVal = stripMatchingQuotes(raw.slice('--proxy-server='.length));
-      continue;
-    }
-    if (lower === '--proxy-server') {
-      if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
-        lastProxyVal = stripMatchingQuotes(tokens[i + 1]);
+    if (lower.startsWith('--proxy-server=') || lower === '--proxy-server') {
+      let firstChunk = null;
+      if (lower.startsWith('--proxy-server=')) {
+        firstChunk = raw.slice('--proxy-server='.length);
+      } else if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
         i += 1;
+        firstChunk = String(tokens[i] ?? '').trim();
+      }
+      if (firstChunk !== null) {
+        const { nextIdx, chunks } = collectFlagContinuation(tokens, i, firstChunk);
+        i = nextIdx;
+        lastProxyVal = stripEdgeQuotes(chunks.join(' '));
       } else {
         lastProxyVal = '';
       }
