@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { PassThrough } from 'node:stream';
 import { handleImport } from '../../lib/cli/commands/cookies-import.mjs';
@@ -34,7 +34,7 @@ function makeFixture(t, meta = {}) {
   fs.writeFileSync(path.join(userDataDir, '.webmcp-meta.json'), JSON.stringify(meta));
   fs.writeFileSync(fakeChromeBin, '#!/bin/sh\nexit 0\n');
   fs.chmodSync(fakeChromeBin, 0o755);
-  return { managedProfilesDir, userDataDir, existingUserDataDir, extensionPath, sessionsFile, fakeChromeBin };
+  return { root, managedProfilesDir, userDataDir, existingUserDataDir, extensionPath, sessionsFile, fakeChromeBin };
 }
 
 function spawnDummyAlivePid(t) {
@@ -313,5 +313,170 @@ test('aqua-broker forwards requireProxy and propagates ERR_PROXY_UNBOUND_BLOCKED
     assert.equal(parsed.ok, false);
     assert.equal(parsed.code, 'ERR_PROXY_UNBOUND_BLOCKED');
   }
+});
+
+test('tokenizeCmdline, hasProxyServerArg, and cmdlineHasProxyServer block Chromium proxy bypass flags and precedence overrides', () => {
+  assert.deepEqual(
+    proxyGuard.tokenizeCmdline('"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --proxy-server="socks5://10.0.0.2:1080" --proxy-bypass-list=\'127.0.0.1, *\''),
+    ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--proxy-server=socks5://10.0.0.2:1080', '--proxy-bypass-list=127.0.0.1, *'],
+  );
+  assert.deepEqual(
+    proxyGuard.tokenizeCmdline('chrome --proxy-server "" --proxy-server=""'),
+    ['chrome', '--proxy-server', '', '--proxy-server='],
+  );
+
+  const bypassVectors = [
+    ['--no-proxy-server', '--proxy-server=http://x:1'],
+    ['--proxy-server=http://x:1', '--no-proxy-server'],
+    ['--proxy-server=http://x:1', '--no-proxy-server=true'],
+    ['--proxy-server=http://x:1', '--no-proxy-server=1'],
+    ['--proxy-server=http://x:1', '--proxy-server=direct://'],
+    ['--proxy-server=http://x:1', '--proxy-server', 'direct://'],
+    ['--proxy-pac-url=https://evil.example/pac.js', '--proxy-server=http://x:1'],
+    ['--proxy-pac-url', 'https://evil.example/pac.js', '--proxy-server=http://x:1'],
+    ['--proxy-bypass-list=*', '--proxy-server=http://x:1'],
+    ['--proxy-bypass-list=127.0.0.1, *', '--proxy-server=http://x:1'],
+    ['--proxy-bypass-list', 'localhost; *', '--proxy-server=http://x:1'],
+    ['--proxy-server=""'],
+    ['--proxy-server', '""'],
+    ['--proxy-server=http://x:1', '--proxy-server'],
+    ['--', '--proxy-server=http://x:1'],
+  ];
+
+  for (const argv of bypassVectors) {
+    assert.equal(proxyGuard.hasProxyServerArg(argv), false, `Expected hasProxyServerArg=false for ${JSON.stringify(argv)}`);
+  }
+
+  const cmdlineBypassVectors = [
+    'chrome --no-proxy-server --proxy-server=http://x:1',
+    'chrome --proxy-server=http://x:1 --no-proxy-server=1',
+    'chrome --proxy-server=http://x:1 --user-data-dir=/tmp/p --proxy-server=direct://',
+    'chrome --proxy-pac-url="https://evil.example/pac.js" --proxy-server=http://x:1',
+    'chrome --proxy-pac-url https://evil.example/pac.js --proxy-server=http://x:1',
+    'chrome --proxy-bypass-list="*" --proxy-server=http://x:1',
+    'chrome --proxy-bypass-list "127.0.0.1, *" --proxy-server=http://x:1',
+    'chrome --proxy-server=""',
+    'chrome --proxy-server ""',
+    'chrome -- --proxy-server=http://x:1',
+  ];
+
+  for (const cmdline of cmdlineBypassVectors) {
+    assert.equal(proxyGuard.cmdlineHasProxyServer(cmdline), false, `Expected cmdlineHasProxyServer=false for ${cmdline}`);
+  }
+
+  // Allowed non-bypass cases
+  assert.equal(proxyGuard.hasProxyServerArg(['--no-proxy-server=false', '--proxy-server=http://x:1']), true);
+  assert.equal(proxyGuard.hasProxyServerArg(['--no-proxy-server=0', '--proxy-server=http://x:1']), true);
+  assert.equal(proxyGuard.hasProxyServerArg(['--proxy-bypass-list=127.0.0.1;localhost', '--proxy-server=http://x:1']), true);
+  assert.equal(proxyGuard.hasProxyServerArg(['--proxy-server=direct://', '--proxy-server=http://x:1']), true);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --no-proxy-server=false --proxy-bypass-list="127.0.0.1;localhost" --proxy-server="socks5://10.0.0.2:1080"'), true);
+});
+
+test('prepareLaunchProxy fails closed with ERR_PROXY_UNBOUND_BLOCKED when caller injects bypass flags even on bound profiles', (t) => {
+  const fBound = makeFixture(t, { name: 'bound-acc', requireProxy: true, proxy: { url: 'socks5://10.0.0.2:1080' } });
+  const adversarialArgSets = [
+    ['--no-proxy-server'],
+    ['--proxy-pac-url=https://evil.example/pac.js'],
+    ['--proxy-bypass-list=*'],
+    ['--proxy-bypass-list', 'localhost, *'],
+    ['--proxy-server=direct://'],
+    ['--proxy-server=http://x:1', '--proxy-server=direct://'],
+    ['--proxy-server=""'],
+  ];
+
+  for (const extraArgs of adversarialArgSets) {
+    assert.throws(
+      () => proxyGuard.prepareLaunchProxy({
+        mode: 'managed',
+        userDataDir: fBound.userDataDir,
+        meta: { requireProxy: true, proxy: { url: 'socks5://10.0.0.2:1080' } },
+        options: { requireProxy: true, extraArgs },
+      }),
+      (err) => err.code === 'ERR_PROXY_UNBOUND_BLOCKED',
+      `Expected managed prepareLaunchProxy to reject ${JSON.stringify(extraArgs)}`,
+    );
+
+    assert.throws(
+      () => proxyGuard.prepareLaunchProxy({
+        mode: 'existing',
+        userDataDir: fBound.existingUserDataDir,
+        options: { requireProxy: true, proxy: { url: 'socks5://10.0.0.2:1080' }, extraArgs },
+      }),
+      (err) => err.code === 'ERR_PROXY_UNBOUND_BLOCKED',
+      `Expected existing prepareLaunchProxy to reject ${JSON.stringify(extraArgs)}`,
+    );
+  }
+
+  const cleanManaged = proxyGuard.prepareLaunchProxy({
+    mode: 'managed',
+    userDataDir: fBound.userDataDir,
+    meta: { requireProxy: true, proxy: { url: 'socks5://10.0.0.2:1080' } },
+    options: { requireProxy: true, extraArgs: ['--proxy-bypass-list=127.0.0.1;localhost'] },
+  });
+  assert.ok(cleanManaged.extraArgs.includes('--proxy-server=socks5://10.0.0.2:1080'));
+});
+
+test('CLI launch --require-proxy refuses unbound direct profiles and unproxied running sessions cleanly', (t) => {
+  const fDirect = makeFixture(t, { name: 'cli-direct-acc', proxy: { mode: 'direct' } });
+  fs.mkdirSync(path.join(fDirect.root, '.git'), { recursive: true });
+  const binPath = path.resolve(import.meta.dirname, '../../bin/webmcp-browser.mjs');
+  const env = {
+    ...process.env,
+    WEBMCP_HOME: fDirect.root,
+    WEBMCP_DATA_DIR: fDirect.root,
+    WEBMCP_CHROME_BINARY: process.execPath,
+  };
+
+  // 1. --profile-id ... --require-proxy --dry-run -> ERR_PROXY_UNBOUND_BLOCKED (exit 1, JSON + stderr)
+  const resFlag = spawnSync(
+    process.execPath,
+    [binPath, 'launch', '--profile-id', 'managed:acc-1', '--require-proxy', '--dry-run'],
+    { cwd: fDirect.root, env, encoding: 'utf8' },
+  );
+  assert.equal(resFlag.status, 1);
+  const flagJson = JSON.parse(resFlag.stdout);
+  assert.equal(flagJson.ok, false);
+  assert.equal(flagJson.code, 'ERR_PROXY_UNBOUND_BLOCKED');
+  assert.equal(flagJson.error, 'ERR_PROXY_UNBOUND_BLOCKED');
+  assert.match(resFlag.stderr, /ERR_PROXY_UNBOUND_BLOCKED/);
+
+  // 2. Boolean --require-proxy immediately before positional profile query does not swallow query
+  const resPositional = spawnSync(
+    process.execPath,
+    [binPath, 'launch', '--require-proxy', 'managed:acc-1', '--dry-run'],
+    { cwd: fDirect.root, env, encoding: 'utf8' },
+  );
+  assert.equal(resPositional.status, 1);
+  const posJson = JSON.parse(resPositional.stdout);
+  assert.equal(posJson.ok, false);
+  assert.equal(posJson.code, 'ERR_PROXY_UNBOUND_BLOCKED');
+  assert.match(resPositional.stderr, /ERR_PROXY_UNBOUND_BLOCKED/);
+
+  // 3. Running managed session lacking --proxy-server= -> ERR_RUNNING_CHROME_MISSING_PROXY (exit 2, needsRelaunch: true)
+  const fBound = makeFixture(t, { name: 'cli-bound-acc', proxy: { url: 'socks5://10.0.0.2:1080' } });
+  fs.mkdirSync(path.join(fBound.root, '.git'), { recursive: true });
+  const dummy = spawnDummyAlivePid(t);
+  sessions.rememberManagedSession(fBound.userDataDir, dummy.pid, fBound.sessionsFile);
+  const resAttach = spawnSync(
+    process.execPath,
+    [binPath, 'launch', '--profile-id', 'managed:acc-1', '--require-proxy', '--skip-proxy-gate', '--no-aqua-service', '--json'],
+    {
+      cwd: fBound.root,
+      env: {
+        ...process.env,
+        WEBMCP_HOME: fBound.root,
+        WEBMCP_DATA_DIR: fBound.root,
+        WEBMCP_CHROME_BINARY: process.execPath,
+      },
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(resAttach.status, 2);
+  const attachJson = JSON.parse(resAttach.stdout);
+  assert.equal(attachJson.ok, false);
+  assert.equal(attachJson.code, 'ERR_RUNNING_CHROME_MISSING_PROXY');
+  assert.equal(attachJson.needsRelaunch, true);
+  assert.equal(attachJson.exitCode, 2);
+  assert.match(resAttach.stderr, /ERR_RUNNING_CHROME_MISSING_PROXY/);
 });
 
