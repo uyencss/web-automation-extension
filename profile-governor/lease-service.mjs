@@ -548,6 +548,7 @@ export class ProfileGovernor {
       if (!resource || resource.currentLeaseId !== current.leaseId || current.fenceEpoch !== input.fenceEpoch || current.leaseBindingDigest !== input.leaseBindingDigest) return { released: false };
       current.state = 'cooldown';
       current.releasedAt = mutationNowIso;
+      current.fences = {};
       resource.currentLeaseId = null;
       resource.state = 'cooldown';
       resource.stateReasonCode = 'PROFILE_RELEASE';
@@ -555,6 +556,13 @@ export class ProfileGovernor {
       resource.needsReconciliation = true;
       resource.livenessSummary = live?.summary || 'unknown';
       appendEvent(next, { leaseId: current.leaseId, profileAlias: current.profileAlias, state: 'cooldown', stateReasonCode: 'PROFILE_RELEASE', fenceEpoch: current.fenceEpoch, bindingDigest: current.bindingDigest, bindingId: current.bindingId, runId: current.runId, timestamp: current.releasedAt, leaseBindingDigest: current.leaseBindingDigest, livenessSummary: live?.summary || 'unknown', grantRevokeStatus: 'revoked' });
+      const referencedLeaseIds = new Set();
+      for (const r of Object.values(next.resources)) { if (r.currentLeaseId) referencedLeaseIds.add(r.currentLeaseId); }
+      for (const e of next.events) { if (e.leaseId) referencedLeaseIds.add(e.leaseId); }
+      for (const rc of next.receipts) { if (rc.leaseId) referencedLeaseIds.add(rc.leaseId); }
+      for (const [id, item] of Object.entries(next.leases)) {
+        if (item.state === 'cooldown' && !referencedLeaseIds.has(id)) delete next.leases[id];
+      }
       return { released: true, leaseId: current.leaseId, state: 'cooldown' };
     });
   }

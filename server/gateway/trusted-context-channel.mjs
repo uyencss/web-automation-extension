@@ -87,6 +87,7 @@ export class TrustedContextChannel {
     onContextUpdate = null,
     permitStore = null,
     endpoint = null,
+    socketTimeoutMs = 5000,
   } = {}) {
     assertNoTcpTransport({ socketPath, endpoint });
     assertNoTcpTransport(process.env);
@@ -119,6 +120,8 @@ export class TrustedContextChannel {
     this.lastSeq = 0;
     this.currentContext = null;
     this._socketOwned = false;
+    this.socketTimeoutMs = Math.max(50, Number(socketTimeoutMs) || 5000);
+    this._sockets = new Set();
   }
 
   async _preparePosixSocket(endpoint) {
@@ -187,6 +190,10 @@ export class TrustedContextChannel {
   stop() {
     return new Promise((resolve) => {
       if (!this.server) return resolve();
+      for (const socket of this._sockets) {
+        try { socket.destroy(); } catch {}
+      }
+      this._sockets.clear();
       this.server.close(() => {
         try {
           if (this._socketOwned && fs.existsSync(this.socketPath)) {
@@ -214,6 +221,12 @@ export class TrustedContextChannel {
     let bytesRead = 0;
     let handled = false;
 
+    this._sockets.add(socket);
+    socket.once('close', () => this._sockets.delete(socket));
+    socket.setTimeout(this.socketTimeoutMs, () => {
+      this._sockets.delete(socket);
+      socket.destroy();
+    });
     socket.setEncoding('utf8');
 
     const replyAndClose = (responseObj, destroy = false) => {

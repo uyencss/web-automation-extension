@@ -14,6 +14,8 @@ import {
   RECEIPT_DIGEST_DOMAIN,
 } from './trusted-context-schema.mjs';
 
+const MAX_RECEIPT_REGISTRY_SIZE = 5000;
+
 function normalizeTargetOriginForReceipt(targetOrigin) {
   if (typeof targetOrigin !== 'string' || !targetOrigin) return null;
   try {
@@ -190,8 +192,11 @@ export class InteractiveRuntime {
   }
 
   _storeReceipt(receipt) {
-    if (receipt && receipt.receiptId) {
-      this._receiptRegistry.set(receipt.receiptId, receipt);
+    if (!receipt || !receipt.receiptId) return receipt;
+    if (this.mode === 'off' && !receipt.permitId) return receipt;
+    this._receiptRegistry.set(receipt.receiptId, receipt);
+    while (this._receiptRegistry.size > MAX_RECEIPT_REGISTRY_SIZE) {
+      this._receiptRegistry.delete(this._receiptRegistry.keys().next().value);
     }
     return receipt;
   }

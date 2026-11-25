@@ -23,6 +23,7 @@
     "./launchd-helper": "./lib/launchd-helper.mjs",
     "./mac-keychain-guard": "./chrome-launcher/mac-keychain-guard.js",
     "./mobile-cdp": "./webmcp-mobile-cdp/index.mjs",
+    "./ndjson-logger": "./lib/ndjson-logger.cjs",
     "./package.json": "./package.json",
     "./profile-governor": "./profile-governor/lease-service.mjs",
     "./service-auth-guard": "./lib/profile/service-auth-guard.mjs",

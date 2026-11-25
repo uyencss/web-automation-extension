@@ -33,47 +33,58 @@ export function isLoopbackAddress(remoteAddress) {
   return ALLOWED_LOOPBACK_ADDRS.has(String(remoteAddress).trim());
 }
 
-function writeAquaJson(res, statusCode, payload) {
+function writeAquaJson(res, statusCode, payload, extraHeaders = null) {
+  if (!res || res.writableEnded || res.destroyed) return;
   res.writeHead(statusCode, {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
+    ...(extraHeaders || {}),
   });
   res.end(JSON.stringify(payload));
 }
 
-function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
+export function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let total = 0;
+    let settled = false;
     const chunks = [];
+    const done = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      fn(arg);
+    };
     req.on('data', (chunk) => {
+      if (settled) return;
       total += chunk.length;
       if (total > maxBytes) {
         const err = new Error('Request body too large');
         err.statusCode = 413;
-        reject(err);
-        req.destroy();
+        chunks.length = 0;
+        req.pause();
+        done(reject, err);
         return;
       }
       chunks.push(chunk);
     });
     req.on('end', () => {
+      if (settled) return;
       const raw = Buffer.concat(chunks).toString('utf8').trim();
-      if (!raw) return resolve({});
+      if (!raw) return done(resolve, {});
       try {
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
           const err = new Error('JSON object body required');
           err.statusCode = 400;
-          return reject(err);
+          return done(reject, err);
         }
-        resolve(parsed);
+        done(resolve, parsed);
       } catch {
         const err = new Error('Invalid JSON payload');
         err.statusCode = 400;
-        reject(err);
+        done(reject, err);
       }
     });
-    req.on('error', reject);
+    req.on('error', (err) => done(reject, err));
   });
 }
 
@@ -164,7 +175,14 @@ export async function handleAquaBrokerRequest(req, res, {
   try {
     body = await readJsonBody(req);
   } catch (err) {
-    return writeAquaJson(res, err.statusCode || 400, { ok: false, error: 'INVALID_JSON', message: err.message });
+    const isTooLarge = err?.statusCode === 413;
+    if (isTooLarge && typeof res.setHeader === 'function' && !res.headersSent) res.setHeader('Connection', 'close');
+    return writeAquaJson(
+      res,
+      err?.statusCode || 400,
+      { ok: false, error: isTooLarge ? 'PAYLOAD_TOO_LARGE' : 'INVALID_JSON', message: err?.message || 'Invalid JSON payload' },
+      isTooLarge ? { Connection: 'close' } : null,
+    );
   }
 
   try {

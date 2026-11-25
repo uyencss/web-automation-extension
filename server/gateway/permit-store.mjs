@@ -4,11 +4,14 @@
  * All budget reservations are atomic; no partial mutation on deny.
  * Expiry is checked before GC to prevent post-expiry replay reopening.
  */
+const MAX_REVOKED_ENTRIES = 10000;
+const MARK_SEEN_GC_SKEW_MS = 1000;
+
 export class PermitStore {
   constructor() {
     this.seenNonce = new Map(); // nonce -> expiresAt (ms)
-    this.revoked = new Set(); // revocationId or permitId
-    this.budget = new Map(); // permitId -> { maxCalls, used }
+    this.revoked = new Set(); // revocationId or permitId (FIFO capped)
+    this.budget = new Map(); // permitId -> { maxCalls, used, expiresAt? }
     this._queue = Promise.resolve();
   }
 
@@ -18,20 +21,35 @@ export class PermitStore {
     return this.seenNonce.has(nonce);
   }
 
-  markSeen(nonce, expiresAt) {
+  markSeen(nonce, expiresAt, nowMs = Date.now()) {
+    this.gc(nowMs, MARK_SEEN_GC_SKEW_MS);
     const exp = Date.parse(expiresAt);
-    const ttl = Number.isNaN(exp) ? Date.now() + 60000 : exp;
+    const ttl = Number.isNaN(exp) ? nowMs + 60000 : exp;
     this.seenNonce.set(nonce, ttl);
   }
 
-  gc(nowMs = Date.now()) {
+  gc(nowMs = Date.now(), skewMs = 0) {
+    const cutoff = nowMs - skewMs;
     for (const [nonce, exp] of this.seenNonce) {
-      if (exp < nowMs) this.seenNonce.delete(nonce);
+      if (exp < cutoff) this.seenNonce.delete(nonce);
+    }
+    for (const [permitId, entry] of this.budget) {
+      if (Number.isFinite(entry?.expiresAt) && entry.expiresAt < cutoff) {
+        this.budget.delete(permitId);
+      }
+    }
+  }
+
+  _addRevoked(id) {
+    if (!id) return;
+    this.revoked.add(id);
+    while (this.revoked.size > MAX_REVOKED_ENTRIES) {
+      this.revoked.delete(this.revoked.values().next().value);
     }
   }
 
   revoke(revocationId) {
-    if (revocationId) this.revoked.add(revocationId);
+    this._addRevoked(revocationId);
   }
 
   isRevoked(revocationId, permitId) {
@@ -39,8 +57,8 @@ export class PermitStore {
   }
 
   revokeBoth(permitId, revocationId) {
-    if (permitId) this.revoked.add(permitId);
-    if (revocationId) this.revoked.add(revocationId);
+    this._addRevoked(permitId);
+    this._addRevoked(revocationId);
   }
 
   /**
@@ -71,10 +89,11 @@ export class PermitStore {
       const ceiling = entry ? Math.min(entry.maxCalls, maxCalls) : maxCalls;
       if (used + count > ceiling) return { ok: false, reason: 'EXECUTION_BUDGET_EXHAUSTED' };
       if (!entry) {
-        entry = { maxCalls, used: 0 };
+        entry = { maxCalls, used: 0, ...(!Number.isNaN(exp) ? { expiresAt: exp } : {}) };
         this.budget.set(key, entry);
-      } else if (maxCalls !== entry.maxCalls) {
-        entry.maxCalls = Math.min(entry.maxCalls, maxCalls);
+      } else {
+        if (maxCalls !== entry.maxCalls) entry.maxCalls = Math.min(entry.maxCalls, maxCalls);
+        if (entry.expiresAt === undefined && !Number.isNaN(exp)) entry.expiresAt = exp;
       }
       entry.used += count;
     }
@@ -104,12 +123,14 @@ export class PermitStore {
     if (!key) return false;
     const maxCalls = permit.budget?.maxCalls;
     if (maxCalls === undefined || maxCalls === null) return true;
+    const exp = Date.parse(permit?.expiresAt);
     let entry = this.budget.get(key);
     if (!entry) {
-      entry = { maxCalls, used: 0 };
+      entry = { maxCalls, used: 0, ...(!Number.isNaN(exp) ? { expiresAt: exp } : {}) };
       this.budget.set(key, entry);
-    } else if (maxCalls !== entry.maxCalls) {
-      entry.maxCalls = Math.min(entry.maxCalls, maxCalls);
+    } else {
+      if (maxCalls !== entry.maxCalls) entry.maxCalls = Math.min(entry.maxCalls, maxCalls);
+      if (entry.expiresAt === undefined && !Number.isNaN(exp)) entry.expiresAt = exp;
     }
     if (entry.used + count > entry.maxCalls) return false;
     entry.used += count;

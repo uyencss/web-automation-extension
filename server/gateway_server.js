@@ -14,13 +14,14 @@ import { digestCanonical } from './gateway/trusted-context-schema.mjs';
 import { GovernorRepository } from '../profile-governor/repository.mjs';
 import { ProfileGovernor } from '../profile-governor/lease-service.mjs';
 import { createGovernorRegistryAdapter } from './gateway/governor-registry-adapter.mjs';
-import { handleAquaBrokerRequest, isLoopbackAddress } from './gateway/aqua-broker.mjs';
+import { handleAquaBrokerRequest, isLoopbackAddress, readJsonBody } from './gateway/aqua-broker.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const { getCommandGroups, listCommands } = require('../catalog/command-catalog.js');
+const { createLogger, runWithCorrId, startMemHeartbeat } = require('../lib/ndjson-logger.cjs');
 const CATALOG_COMMANDS = listCommands();
 const CATALOG_METHODS = new Set(CATALOG_COMMANDS.map((command) => command.name));
 const GATEWAY_LOCAL_RAW_METHODS = new Set(['list_profiles', 'set_profile_name', 'listDownloadEvents', 'clearDownloadEvents']);
@@ -40,7 +41,11 @@ const HOST = process.env.WEBMCP_GATEWAY_HOST || '127.0.0.1';
 const TOKEN = process.env.WEBMCP_GATEWAY_TOKEN || '';
 const COMMAND_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_TIMEOUT_MS || 60000);
 const KEEPALIVE_PING_MS = Number(process.env.WEBMCP_GATEWAY_PING_MS || 15000);
+const HANDSHAKE_TIMEOUT_MS = Number(process.env.WEBMCP_GATEWAY_HANDSHAKE_MS || 30000);
 const MAX_DOWNLOAD_EVENTS_PER_PROFILE = Number(process.env.WEBMCP_DOWNLOAD_EVENT_LIMIT || 200);
+const MAX_DOWNLOAD_EVENT_PROFILES = 64;
+const MAX_API_BODY_BYTES = 16 * 1024 * 1024;
+const MAX_INTERACTIVE_BODY_BYTES = 1024 * 1024;
 const PROFILE_ID_BINDING_DOMAIN = 'webmcp-digest-v1:profile-id-binding';
 
 function profileIdBindingDigest(profileId) {
@@ -367,8 +372,11 @@ function normalizeResult(result) {
 }
 
 function writeJson(res, statusCode, payload) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(payload));
+  if (!res || res.writableEnded || res.destroyed) return;
+  try {
+    if (!res.headersSent) res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  } catch {}
 }
 
 const EXTENSION_ERROR_MESSAGE_MAX = 512;
@@ -445,6 +453,9 @@ function createGatewayServer({
   token = TOKEN,
   commandTimeoutMs = COMMAND_TIMEOUT_MS,
   keepalivePingMs = KEEPALIVE_PING_MS,
+  handshakeTimeoutMs = HANDSHAKE_TIMEOUT_MS,
+  logger = null,
+  logFile = null,
   interactiveRuntime = null,
   socketPath = process.env.WEBMCP_TRUSTED_CONTEXT_SOCKET || null,
   publicKey = process.env.WEBMCP_RUNNER_PUBLIC_KEY || process.env.WEBMCP_GATEWAY_PUBLIC_KEY || null,
@@ -457,6 +468,10 @@ function createGatewayServer({
   routeMap = null,
   aliasToPhysicalMap = null,
 } = {}) {
+  const isTestRun = process.env.NODE_ENV === 'test' || Boolean(process.env.NODE_TEST_CONTEXT);
+  const defaultLogDir = process.env.WEBMCP_LOG_DIR || path.join(process.env.WEBMCP_HOME || path.join(os.homedir(), '.webmcp'), 'logs');
+  const log = logger || createLogger({ proc: 'gateway', filePath: logFile ?? (process.env.WEBMCP_LOG_FILE || (isTestRun ? '' : path.join(defaultLogDir, 'gateway.ndjson'))) });
+  let memHeartbeat = null;
   const extensions = new Map();
   const pendingConnections = new Set();
   const pendingHttpRequests = new Map();
@@ -552,10 +567,10 @@ function createGatewayServer({
             }).governor;
             wired = true;
           } else {
-            console.log(`[Gateway] Governor bootstrap reconcile skipped (PROFILE_REGISTRY_UNAVAILABLE)`);
+            log.warn('Governor bootstrap reconcile skipped', { code: 'PROFILE_REGISTRY_UNAVAILABLE' });
           }
         } catch (error) {
-          console.log(`[Gateway] Governor bootstrap reconcile skipped (${error?.code || error?.message || 'UNKNOWN'})`);
+          log.warn('Governor bootstrap reconcile skipped', { code: error?.code || error?.message || 'UNKNOWN' });
         }
         if (!wired && !gatewayGovernor) {
           gatewayGovernor = getGatewayGovernorSingleton({ liveness: gatewayLiveness }).governor;
@@ -608,6 +623,15 @@ function createGatewayServer({
       }
     }
     return details;
+  }
+
+  function resolveLogProfile(profId) {
+    if (runtime?.physicalRouteMap && profId) {
+      for (const [alias, phys] of runtime.physicalRouteMap.entries()) {
+        if (phys === profId) return alias;
+      }
+    }
+    return '[redacted]';
   }
 
   function resolveTarget(profileId, logicalHints = null, trustedPhysicalIds = null) {
@@ -715,6 +739,9 @@ function createGatewayServer({
     });
     while (events.length > MAX_DOWNLOAD_EVENTS_PER_PROFILE) events.shift();
     downloadEventsByProfile.set(profileId, events);
+    while (downloadEventsByProfile.size > MAX_DOWNLOAD_EVENT_PROFILES) {
+      downloadEventsByProfile.delete(downloadEventsByProfile.keys().next().value);
+    }
   }
 
   function listDownloadEvents(profileId, params = {}) {
@@ -737,7 +764,7 @@ function createGatewayServer({
   function clearDownloadEvents(profileId) {
     if (profileId) {
       const cleared = (downloadEventsByProfile.get(profileId) || []).length;
-      downloadEventsByProfile.set(profileId, []);
+      downloadEventsByProfile.delete(profileId);
       return { schema: 'webmcp-download-events-cleared/1', profileId, cleared };
     }
     const cleared = [...downloadEventsByProfile.values()].reduce((sum, events) => sum + events.length, 0);
@@ -746,7 +773,7 @@ function createGatewayServer({
   }
 
   // ── HTTP Server ──────────────────────────────────────────────
-  const server = http.createServer((req, res) => {
+  const server = http.createServer((req, res) => runWithCorrId(req.headers['x-webmcp-corr-id'], () => {
     const reqPath = (req.url || '').split('?')[0];
     if (reqPath.startsWith('/api/aqua/')) {
       handleAquaBrokerRequest(req, res, { tokenMatches, extractToken, token, connectedProfileIds, port }).catch((err) => {
@@ -764,7 +791,7 @@ function createGatewayServer({
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-webmcp-token');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-webmcp-token, x-webmcp-corr-id');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
@@ -816,17 +843,13 @@ function createGatewayServer({
         return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
       }
 
-      let body = '';
-      req.on('data', (chunk) => {
-        body += chunk.toString();
-      });
-
-      req.on('end', async () => {
+      (async () => {
         let requestPayload;
         try {
-          requestPayload = JSON.parse(body);
-        } catch {
-          return writeJson(res, 400, { error: 'Invalid JSON request payload' });
+          requestPayload = await readJsonBody(req, MAX_API_BODY_BYTES);
+        } catch (err) {
+          if (err?.statusCode === 413 && !res.headersSent) res.setHeader('Connection', 'close');
+          return writeJson(res, err?.statusCode || 400, { error: err?.statusCode === 413 ? 'Request body too large' : 'Invalid JSON request payload' });
         }
 
         const { method, params, profileId, permit, targetOrigin } = requestPayload;
@@ -969,7 +992,7 @@ function createGatewayServer({
                     decision: externalUse.decision,
                     reason: 'PROFILE_EXTERNAL_USE',
                   });
-                  console.log(`[Gateway] External-use observe pass-through: decision=would-deny reason=PROFILE_EXTERNAL_USE (divergence logged, continuing)`);
+                  log.info('External-use observe pass-through', { decision: 'would-deny', reason: 'PROFILE_EXTERNAL_USE' });
                 } else {
                   const blockedReceipt = runtime.createBlockedReceipt({
                     permit,
@@ -980,7 +1003,7 @@ function createGatewayServer({
                     reason: 'PROFILE_EXTERNAL_USE',
                     sequence: 1,
                   });
-                  console.log(`[Gateway] External-use deny: decision=${externalUse.decision} reason=PROFILE_EXTERNAL_USE`);
+                  log.warn('External-use deny', { decision: externalUse.decision, reason: 'PROFILE_EXTERNAL_USE' });
                   return writeJson(res, 403, {
                     error: 'PROFILE_EXTERNAL_USE',
                     decision: externalUse.decision,
@@ -990,7 +1013,7 @@ function createGatewayServer({
                 }
               }
             } catch (error) {
-              console.log(`[Gateway] External-use probe skipped for profile=[redacted] (${error?.code || 'UNKNOWN'})`);
+              log.warn('External-use probe skipped', { code: error?.code || 'UNKNOWN' });
             }
           }
         }
@@ -1053,7 +1076,7 @@ function createGatewayServer({
           const fenceObservePassThrough = enforcement.decision === 'would-deny'
             && enforcement.fenceLayer === true;
           if (fenceObservePassThrough) {
-            console.log(`[Gateway] Fence observe pass-through: reason=${enforcement.reason} actionClass=${enforcement.actionClass} (divergence logged, forwarding)`);
+            log.info('Fence observe pass-through', { reason: enforcement.reason, actionClass: enforcement.actionClass });
           }
 
           // Handle batch denied with zero-forward: create blocked child receipts
@@ -1068,7 +1091,7 @@ function createGatewayServer({
                 actions: batchActions.map((a) => ({ method: a.method || a.tool, params: a.params || {}, targetOrigin: a.targetOrigin })),
                 reason: enforcement.reason || 'EXECUTION_PERMIT_SCOPE_DENIED',
               });
-              console.log(`[Gateway] Batch denied: reason=${enforcement.reason} actionClass=${enforcement.actionClass} decision=${enforcement.decision}`);
+              log.warn('Batch denied', { reason: enforcement.reason, actionClass: enforcement.actionClass, decision: enforcement.decision });
               return writeJson(res, 403, {
                 error: enforcement.reason,
                 decision: enforcement.decision,
@@ -1078,13 +1101,7 @@ function createGatewayServer({
                 receipts: blocked.children,
               });
             }
-            console.log(`[Gateway] Request denied: reason=${enforcement.reason} actionClass=${enforcement.actionClass} decision=${enforcement.decision}`);
-            // A3 physical fence audit: fence-layer denies carry their typed
-            // code end-to-end (PROFILE_FENCE_REQUIRED when the proof is
-            // absent, PROFILE_FENCE_STALE when it is no longer current).
-            if (enforcement.reason === 'PROFILE_FENCE_REQUIRED' || enforcement.reason === 'PROFILE_FENCE_STALE') {
-              console.log(`[Gateway] Physical fence deny: reason=${enforcement.reason} decision=${enforcement.decision} actionClass=${enforcement.actionClass}`);
-            }
+            log.warn('Request denied', { reason: enforcement.reason, actionClass: enforcement.actionClass, decision: enforcement.decision });
             return writeJson(res, 403, {
               error: enforcement.reason,
               decision: enforcement.decision,
@@ -1114,41 +1131,21 @@ function createGatewayServer({
               receipt: blockedReceipt,
             });
           }
-          if (downloadMethod === 'listDownloadEvents') {
-            const result = listDownloadEvents(effectiveProfileId, params || {});
-            if (isInteractive) {
-              const ctx = runtime.getCurrentContext();
-              const derivedOrigin = deriveTargetOriginForMethod(method, params || {}, targetOrigin);
-              const finalReceipt = runtime.createAppliedReceipt({
-                permit,
-                context: ctx,
-                method,
-                params: params || {},
-                targetOrigin: derivedOrigin,
-                result,
-                sequence: 1,
-              });
-              return writeJson(res, 200, { result, receipt: finalReceipt });
-            }
-            return writeJson(res, 200, { result });
-          }
-          if (downloadMethod === 'clearDownloadEvents') {
-            const result = clearDownloadEvents(effectiveProfileId);
-            if (isInteractive) {
-              const ctx = runtime.getCurrentContext();
-              const derivedOrigin = deriveTargetOriginForMethod(method, params || {}, targetOrigin);
-              const finalReceipt = runtime.createAppliedReceipt({
-                permit,
-                context: ctx,
-                method,
-                params: params || {},
-                targetOrigin: derivedOrigin,
-                result,
-                sequence: 1,
-              });
-              return writeJson(res, 200, { result, receipt: finalReceipt });
-            }
-            return writeJson(res, 200, { result });
+          if (downloadMethod === 'listDownloadEvents' || downloadMethod === 'clearDownloadEvents') {
+            const result = downloadMethod === 'listDownloadEvents'
+              ? listDownloadEvents(effectiveProfileId, params || {})
+              : clearDownloadEvents(effectiveProfileId);
+            if (!isInteractive) return writeJson(res, 200, { result });
+            const finalReceipt = runtime.createAppliedReceipt({
+              permit,
+              context: runtime.getCurrentContext(),
+              method,
+              params: params || {},
+              targetOrigin: deriveTargetOriginForMethod(method, params || {}, targetOrigin),
+              result,
+              sequence: 1,
+            });
+            return writeJson(res, 200, { result, receipt: finalReceipt });
           }
         }
 
@@ -1245,6 +1242,10 @@ function createGatewayServer({
         const actionCount = Array.isArray(batchItems) ? Math.max(batchItems.length, 1) : 1;
         const effectiveTimeout = Math.min(commandTimeoutMs * actionCount, 300_000);
 
+        if (!ws || ws.readyState !== 1) {
+          return writeJson(res, 502, { error: 'Chrome extension connection is not open' });
+        }
+
         const timeoutTimer = setTimeout(() => {
           const pending = pendingHttpRequests.get(rpcId);
           if (pending) {
@@ -1313,69 +1314,66 @@ function createGatewayServer({
           forwardedParams,
         });
 
-        ws.send(JSON.stringify(extensionPayload));
-        console.log(`[Gateway] Forwarded command: ID=${rpcId} | Method=${method}`);
+        res.once('close', () => {
+          if (res.writableEnded) return;
+          const p = pendingHttpRequests.get(rpcId);
+          if (p) { clearTimeout(p.timeoutTimer); pendingHttpRequests.delete(rpcId); }
+        });
+        try {
+          if (ws.readyState !== 1) throw new Error('WebSocket not open');
+          ws.send(JSON.stringify(extensionPayload));
+        } catch (err) {
+          clearTimeout(timeoutTimer);
+          pendingHttpRequests.delete(rpcId);
+          log.warn('Failed to forward command to extension', { rpcId, method, err });
+          return writeJson(res, 502, { error: 'Failed to send command to Chrome extension' });
+        }
+        log.info('Forwarded command', { rpcId, method });
+      })().catch((err) => {
+        log.error('Unhandled /api request error', err);
+        writeJson(res, 500, { error: 'Internal gateway error' });
       });
     } else if (req.method === 'POST' && req.url === '/interactive/receipts/verify') {
       if (!tokenMatches(extractToken(req), token)) {
         return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
       }
-      let body = '';
-      req.on('data', (chunk) => { body += chunk.toString(); });
-      req.on('end', () => {
-        let payload;
-        try {
-          payload = JSON.parse(body);
-        } catch {
-          return writeJson(res, 400, { error: 'Invalid JSON' });
-        }
+      readJsonBody(req, MAX_INTERACTIVE_BODY_BYTES).then((payload) => {
         const receipts = payload?.receipts;
-        if (!Array.isArray(receipts) || receipts.length === 0) {
-          return writeJson(res, 400, { error: 'Malformed request: receipts array required' });
-        }
-        // Validate each receipt has required fields without echoing raw
+        if (!Array.isArray(receipts) || receipts.length === 0) return writeJson(res, 400, { error: 'Malformed request: receipts array required' });
         for (const r of receipts) {
           if (!r || typeof r !== 'object' || typeof r.receiptId !== 'string' || typeof r.receiptDigest !== 'string' || typeof r.actionDigest !== 'string') {
             return writeJson(res, 400, { error: 'Malformed receipt' });
           }
         }
         const result = runtime.verifyReceipts(receipts);
-        if (!result.ok) {
-          return writeJson(res, 403, { error: 'Receipt verification failed', reason: result.reason });
-        }
+        if (!result.ok) return writeJson(res, 403, { error: 'Receipt verification failed', reason: result.reason });
         return writeJson(res, 200, { ok: true, verified: true });
+      }, (err) => {
+        if (err?.statusCode === 413 && !res.headersSent) res.setHeader('Connection', 'close');
+        return writeJson(res, err?.statusCode || 400, { error: err?.statusCode === 413 ? 'Request body too large' : 'Invalid JSON' });
       });
     } else if (req.method === 'POST' && req.url === '/interactive/revoke') {
       if (!tokenMatches(extractToken(req), token)) {
         return writeJson(res, 401, { error: 'Unauthorized: missing or invalid gateway token' });
       }
-      let body = '';
-      req.on('data', (chunk) => { body += chunk.toString(); });
-      req.on('end', () => {
-        let payload;
-        try {
-          payload = JSON.parse(body);
-        } catch {
-          return writeJson(res, 400, { error: 'Invalid JSON' });
-        }
+      readJsonBody(req, MAX_INTERACTIVE_BODY_BYTES).then((payload) => {
         const permitId = payload?.permitId;
         const revocationId = payload?.revocationId;
         if ((!permitId || typeof permitId !== 'string') && (!revocationId || typeof revocationId !== 'string')) {
           return writeJson(res, 400, { error: 'Malformed request: permitId or revocationId required' });
         }
-        if (permitId && typeof permitId !== 'string') {
-          return writeJson(res, 400, { error: 'Malformed permitId' });
-        }
-        if (revocationId && typeof revocationId !== 'string') {
-          return writeJson(res, 400, { error: 'Malformed revocationId' });
-        }
+        if (permitId && typeof permitId !== 'string') return writeJson(res, 400, { error: 'Malformed permitId' });
+        if (revocationId && typeof revocationId !== 'string') return writeJson(res, 400, { error: 'Malformed revocationId' });
         const result = runtime.revokePermit({ permitId, revocationId });
         return writeJson(res, 200, { ok: true, revoked: result.revoked });
+      }, (err) => {
+        if (err?.statusCode === 413 && !res.headersSent) res.setHeader('Connection', 'close');
+        return writeJson(res, err?.statusCode || 400, { error: err?.statusCode === 413 ? 'Request body too large' : 'Invalid JSON' });
       });
     } else {
       writeJson(res, 404, { error: 'Not Found. Exposes GET /health and POST /api for automation.' });
     }
-  });
+  }));
   const activeHttpSockets = new Set();
   server.on('connection', (socket) => {
     activeHttpSockets.add(socket);
@@ -1388,16 +1386,37 @@ function createGatewayServer({
   wss.on('connection', (ws, req) => {
     pendingConnections.add(ws);
     ws._profileId = null;
-    console.log(`[Gateway] Chrome Extension connected from ${req.socket.remoteAddress} (awaiting handshake)`);
+    ws._lastPongAt = Date.now();
+    log.info('Chrome Extension connected (awaiting handshake)', { remoteAddress: req.socket.remoteAddress });
+
+    ws.on('error', () => { try { ws.terminate(); } catch {} });
+    ws.on('pong', () => { ws._lastPongAt = Date.now(); });
+
+    const handshakeTimer = setTimeout(() => {
+      if (pendingConnections.has(ws)) {
+        pendingConnections.delete(ws);
+        log.warn('Extension handshake timed out');
+        try { ws.terminate(); } catch {}
+      }
+    }, handshakeTimeoutMs);
+    handshakeTimer.unref?.();
+    ws._handshakeTimer = handshakeTimer;
 
     const keepAliveTimer = setInterval(() => {
+      if (Date.now() - ws._lastPongAt > keepalivePingMs * 3) {
+        log.warn('Extension pong timeout, terminating socket', { profile: resolveLogProfile(ws._profileId) });
+        try { ws.terminate(); } catch {}
+        return;
+      }
       if (ws.readyState === 1) {
-        ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'ping', params: { ts: Date.now() } }));
+        try { ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'ping', params: { ts: Date.now() } })); } catch { try { ws.terminate(); } catch {} }
       }
     }, keepalivePingMs);
+    keepAliveTimer.unref?.();
     keepAliveTimers.add(keepAliveTimer);
 
     ws.on('message', (data) => {
+      ws._lastPongAt = Date.now();
       let msg;
       try {
         msg = JSON.parse(data.toString());
@@ -1418,11 +1437,7 @@ function createGatewayServer({
 
           if ('error' in msg) {
             const extensionError = sanitizeExtensionError(msg.error);
-            console.log(
-              `[Gateway] Error response received for ID=${msg.id}`
-              + (extensionError?.code !== undefined ? ` code=${extensionError.code}` : '')
-              + (extensionError?.message ? ` message=${extensionError.message}` : ''),
-            );
+            log.warn('Extension error response', { rpcId: msg.id, code: extensionError?.code, message: extensionError?.message });
             let finalReceipt = null;
             let receipts = null;
             if (isBatch && Array.isArray(batchActions)) {
@@ -1476,11 +1491,11 @@ function createGatewayServer({
               receipt: finalReceipt,
             });
           } else {
-            console.log(`[Gateway] Success response received for ID=${msg.id}`);
+            log.debug('Extension success response', { rpcId: msg.id });
             const normalized = normalizeResult(msg.result) || {};
             if (normalized._pageToolError) {
               const { _pageToolError } = normalized;
-              console.log(`[Gateway] Page tool error for ID=${msg.id}`);
+              log.warn('Page tool error', { rpcId: msg.id });
               let finalReceipt = null;
               let receipts = null;
               if (isBatch && Array.isArray(batchActions)) {
@@ -1609,6 +1624,8 @@ function createGatewayServer({
       if ('method' in msg) {
         const { method, params = {} } = msg;
         if (method === 'extensionReady') {
+          clearTimeout(handshakeTimer);
+          ws._handshakeTimer = null;
           const profId = params.profileId || `anon-${req.socket.remoteAddress}-${Date.now()}`;
           ws._profileId = profId;
           ws._profileEmail = params.profileEmail || '';
@@ -1622,37 +1639,27 @@ function createGatewayServer({
             try { existing.close(); } catch { /* already closed */ }
           }
           extensions.set(profId, ws);
-          let logProfile = '[redacted]';
-          if (runtime && runtime.physicalRouteMap) {
-            for (const [alias, phys] of runtime.physicalRouteMap.entries()) {
-              if (phys === profId) { logProfile = alias; break; }
-            }
-          }
-          console.log(`[Gateway] Extension ready: ${params.name} v${params.version} | profile=${logProfile} | email=${ws._profileEmail} | name=${ws._profileName}`);
+          log.info('Extension ready', { extensionName: params.name, version: params.version, profile: resolveLogProfile(profId), hasEmail: Boolean(ws._profileEmail) });
         } else if (method === 'heartbeat' || method === 'pong') {
-          // Silent keep-alive traffic
+          ws._lastPongAt = Date.now();
         } else if (method === 'downloadStarted' || method === 'downloadChanged') {
           recordDownloadEvent(ws._profileId, method, params);
         } else {
-          console.log(`[Gateway] Event from Extension: ${method}`, params);
+          log.debug('Event from Extension', { method, paramKeys: Object.keys(params || {}).slice(0, 16) });
         }
       }
     });
 
     ws.on('close', () => {
+      clearTimeout(handshakeTimer);
+      ws._handshakeTimer = null;
       clearInterval(keepAliveTimer);
       keepAliveTimers.delete(keepAliveTimer);
       pendingConnections.delete(ws);
       if (ws._profileId && extensions.get(ws._profileId) === ws) {
         extensions.delete(ws._profileId);
       }
-      let logProfile = '[redacted]';
-      if (runtime && runtime.physicalRouteMap && ws._profileId) {
-        for (const [alias, phys] of runtime.physicalRouteMap.entries()) {
-          if (phys === ws._profileId) { logProfile = alias; break; }
-        }
-      }
-      console.log(`[Gateway] Chrome Extension disconnected | profile=${logProfile}`);
+      log.info('Chrome Extension disconnected', { profile: resolveLogProfile(ws._profileId) });
 
       for (const [rpcId, pending] of pendingHttpRequests) {
         if (pending.ws === ws) {
@@ -1722,7 +1729,7 @@ function createGatewayServer({
           try {
             aliases = gatewayGovernorAdapter.listAliases();
           } catch (error) {
-            console.log(`[Gateway] Governor bootstrap reconcile skipped (${error?.code || error?.message || 'UNKNOWN'})`);
+            log.warn('Governor bootstrap reconcile skipped', { code: error?.code || error?.message || 'UNKNOWN' });
             aliases = [];
           }
         } else {
@@ -1730,103 +1737,90 @@ function createGatewayServer({
         }
         const reconciled = await reconcileGatewayProfiles({ governor: gatewayGovernor, aliases });
         const settled = reconciled.filter((r) => r.ok && (r.state === 'quarantined' || r.state === 'external_use'));
-        if (settled.length) {
-          console.log(`[Gateway] Governor reconcile settled ${settled.length} profile(s) at bootstrap (quarantine/external_use)`);
-        }
-        const failed = reconciled.filter((r) => !r.ok);
-        for (const f of failed) {
-          console.log(`[Gateway] Governor reconcile skipped profile=[redacted] (${f.code || 'UNKNOWN'})`);
+        if (settled.length) log.info('Governor reconcile settled profiles at bootstrap', { count: settled.length });
+        for (const f of reconciled.filter((r) => !r.ok)) {
+          log.warn('Governor reconcile skipped profile', { code: f.code || 'UNKNOWN' });
         }
       } catch (error) {
-        console.log(`[Gateway] Governor bootstrap reconcile skipped (${error?.code || error?.message || 'UNKNOWN'})`);
+        log.warn('Governor bootstrap reconcile skipped', { code: error?.code || error?.message || 'UNKNOWN' });
       }
     }
     await new Promise((resolve) => {
-      server.listen(port, host, () => {
-        resolve();
-      });
+      server.listen(port, host, () => resolve());
     });
+    memHeartbeat = startMemHeartbeat(log, { rssWarnMb: 256, fdWarn: 512, enableSigusr2: !isTestRun });
     const boundPort = server.address()?.port || port;
     return { server, wss, runtime, port: boundPort, host };
   }
 
   async function close() {
-    for (const timer of keepAliveTimers) {
-      clearInterval(timer);
+    memHeartbeat?.stop();
+    memHeartbeat = null;
+    for (const pending of pendingHttpRequests.values()) {
+      clearTimeout(pending.timeoutTimer);
+      writeJson(pending.res, 503, { error: 'Gateway server closing' });
     }
+    pendingHttpRequests.clear();
+    for (const timer of keepAliveTimers) clearInterval(timer);
     keepAliveTimers.clear();
-
     for (const ws of extensions.values()) {
+      if (ws._handshakeTimer) clearTimeout(ws._handshakeTimer);
       try { ws.terminate(); } catch {}
     }
     for (const ws of pendingConnections) {
+      if (ws._handshakeTimer) clearTimeout(ws._handshakeTimer);
       try { ws.terminate(); } catch {}
     }
-
+    if (gatewayGovernor) {
+      try { gatewayGovernor.close?.(); } catch {}
+      resetGatewayGovernorSingleton();
+    }
     await runtime.stop();
-
     await new Promise((resolve) => {
       wss.close(() => {
-        // `server.close()` stops accepting new connections but can wait for
-        // HTTP keep-alive sockets indefinitely. A foreground CLI must be able
-        // to finish SIGTERM shutdown even when a health/API client kept its
-        // socket open.
-        if (typeof server.closeAllConnections === 'function') {
-          server.closeAllConnections();
-        } else if (typeof server.closeIdleConnections === 'function') {
-          server.closeIdleConnections();
-        } else {
-          for (const socket of activeHttpSockets) socket.destroy();
-        }
-        server.close(() => {
-          resolve();
-        });
+        if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+        else if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+        else for (const socket of activeHttpSockets) socket.destroy();
+        server.close(() => resolve());
       });
     });
+    await log.close();
   }
 
-  return {
-    server,
-    wss,
-    runtime,
-    start,
-    close,
-    resolveTarget,
-    connectedProfileIds,
-    governor: gatewayGovernor,
-    fenceMode: runtimeFenceMode,
-  };
+  return { server, wss, runtime, start, close, resolveTarget, connectedProfileIds, governor: gatewayGovernor, fenceMode: runtimeFenceMode, logger: log };
 }
 
 export {
-  createGatewayServer,
-  PORT,
-  HOST,
-  TOKEN,
-  sanitizeParams,
-  sanitizeParamsForTest,
-  mapGatewayCommand,
-  mapGatewayRequest,
-  rawOriginScopeError,
-  getKnownRawMethods,
+  createGatewayServer, PORT, HOST, TOKEN,
+  sanitizeParams, sanitizeParamsForTest,
+  mapGatewayCommand, mapGatewayRequest, rawOriginScopeError, getKnownRawMethods,
 };
 
 export default createGatewayServer;
 
-// Start Gateway Server if run directly
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
   const instance = createGatewayServer();
+  let crashing = false;
+  process.on('uncaughtException', (err) => {
+    if (crashing) return;
+    crashing = true;
+    instance.logger.fatal('Uncaught exception in gateway', err);
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    instance.logger.error('Unhandled rejection in gateway', reason instanceof Error ? reason : { reason: String(reason) });
+    instance.logger.flushSync();
+  });
+  const shutdown = (signal) => {
+    instance.logger.info('Shutting down gateway', { signal });
+    instance.close().catch(() => {}).finally(() => process.exit(0));
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
   instance.start().then(({ port, host }) => {
-    console.log('='.repeat(70));
-    console.log(`  WebMCP Automation Gateway Server is running!`);
-    console.log(`  - Bind Host: ${host}${host === '0.0.0.0' ? ' (exposed to LAN)' : ' (loopback only)'}`);
-    console.log(`  - Gateway v${GATEWAY_VERSION || '?'} | Extension v${EXTENSION_VERSION || '?'}`);
-    console.log(`  - Auth: ${TOKEN ? 'token required' : 'open (no token set)'}`);
-    console.log(`  - Extension WebSocket Endpoint: ws://${host}:${port}`);
-    console.log(`  - Health Endpoint: GET http://${host}:${port}/health`);
-    console.log(`  - HTTP API Endpoint for Agents/Scripts: POST http://${host}:${port}/api`);
-    console.log(`  - Command Timeout: ${COMMAND_TIMEOUT_MS}ms`);
-    console.log('='.repeat(70));
-    console.log('Load/reload the Extension in Chrome to connect.');
+    instance.logger.info('WebMCP Automation Gateway Server running', { host, port, gatewayVersion: GATEWAY_VERSION, extensionVersion: EXTENSION_VERSION, authRequired: Boolean(TOKEN), timeoutMs: COMMAND_TIMEOUT_MS });
+  }).catch((err) => {
+    instance.logger.fatal('Gateway failed to start', err);
+    process.exit(1);
   });
 }

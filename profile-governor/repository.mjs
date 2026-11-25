@@ -395,7 +395,7 @@ export class GovernorRepository {
       if (!persisted.isFile() || (persisted.mode & 0o777) !== 0o600) throw new Error('state-not-private');
       this._syncDirectory(dirname(this.statePath));
     } catch (error) { if (fd !== undefined) closeSync(fd); if (error?.code?.startsWith?.('PROFILE_')) throw error; throw profileError('PROFILE_GOVERNOR_UNAVAILABLE', 'Governor state could not be persisted'); }
-    finally { try { rmdirSync(tmpDir); } catch { /* temp directory is private and normally empty */ } }
+    finally { try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* temp directory is private */ } }
   }
 
   _assertSafeStateTarget() {

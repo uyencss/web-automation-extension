@@ -430,13 +430,17 @@ export class GatewayVerifier {
   checkBudget(permit, count = 1, dryRun = false) {
     if (!permit?.budget || permit.budget.maxCalls === undefined) return true;
     const key = permit.permitId;
+    const exp = Date.parse(permit?.expiresAt);
+    const expiresAt = Number.isNaN(exp) ? undefined : exp;
     let entry = this.permitStore.budget.get(key);
     if (!entry) {
       if (dryRun) {
         return count <= (permit.budget.maxCalls ?? Infinity);
       }
-      entry = { maxCalls: permit.budget.maxCalls ?? Infinity, used: 0 };
+      entry = { maxCalls: permit.budget.maxCalls ?? Infinity, used: 0, ...(expiresAt !== undefined ? { expiresAt } : {}) };
       this.permitStore.budget.set(key, entry);
+    } else if (entry.expiresAt === undefined && expiresAt !== undefined) {
+      entry.expiresAt = expiresAt;
     }
     if (entry.used + count > entry.maxCalls) {
       return false;
@@ -771,7 +775,7 @@ export class GatewayVerifier {
 
     // Commit nonce if not dryRun
     if (!dryRun) {
-      this.permitStore.markSeen(permit.nonce, permit.expiresAt);
+      this.permitStore.markSeen(permit.nonce, permit.expiresAt, Number.isNaN(nowMs) ? Date.now() : nowMs);
       if (this.mode === 'enforce') {
         return { decision: 'allow', actionClass, permitId: permit.permitId };
       }
@@ -913,8 +917,9 @@ export class GatewayVerifier {
 
     // Step 4: All children passed preflight; atomically commit batch budget and mark replay nonce
     if (!dryRun) {
+      const batchNowMs = now instanceof Date ? now.getTime() : Date.parse(now);
       this.checkBudget(permit, callCount, false);
-      this.permitStore.markSeen(permit.nonce, permit.expiresAt);
+      this.permitStore.markSeen(permit.nonce, permit.expiresAt, Number.isNaN(batchNowMs) ? Date.now() : batchNowMs);
       if (this.mode === 'enforce') {
         return {
           decision: 'allow',
