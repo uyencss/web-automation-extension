@@ -674,12 +674,43 @@ test('Wave B: ndjson-logger redacts 100% of SERVICE_AUTH_RULES cookies, escaped 
     assert.equal(str.includes('[REDACTED]'), true, `L2 marker missing for cookie ${name}: ${str}`);
   }
 
-  // Backslash-escaped JSON strings
-  const escaped = 'err={\\"password\\":\\"MySecret123\\",\\"x-webmcp-token\\":\\"tok_abc\\",\\"SPC_EC\\":\\"sp_999\\",\\"Authorization\\":\\"Bearer br_777\\",\\"Cookie\\":\\"c_user=1; xs=2\\"}';
+  // Backslash-escaped JSON strings & generic L2 secret keys (Opus 5.5 Major 1)
+  const escaped = 'err={\\"password\\":\\"MySecret123\\",\\"x-webmcp-token\\":\\"tok_abc\\",\\"token\\":\\"tok_LEAK1\\",\\"secret\\":\\"sec_99\\",\\"claimToken\\":\\"ct_88\\",\\"sessionToken\\":\\"st_77\\",\\"myPassword\\":\\"mp_66\\",\\"otp\\":\\"654321\\",\\"permit\\":\\"pm_55\\",\\"SPC_EC\\":\\"sp_999\\",\\"Authorization\\":\\"Bearer br_777\\",\\"Cookie\\":\\"c_user=1; xs=2\\"}';
   const cleanedEscaped = redact(escaped);
-  for (const leak of ['MySecret123', 'tok_abc', 'sp_999', 'br_777', 'xs=2']) {
+  for (const leak of ['MySecret123', 'tok_abc', 'tok_LEAK1', 'sec_99', 'ct_88', 'st_77', 'mp_66', '654321', 'pm_55', 'sp_999', 'br_777', 'xs=2']) {
     assert.equal(cleanedEscaped.includes(leak), false, `escaped JSON leaked ${leak}: ${cleanedEscaped}`);
   }
+  assert.equal(redact('{"token":"tok_LEAK2"}').includes('tok_LEAK2'), false);
+  const errRedacted = redact(new Error('import failed token=S3CR3T_C otp=112233'));
+  assert.equal(errRedacted.message.includes('S3CR3T_C'), false);
+  assert.equal(errRedacted.message.includes('112233'), false);
+  assert.equal((errRedacted.stack || '').includes('S3CR3T_C'), false);
+  // Safe telemetry keys remain readable in JSON strings
+  const safeJson = redact('{"hasPassword":false,"hasToken":true,"tokenPreview":"ab12"}');
+  assert.equal(safeJson, '{"hasPassword":false,"hasToken":true,"tokenPreview":"ab12"}');
+
+  // CDP-style {name, value} cookies redacted in BOTH L1 objects and L2 JSON/escaped strings (Opus 5.5 Major 2)
+  for (const name of allCookies) {
+    const cdpVal = `S3CR3T_CDP_${name}`;
+    const cdpObj = redact({ items: [{ name, domain: '.example.com', value: cdpVal }] });
+    assert.equal(cdpObj.items[0].value, '[REDACTED]', `L1 CDP {name,value} failed for ${name}`);
+    const cdpJson = redact(JSON.stringify([{ name, domain: '.example.com', value: cdpVal }]));
+    assert.equal(cdpJson.includes(cdpVal), false, `L2 CDP JSON failed for ${name}: ${cdpJson}`);
+    const cdpRev = redact(JSON.stringify([{ value: cdpVal, name }]));
+    assert.equal(cdpRev.includes(cdpVal), false, `L2 reversed CDP JSON failed for ${name}: ${cdpRev}`);
+    const cdpEsc = redact(`cdp={\\"name\\":\\"${name}\\",\\"value\\":\\"${cdpVal}\\"}`);
+    assert.equal(cdpEsc.includes(cdpVal), false, `L2 escaped CDP JSON failed for ${name}: ${cdpEsc}`);
+  }
+
+  // Object keys containing emails or local home/profile paths are scrubbed (Opus 5.5 Minor 3)
+  const keyObj = redact({
+    'alice.user@example.com': 'ok',
+    '/Users/alice/.webmcp/managed-profiles/my-slug': 1,
+  });
+  const keyNames = Object.keys(keyObj);
+  assert.equal(keyNames.some((k) => k.includes('alice.user@example.com') || k.includes('/Users/alice') || k.includes('my-slug')), false);
+  assert.equal(keyObj['[REDACTED_EMAIL]'], 'ok');
+  assert.equal(keyObj['[HOME]/.webmcp/managed-profiles/[PROFILE]'], 1);
 
   // Empty-username proxy URL + email sweep ordering
   assert.equal(redact('socks5://:passWord99@10.0.0.5:1080'), 'socks5://:[REDACTED]@10.0.0.5:1080');
@@ -1010,4 +1041,24 @@ test('Wave B: ProfileGovernor release clears tabs/actionJournal and prunes unref
   assert.equal(memState.leases.lease_0000000000000004, undefined, 'unreferenced expired lease must be pruned');
   assert.ok(memState.leases.lease_0000000000000005, 'unexpired non-terminal lease must not be pruned');
   assert.ok(memState.leases[mLeased.leaseId], 'event-referenced released lease must remain');
+});
+
+test('Wave B: safeOpenAppendSync rejects pre-created hardlinks and drainAsync increments droppedLogs on write error (Opus 5.5 Minors 4-5)', async (t) => {
+  if (process.platform === 'win32') return;
+  const dir = makeTmpDir('ndjson-hardlink-');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const target = path.join(dir, 'target.txt');
+  const linked = path.join(dir, 'hardlinked.ndjson');
+  fs.writeFileSync(target, 'keep-untouched\n', { mode: 0o600 });
+  fs.linkSync(target, linked);
+  assert.throws(() => safeOpenAppendSync(linked), (err) => err && err.code === 'EPERM');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'keep-untouched\n');
+
+  // Write error on hardlinked log path increments droppedLogs instead of losing silently
+  const logger = createLogger({ proc: 'test-drop', filePath: linked });
+  logger.info('dropped-1');
+  logger.info('dropped-2');
+  await logger.flush();
+  assert.equal(logger.stats().droppedLogs >= 2, true, `expected droppedLogs >= 2, got ${logger.stats().droppedLogs}`);
+  await logger.close();
 });

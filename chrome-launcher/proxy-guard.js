@@ -103,7 +103,7 @@ function isNonDirectProxyValue(val) {
     }
     if (
       !entry ||
-      /[\s="']/.test(entry) ||
+      /[ \t\r\n\v\f="']/.test(entry) ||
       /^direct:(\/\/)?$/i.test(entry) ||
       /^[a-z0-9+.-]+:\/\/$/i.test(entry)
     ) {

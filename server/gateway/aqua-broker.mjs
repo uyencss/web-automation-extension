@@ -239,6 +239,9 @@ export async function handleAquaBrokerRequest(req, res, {
         }
         const resolvedDir = path.resolve(body.managedProfilesDir);
         const allowedRoots = [path.resolve(path.join(os.homedir(), '.webmcp')), path.resolve(os.tmpdir())];
+        if (process.env.WEBMCP_HOME && process.env.WEBMCP_HOME.trim()) {
+          allowedRoots.unshift(path.resolve(process.env.WEBMCP_HOME.trim()));
+        }
         const inAllowed = allowedRoots.some((root) => resolvedDir === root || resolvedDir.startsWith(root + path.sep));
         if (!inAllowed) {
           return writeAquaJson(res, 400, {
