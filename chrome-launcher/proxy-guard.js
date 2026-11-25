@@ -83,7 +83,7 @@ function isWildcardBypassEntry(entry) {
 
 function isProxySwitchToken(tok) {
   const s = String(tok ?? '').trim();
-  return s === '--' || /^--?(no-proxy-server|proxy-auto-detect|proxy-pac-url|proxy-bypass-list|proxy-server)(=|$)/i.test(s);
+  return s === '--' || /^(--?|\/)(no-proxy-server|proxy-auto-detect|proxy-pac-url|proxy-bypass-list|proxy-server)(=|$)/i.test(s);
 }
 
 function isNonDirectProxyValue(val) {
@@ -119,7 +119,7 @@ function collectFlagContinuation(tokens, startIdx, firstChunk) {
   let openQuote = updateOpenQuote(firstChunk, null);
   while (idx + 1 < tokens.length) {
     const nextRaw = String(tokens[idx + 1] ?? '').trim();
-    if (isProxySwitchToken(nextRaw) || (openQuote === null && nextRaw.startsWith('--'))) {
+    if (isProxySwitchToken(nextRaw) || nextRaw.startsWith('--')) {
       break;
     }
     const lastChunk = chunks[chunks.length - 1];
@@ -137,7 +137,7 @@ function collectFlagContinuation(tokens, startIdx, firstChunk) {
 
 function hasClosingQuote(str, startIdx, quoteChar) {
   for (let j = startIdx; j < str.length; j += 1) {
-    if (quoteChar === '"' && str[j] === '\\' && str[j + 1] === '"') {
+    if (quoteChar === '"' && str[j] === '\\' && (str[j + 1] === '"' || str[j + 1] === '\\')) {
       j += 1;
       continue;
     }
@@ -164,15 +164,15 @@ function tokenizeCmdline(cmdline) {
     if (quote) {
       if (ch === quote) {
         quote = null;
-      } else if (quote === '"' && ch === '\\' && normalized[i + 1] === '"') {
-        current += '"';
+      } else if (quote === '"' && ch === '\\' && (normalized[i + 1] === '"' || normalized[i + 1] === '\\')) {
+        current += normalized[i + 1];
         i += 1;
       } else {
         current += ch;
       }
       continue;
     }
-    if (/\s/.test(ch)) {
+    if (/[ \t\v\f]/.test(ch)) {
       if (inToken) {
         tokens.push(current);
         current = '';
@@ -217,16 +217,16 @@ function evaluateProxyArgs(tokens) {
     const raw = String(tokens[i] ?? '').trim();
     if (raw === '--') break;
 
-    if (/^--?(no-proxy-server|proxy-auto-detect|proxy-pac-url)(=|$)/i.test(raw)) {
+    if (/^(--?|\/)(no-proxy-server|proxy-auto-detect|proxy-pac-url)(=|$)/i.test(raw)) {
       hasBypassSwitch = true;
-      if (/^--?proxy-pac-url$/i.test(raw) && i + 1 < tokens.length && !isProxySwitchToken(tokens[i + 1])) {
+      if (/^(--?|\/)proxy-pac-url$/i.test(raw) && i + 1 < tokens.length && !isProxySwitchToken(tokens[i + 1])) {
         i += 1;
       }
       continue;
     }
 
-    const bypassEqMatch = raw.match(/^--?proxy-bypass-list=(.*)$/i);
-    if (bypassEqMatch || /^--?proxy-bypass-list$/i.test(raw)) {
+    const bypassEqMatch = raw.match(/^(?:--?|\/)proxy-bypass-list=(.*)$/i);
+    if (bypassEqMatch || /^(--?|\/)proxy-bypass-list$/i.test(raw)) {
       let firstChunk = null;
       if (bypassEqMatch) {
         firstChunk = bypassEqMatch[1];
@@ -255,7 +255,7 @@ function evaluateProxyArgs(tokens) {
       continue;
     }
 
-    if (raw === '--proxy-server') {
+    if (/^(--?|\/)proxy-server(=|$)/i.test(raw)) {
       lastProxyVal = '';
     }
   }

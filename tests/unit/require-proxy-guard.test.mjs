@@ -607,6 +607,20 @@ test('proxy-guard enforces Chromium CommandLine semantics, negative bypass switc
     proxyGuard.cmdlineHasProxyServer('chrome\u00a0--proxy-server=http://127.0.0.1:8080\r\n--user-data-dir=/tmp/p'),
     true,
   );
+
+  // 8. Non-canonical proxy-server switches (single-dash, mixed-case, Windows /switch), backslash-escaped quotes, mid-token quotes, unclosed continuation, and NBSP
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http://127.0.0.1:8080 -proxy-server=direct://'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http://127.0.0.1:8080 -proxy-server'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http://127.0.0.1:8080 --Proxy-Server=direct://'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http://127.0.0.1:8080 /proxy-server=direct://'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-server=http://127.0.0.1:8080 /no-proxy-server'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --user-data-dir="a\\\\" --no-proxy-server --foo="b" --proxy-server=http://127.0.0.1:8080'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --user-data-dir="a\\\\\\" --no-proxy-server" --proxy-server=http://127.0.0.1:8080'), true);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome https://example.com/?a="1 --no-proxy-server x" --proxy-server=http://127.0.0.1:8080'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --foo=a="1 --no-proxy-server b" --proxy-server=http://127.0.0.1:8080'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome --proxy-bypass-list=foo" --other * --proxy-server=http://127.0.0.1:8080'), true);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome\u00a0--no-proxy-server --proxy-server=http://127.0.0.1:8080'), false);
+  assert.equal(proxyGuard.cmdlineHasProxyServer('chrome\u00a0--proxy-server=http://127.0.0.1:8080'), true);
 });
 
 
