@@ -52,11 +52,11 @@ test('detectMacCookieEncryptionMode supports 5-state fixtures, WAL-only v11, Net
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-v10-detect-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
-  const pV10 = path.join(root, 'thichminhthien0');
+  const pV10 = path.join(root, 'fixture-profile-v10');
   createCookiesDb(path.join(pV10, 'Profile 43', 'Cookies'), ['v10', 'v10', 'v10']);
   assert.equal(launcher.detectMacCookieEncryptionMode(pV10, 'Profile 43'), 'v10');
 
-  const pV11 = path.join(root, 'hieu2906090');
+  const pV11 = path.join(root, 'fixture-profile-v11');
   createCookiesDb(path.join(pV11, 'Default', 'Cookies'), ['v11', 'v11']);
   assert.equal(launcher.detectMacCookieEncryptionMode(pV11, 'Default'), 'v11');
 

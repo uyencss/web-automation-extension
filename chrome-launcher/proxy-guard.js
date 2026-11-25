@@ -81,24 +81,29 @@ function isWildcardBypassEntry(entry) {
   return /^((\*|[a-z][a-z0-9+.-]*):\/\/)?\*(\.\*)*(:(\*|[0-9]+))?(\/\*?)?$/.test(clean);
 }
 
+function isProxySwitchToken(tok) {
+  const s = String(tok ?? '').trim();
+  return s === '--' || /^--?(no-proxy-server|proxy-auto-detect|proxy-pac-url|proxy-bypass-list|proxy-server)(=|$)/i.test(s);
+}
+
 function isNonDirectProxyValue(val) {
-  const clean = stripEdgeQuotes(val);
+  const clean = stripMatchingQuotes(val);
   if (!clean) return false;
   for (const rawEntry of clean.split(/[,;]/)) {
-    let entry = stripEdgeQuotes(rawEntry);
+    let entry = stripMatchingQuotes(rawEntry);
     if (!entry || entry.startsWith('=')) {
       return false;
     }
-    const eq = entry.indexOf('=');
-    if (eq !== -1) {
-      const scheme = entry.slice(0, eq).trim();
-      if (!/^[a-z0-9+.-]+$/i.test(scheme)) {
+    if (entry.includes('=')) {
+      const m = entry.match(/^([a-z0-9+.-]+)=(.+)$/i);
+      if (!m) {
         return false;
       }
-      entry = stripEdgeQuotes(entry.slice(eq + 1));
+      entry = stripMatchingQuotes(m[2]);
     }
     if (
       !entry ||
+      /[\s="']/.test(entry) ||
       /^direct:(\/\/)?$/i.test(entry) ||
       /^[a-z0-9+.-]+:\/\/$/i.test(entry)
     ) {
@@ -114,7 +119,7 @@ function collectFlagContinuation(tokens, startIdx, firstChunk) {
   let openQuote = updateOpenQuote(firstChunk, null);
   while (idx + 1 < tokens.length) {
     const nextRaw = String(tokens[idx + 1] ?? '').trim();
-    if (nextRaw === '--' || (openQuote === null && nextRaw.startsWith('--'))) {
+    if (isProxySwitchToken(nextRaw) || (openQuote === null && nextRaw.startsWith('--'))) {
       break;
     }
     const lastChunk = chunks[chunks.length - 1];
@@ -130,22 +135,36 @@ function collectFlagContinuation(tokens, startIdx, firstChunk) {
   return { nextIdx: idx, chunks };
 }
 
+function hasClosingQuote(str, startIdx, quoteChar) {
+  for (let j = startIdx; j < str.length; j += 1) {
+    if (quoteChar === '"' && str[j] === '\\' && str[j + 1] === '"') {
+      j += 1;
+      continue;
+    }
+    if (str[j] === quoteChar) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Tokenize a process command line string while preserving single- and double-quoted arguments.
  */
 function tokenizeCmdline(cmdline) {
   if (!cmdline || typeof cmdline !== 'string') return [];
+  const normalized = cmdline.replace(/[\r\n\u00a0]/g, ' ');
   const tokens = [];
   let current = '';
   let inToken = false;
   let quote = null;
 
-  for (let i = 0; i < cmdline.length; i += 1) {
-    const ch = cmdline[i];
+  for (let i = 0; i < normalized.length; i += 1) {
+    const ch = normalized[i];
     if (quote) {
       if (ch === quote) {
         quote = null;
-      } else if (quote === '"' && ch === '\\' && cmdline[i + 1] === '"') {
+      } else if (quote === '"' && ch === '\\' && normalized[i + 1] === '"') {
         current += '"';
         i += 1;
       } else {
@@ -162,9 +181,17 @@ function tokenizeCmdline(cmdline) {
       continue;
     }
     if (ch === '"' || ch === "'") {
-      quote = ch;
-      inToken = true;
-      continue;
+      const atTokenStart = !inToken;
+      const afterFirstFlagEq =
+        inToken &&
+        current.startsWith('-') &&
+        current.endsWith('=') &&
+        current.indexOf('=') === current.length - 1;
+      if ((atTokenStart || afterFirstFlagEq) && hasClosingQuote(normalized, i + 1, ch)) {
+        quote = ch;
+        inToken = true;
+        continue;
+      }
     }
     current += ch;
     inToken = true;
@@ -182,58 +209,28 @@ function tokenizeCmdline(cmdline) {
  */
 function evaluateProxyArgs(tokens) {
   if (!Array.isArray(tokens)) return false;
-  let hasNoProxy = false;
-  let hasAutoDetect = false;
-  let hasPacUrl = false;
+  let hasBypassSwitch = false;
   let hasWildcardBypass = false;
   let lastProxyVal = '';
 
   for (let i = 0; i < tokens.length; i += 1) {
     const raw = String(tokens[i] ?? '').trim();
     if (raw === '--') break;
-    const lower = raw.toLowerCase();
 
-    if (lower === '--no-proxy-server') {
-      hasNoProxy = true;
-      continue;
-    }
-    if (lower.startsWith('--no-proxy-server=')) {
-      const val = stripMatchingQuotes(raw.slice('--no-proxy-server='.length)).toLowerCase();
-      if (val !== 'false' && val !== '0') {
-        hasNoProxy = true;
-      }
-      continue;
-    }
-
-    if (lower === '--proxy-auto-detect') {
-      hasAutoDetect = true;
-      continue;
-    }
-    if (lower.startsWith('--proxy-auto-detect=')) {
-      const val = stripMatchingQuotes(raw.slice('--proxy-auto-detect='.length)).toLowerCase();
-      if (val !== 'false' && val !== '0') {
-        hasAutoDetect = true;
-      }
-      continue;
-    }
-
-    if (lower.startsWith('--proxy-pac-url=')) {
-      hasPacUrl = true;
-      continue;
-    }
-    if (lower === '--proxy-pac-url') {
-      hasPacUrl = true;
-      if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
+    if (/^--?(no-proxy-server|proxy-auto-detect|proxy-pac-url)(=|$)/i.test(raw)) {
+      hasBypassSwitch = true;
+      if (/^--?proxy-pac-url$/i.test(raw) && i + 1 < tokens.length && !isProxySwitchToken(tokens[i + 1])) {
         i += 1;
       }
       continue;
     }
 
-    if (lower.startsWith('--proxy-bypass-list=') || lower === '--proxy-bypass-list') {
+    const bypassEqMatch = raw.match(/^--?proxy-bypass-list=(.*)$/i);
+    if (bypassEqMatch || /^--?proxy-bypass-list$/i.test(raw)) {
       let firstChunk = null;
-      if (lower.startsWith('--proxy-bypass-list=')) {
-        firstChunk = raw.slice('--proxy-bypass-list='.length);
-      } else if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
+      if (bypassEqMatch) {
+        firstChunk = bypassEqMatch[1];
+      } else if (i + 1 < tokens.length && !isProxySwitchToken(tokens[i + 1])) {
         i += 1;
         firstChunk = String(tokens[i] ?? '').trim();
       }
@@ -250,25 +247,20 @@ function evaluateProxyArgs(tokens) {
       continue;
     }
 
-    if (lower.startsWith('--proxy-server=') || lower === '--proxy-server') {
-      let firstChunk = null;
-      if (lower.startsWith('--proxy-server=')) {
-        firstChunk = raw.slice('--proxy-server='.length);
-      } else if (i + 1 < tokens.length && !String(tokens[i + 1] ?? '').trim().startsWith('--')) {
-        i += 1;
-        firstChunk = String(tokens[i] ?? '').trim();
-      }
-      if (firstChunk !== null) {
-        const { nextIdx, chunks } = collectFlagContinuation(tokens, i, firstChunk);
-        i = nextIdx;
-        lastProxyVal = stripEdgeQuotes(chunks.join(' '));
-      } else {
-        lastProxyVal = '';
-      }
+    if (raw.startsWith('--proxy-server=')) {
+      const firstChunk = raw.slice('--proxy-server='.length);
+      const { nextIdx, chunks } = collectFlagContinuation(tokens, i, firstChunk);
+      i = nextIdx;
+      lastProxyVal = stripMatchingQuotes(chunks.join(' '));
+      continue;
+    }
+
+    if (raw === '--proxy-server') {
+      lastProxyVal = '';
     }
   }
 
-  return !hasNoProxy && !hasAutoDetect && !hasPacUrl && !hasWildcardBypass && isNonDirectProxyValue(lastProxyVal);
+  return !hasBypassSwitch && !hasWildcardBypass && isNonDirectProxyValue(lastProxyVal);
 }
 
 /**
@@ -284,8 +276,7 @@ function hasExplicitProxyServerFlag(args) {
   for (const arg of args) {
     const s = String(arg ?? '').trim();
     if (s === '--') break;
-    const lower = s.toLowerCase();
-    if (lower === '--proxy-server' || lower.startsWith('--proxy-server=')) return true;
+    if (s.startsWith('--proxy-server=')) return true;
   }
   return false;
 }
@@ -340,7 +331,8 @@ function assertRequireProxy({
  */
 function cmdlineHasProxyServer(cmdline) {
   if (!cmdline || typeof cmdline !== 'string') return false;
-  return evaluateProxyArgs(tokenizeCmdline(cmdline));
+  const normalized = cmdline.replace(/[\r\n\u00a0]/g, ' ');
+  return evaluateProxyArgs(tokenizeCmdline(normalized));
 }
 
 async function readPidCmdline(pid, options = {}) {
@@ -523,6 +515,7 @@ function prepareLaunchProxy({ mode = 'managed', userDataDir, profileDir = 'Defau
 
 module.exports = {
   resolveManagedProxyConfig,
+  isProxySwitchToken,
   isWildcardBypassEntry,
   isNonDirectProxyValue,
   tokenizeCmdline,
