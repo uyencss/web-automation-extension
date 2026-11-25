@@ -48,12 +48,21 @@ export function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
     let total = 0;
     let settled = false;
     const chunks = [];
+    const removeListener = typeof req.off === 'function' ? req.off.bind(req) : (typeof req.removeListener === 'function' ? req.removeListener.bind(req) : null);
+    const cleanup = () => {
+      if (!removeListener) return;
+      removeListener('data', onData);
+      removeListener('end', onEnd);
+      removeListener('error', onError);
+      removeListener('close', onClose);
+    };
     const done = (fn, arg) => {
       if (settled) return;
       settled = true;
+      cleanup();
       fn(arg);
     };
-    req.on('data', (chunk) => {
+    const onData = (chunk) => {
       if (settled) return;
       total += chunk.length;
       if (total > maxBytes) {
@@ -65,8 +74,8 @@ export function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
         return;
       }
       chunks.push(chunk);
-    });
-    req.on('end', () => {
+    };
+    const onEnd = () => {
       if (settled) return;
       const raw = Buffer.concat(chunks).toString('utf8').trim();
       if (!raw) return done(resolve, {});
@@ -83,8 +92,20 @@ export function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
         err.statusCode = 400;
         done(reject, err);
       }
-    });
-    req.on('error', (err) => done(reject, err));
+    };
+    const onError = (err) => done(reject, err);
+    const onClose = () => {
+      if (!settled && !req.complete) {
+        const err = new Error('Request aborted before completion');
+        err.code = 'ECONNRESET';
+        err.statusCode = 499;
+        done(reject, err);
+      }
+    };
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+    req.on('close', onClose);
   });
 }
 
@@ -176,7 +197,16 @@ export async function handleAquaBrokerRequest(req, res, {
     body = await readJsonBody(req);
   } catch (err) {
     const isTooLarge = err?.statusCode === 413;
-    if (isTooLarge && typeof res.setHeader === 'function' && !res.headersSent) res.setHeader('Connection', 'close');
+    if (isTooLarge) {
+      if (typeof res.setHeader === 'function' && !res.headersSent) res.setHeader('Connection', 'close');
+      if (typeof res.once === 'function') {
+        res.once('finish', () => {
+          const destroyTimer = setTimeout(() => { try { req.destroy(); } catch {} }, 50);
+          destroyTimer.unref?.();
+          req.socket?.once?.('close', () => clearTimeout(destroyTimer));
+        });
+      }
+    }
     return writeAquaJson(
       res,
       err?.statusCode || 400,

@@ -220,9 +220,20 @@ export class TrustedContextChannel {
     let buffer = '';
     let bytesRead = 0;
     let handled = false;
+    let endDestroyTimer = null;
 
     this._sockets.add(socket);
-    socket.once('close', () => this._sockets.delete(socket));
+    const deadlineTimer = setTimeout(() => {
+      this._sockets.delete(socket);
+      socket.destroy();
+    }, this.socketTimeoutMs);
+    deadlineTimer.unref?.();
+
+    socket.once('close', () => {
+      clearTimeout(deadlineTimer);
+      if (endDestroyTimer) { clearTimeout(endDestroyTimer); endDestroyTimer = null; }
+      this._sockets.delete(socket);
+    });
     socket.setTimeout(this.socketTimeoutMs, () => {
       this._sockets.delete(socket);
       socket.destroy();
@@ -232,7 +243,13 @@ export class TrustedContextChannel {
     const replyAndClose = (responseObj, destroy = false) => {
       if (handled) return;
       handled = true;
+      clearTimeout(deadlineTimer);
+      try { socket.pause(); } catch {}
       try {
+        endDestroyTimer = setTimeout(() => {
+          try { socket.destroy(); } catch {}
+        }, 200);
+        endDestroyTimer.unref?.();
         const payload = `${JSON.stringify(responseObj)}\n`;
         socket.write(payload, () => {
           if (destroy) socket.destroy();
@@ -244,6 +261,7 @@ export class TrustedContextChannel {
     };
 
     socket.on('data', (chunk) => {
+      if (handled) return;
       bytesRead += Buffer.byteLength(chunk, 'utf8');
       if (bytesRead > MAX_MESSAGE_BYTES) {
         return replyAndClose(

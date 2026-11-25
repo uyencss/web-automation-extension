@@ -549,6 +549,8 @@ export class ProfileGovernor {
       current.state = 'cooldown';
       current.releasedAt = mutationNowIso;
       current.fences = {};
+      current.tabs = {};
+      current.actionJournal = [];
       resource.currentLeaseId = null;
       resource.state = 'cooldown';
       resource.stateReasonCode = 'PROFILE_RELEASE';
@@ -560,8 +562,11 @@ export class ProfileGovernor {
       for (const r of Object.values(next.resources)) { if (r.currentLeaseId) referencedLeaseIds.add(r.currentLeaseId); }
       for (const e of next.events) { if (e.leaseId) referencedLeaseIds.add(e.leaseId); }
       for (const rc of next.receipts) { if (rc.leaseId) referencedLeaseIds.add(rc.leaseId); }
+      const prunableStates = new Set(['cooldown', 'released', 'quarantined']);
       for (const [id, item] of Object.entries(next.leases)) {
-        if (item.state === 'cooldown' && !referencedLeaseIds.has(id)) delete next.leases[id];
+        if (referencedLeaseIds.has(id)) continue;
+        const expMs = Date.parse(item?.expiresAt);
+        if (prunableStates.has(item?.state) || (Number.isFinite(expMs) && expMs <= mutationNow)) delete next.leases[id];
       }
       return { released: true, leaseId: current.leaseId, state: 'cooldown' };
     });

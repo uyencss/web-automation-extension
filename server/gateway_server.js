@@ -254,7 +254,7 @@ const GOVERNOR_STATE_ENV = 'WEBMCP_GOVERNOR_STATE';
 function defaultGovernorStatePath() {
   const explicit = process.env[GOVERNOR_STATE_ENV];
   if (explicit && typeof explicit === 'string' && explicit.trim()) return explicit.trim();
-  return path.join(os.homedir(), '.webmcp', 'governor-state.json');
+  return path.join(process.env.WEBMCP_HOME || path.join(os.homedir(), '.webmcp'), 'governor-state.json');
 }
 
 export function createGatewayGovernor({ statePath = null, registry = null, claims = null, liveness = null, revokeGrants = null } = {}) {
@@ -277,7 +277,8 @@ export function getGatewayGovernorSingleton(options = null) {
   return gatewayGovernorSingleton;
 }
 
-export function resetGatewayGovernorSingleton() {
+export function resetGatewayGovernorSingleton(expectedGovernor = null) {
+  if (expectedGovernor && gatewayGovernorSingleton?.governor !== expectedGovernor) return null;
   const prev = gatewayGovernorSingleton;
   gatewayGovernorSingleton = null;
   return prev;
@@ -1381,7 +1382,7 @@ function createGatewayServer({
   });
 
   // ── WebSocket Server ─────────────────────────────────────────
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, maxPayload: 16 * 1024 * 1024 });
 
   wss.on('connection', (ws, req) => {
     pendingConnections.add(ws);
@@ -1773,7 +1774,7 @@ function createGatewayServer({
     }
     if (gatewayGovernor) {
       try { gatewayGovernor.close?.(); } catch {}
-      resetGatewayGovernorSingleton();
+      resetGatewayGovernorSingleton(gatewayGovernor);
     }
     await runtime.stop();
     await new Promise((resolve) => {
