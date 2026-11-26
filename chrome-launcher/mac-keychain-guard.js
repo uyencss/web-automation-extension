@@ -11,6 +11,54 @@ const MAC_V10_KEYCHAIN_SHIELD_FEATURES = [
 
 const ALLOWED_COOKIE_MODES = new Set(['none', 'v10', 'v11']);
 
+function statSig(p) {
+  try {
+    const st = fs.statSync(p, { bigint: true });
+    return `${st.ino}:${st.size}:${st.mtimeNs}`;
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+/**
+ * Copy a SQLite DB and its -wal/-journal sidecars safely without torn WAL frames:
+ * copies sidecars BEFORE the main DB and verifies inode/size/mtimeNs stayed identical.
+ */
+function copySqliteStable(dbPath, tmpDb, maxAttempts = 3, opts = {}) {
+  const attempts = Math.max(1, Number(maxAttempts) || 3);
+  const paths = [dbPath, `${dbPath}-wal`, `${dbPath}-journal`];
+  const tmpPaths = [tmpDb, `${tmpDb}-wal`, `${tmpDb}-journal`];
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const sigBefore = paths.map((p) => statSig(p));
+    for (const tp of tmpPaths) {
+      try { fs.rmSync(tp, { force: true }); } catch {}
+    }
+    try {
+      for (const suffix of ['-wal', '-journal']) {
+        const auxSrc = `${dbPath}${suffix}`;
+        if (fs.existsSync(auxSrc)) {
+          const auxDst = `${tmpDb}${suffix}`;
+          fs.copyFileSync(auxSrc, auxDst);
+          try { fs.chmodSync(auxDst, 0o600); } catch {}
+        }
+      }
+      if (typeof opts?.afterSidecarHook === 'function') {
+        opts.afterSidecarHook(attempt);
+      }
+      fs.copyFileSync(dbPath, tmpDb);
+      try { fs.chmodSync(tmpDb, 0o600); } catch {}
+    } catch {
+      continue;
+    }
+    const sigAfter = paths.map((p) => statSig(p));
+    if (sigBefore[0] !== null && sigBefore.every((s, idx) => s === sigAfter[idx])) {
+      return;
+    }
+  }
+  throw new Error('SQLITE_SNAPSHOT_UNSTABLE');
+}
+
 /**
  * Inspect a managed or existing profile's SQLite Cookies DB on macOS to determine whether its
  * cookies are encrypted with legacy `v10` Keychain Safe Storage, modern `v11`, `mixed`, or `none`.
@@ -51,16 +99,7 @@ function detectMacCookieEncryptionMode(userDataDir, profileDir = 'Default', opts
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-ckmode-'));
     fs.chmodSync(tmpDir, 0o700);
     const tmpDb = path.join(tmpDir, 'Cookies');
-    fs.copyFileSync(dbPath, tmpDb);
-    try { fs.chmodSync(tmpDb, 0o600); } catch {}
-    for (const suffix of ['-wal', '-journal']) {
-      const auxSrc = `${dbPath}${suffix}`;
-      if (fs.existsSync(auxSrc)) {
-        const auxDst = `${tmpDb}${suffix}`;
-        fs.copyFileSync(auxSrc, auxDst);
-        try { fs.chmodSync(auxDst, 0o600); } catch {}
-      }
-    }
+    copySqliteStable(dbPath, tmpDb, opts?.maxSnapshotAttempts ?? 3, opts);
 
     const tblOut = execFileSync(
       '/usr/bin/sqlite3',
@@ -307,6 +346,7 @@ function assertNoForbiddenManagedArgs(extraArgs) {
 module.exports = {
   MAC_V10_KEYCHAIN_SHIELD_FEATURES,
   ALLOWED_COOKIE_MODES,
+  copySqliteStable,
   detectMacCookieEncryptionMode,
   resolveMacV10Shield,
   probeMacosAquaKeychainSession,

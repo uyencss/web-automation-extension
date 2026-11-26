@@ -537,3 +537,86 @@ test('getMacKeychainPassword checks Aqua/Keychain guard BEFORE invoking security
   assert.equal(pw, 'secret');
   assert.equal(securityInvoked, true);
 });
+
+test('B2: copySqliteStable copies -wal/-journal before main DB, detects uncheckpointed WAL v10/v11 rows, and fails closed when unstable', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webmcp-b2-wal-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  // 1. copySqliteStable copies -wal BEFORE main Cookies DB, chmods 0o600, retries transient mutation, and fails after 3 unstable attempts
+  const srcDir = path.join(root, 'copy-order');
+  fs.mkdirSync(srcDir, { recursive: true });
+  const srcDb = path.join(srcDir, 'Cookies');
+  const srcWal = `${srcDb}-wal`;
+  fs.writeFileSync(srcDb, 'main-db-bytes', { mode: 0o644 });
+  fs.writeFileSync(srcWal, 'wal-bytes-v1', { mode: 0o644 });
+
+  const dstDir = path.join(root, 'copy-dst');
+  fs.mkdirSync(dstDir, { recursive: true });
+  const dstDb = path.join(dstDir, 'Cookies');
+
+  let walExistedBeforeMain = false;
+  let mainMissingDuringHook = false;
+  guard.copySqliteStable(srcDb, dstDb, 3, {
+    afterSidecarHook: (attempt) => {
+      if (attempt === 0) {
+        walExistedBeforeMain = fs.existsSync(`${dstDb}-wal`);
+        mainMissingDuringHook = !fs.existsSync(dstDb);
+        // Mutate -wal on attempt 0 so copySqliteStable must retry on attempt 1
+        fs.writeFileSync(srcWal, 'wal-bytes-v2-mutated');
+      }
+    },
+  });
+  assert.equal(walExistedBeforeMain, true, '-wal sidecar must be copied BEFORE main DB');
+  assert.equal(mainMissingDuringHook, true, 'main DB must not be copied before sidecars');
+  assert.equal(fs.readFileSync(`${dstDb}-wal`, 'utf8'), 'wal-bytes-v2-mutated');
+  assert.equal(fs.statSync(dstDb).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(`${dstDb}-wal`).mode & 0o777, 0o600);
+
+  // Unstable on every attempt -> throws SQLITE_SNAPSHOT_UNSTABLE
+  let mutCounter = 0;
+  assert.throws(
+    () => guard.copySqliteStable(srcDb, dstDb, 3, {
+      afterSidecarHook: () => {
+        mutCounter += 1;
+        fs.writeFileSync(srcWal, `wal-torn-${mutCounter}`);
+      },
+    }),
+    (err) => err.message === 'SQLITE_SNAPSHOT_UNSTABLE',
+  );
+  assert.equal(mutCounter, 3);
+
+  if (process.platform !== 'darwin') {
+    return;
+  }
+
+  // 2. Uncheckpointed WAL-mode v10 and v11 rows still detected accurately, and unstable WAL fails closed as 'unknown'
+  for (const mode of ['v10', 'v11']) {
+    const pWal = path.join(root, `wal-${mode}`);
+    const walDbPath = path.join(pWal, 'Default', 'Network', 'Cookies');
+    fs.mkdirSync(path.dirname(walDbPath), { recursive: true });
+    const walInit = new DatabaseSync(walDbPath);
+    walInit.exec('PRAGMA journal_mode=WAL; CREATE TABLE cookies (host_key TEXT, name TEXT, encrypted_value BLOB);');
+    walInit.close();
+
+    const writer = new DatabaseSync(walDbPath);
+    t.after(() => { try { writer.close(); } catch {} });
+    writer.exec('PRAGMA wal_autocheckpoint=0;');
+    writer.prepare('INSERT INTO cookies (host_key, name, encrypted_value) VALUES (?, ?, ?)').run(
+      '.google.com',
+      'SID',
+      Buffer.concat([Buffer.from(mode, 'ascii'), Buffer.from('uncheckpointed-wal')]),
+    );
+    assert.equal(fs.existsSync(`${walDbPath}-wal`), true, `${mode} WAL file should exist`);
+    assert.equal(guard.detectMacCookieEncryptionMode(pWal, 'Default'), mode);
+
+    let unstableTick = 0;
+    const unstableMode = guard.detectMacCookieEncryptionMode(pWal, 'Default', {
+      afterSidecarHook: () => {
+        unstableTick += 1;
+        fs.appendFileSync(`${walDbPath}-wal`, Buffer.from(`-${unstableTick}`));
+      },
+    });
+    assert.equal(unstableMode, 'unknown', 'Unstable snapshot must fail closed to unknown');
+    writer.close();
+  }
+});
