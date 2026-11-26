@@ -710,4 +710,79 @@ test('N-IP1 + P0-6: assertRequireProxy & focusOrOpenRunningChrome enforce bound 
   );
 });
 
+test('Opus5.5 M1+M2+Minor3: per-scheme proxy guard, WebRTC leak flag, ERR_META_UNREADABLE, and existing focus requireProxy race', async (t) => {
+  // 1. Per-scheme proxy values without socks* or both http+https must fail closed
+  for (const badVal of ['ftp=1.2.3.4:21', 'https=1.2.3.4:8080', 'http=1.2.3.4:8080']) {
+    assert.equal(proxyGuard.isNonDirectProxyValue(badVal), false, `${badVal} must be rejected`);
+    assert.throws(
+      () => proxyGuard.assertRequireProxy({
+        mode: 'existing',
+        requireProxy: true,
+        extraArgs: [`--proxy-server=${badVal}`],
+        userDataDir: '/tmp/per-scheme',
+      }),
+      (err) => err.code === 'ERR_PROXY_UNBOUND_BLOCKED',
+    );
+  }
+  assert.equal(proxyGuard.isNonDirectProxyValue('http=1.2.3.4:8080;https=1.2.3.4:8080'), true);
+  assert.equal(proxyGuard.isNonDirectProxyValue('socks5=1.2.3.4:1080'), true);
+
+  // 2. applyProxyLaunchArgs appends WebRTC UDP disable policy even on caller-supplied --proxy-server=
+  const applied = proxyGuard.applyProxyLaunchArgs(['--proxy-server=socks5://10.0.0.2:1080'], null);
+  assert.ok(applied.extraArgs.includes('--force-webrtc-ip-handling-policy=disable_non_proxied_udp'));
+
+  // 3. Corrupt or non-object .webmcp-meta.json throws ERR_META_UNREADABLE in both launchChrome & focusOrOpenRunningChrome
+  for (const badContent of ['{"truncated":', 'null']) {
+    const fBad = makeFixture(t, { name: 'corrupt-meta' });
+    fs.writeFileSync(path.join(fBad.userDataDir, '.webmcp-meta.json'), badContent);
+    await assert.rejects(
+      () => launcher.launchChrome({
+        mode: 'managed',
+        profile: { kind: 'managed', userDataDir: fBad.userDataDir },
+        chromePath: fBad.fakeChromeBin,
+        extensionPath: fBad.extensionPath,
+        managedProfilesDir: fBad.managedProfilesDir,
+        sessionsFile: fBad.sessionsFile,
+        dryRun: true,
+      }),
+      (err) => err.code === 'ERR_META_UNREADABLE',
+    );
+    await assert.rejects(
+      () => launcher.focusOrOpenRunningChrome({
+        chromePath: fBad.fakeChromeBin,
+        userDataDir: fBad.userDataDir,
+        profileDir: 'Default',
+        mode: 'managed',
+        skipGuardForTest: true,
+      }),
+      (err) => err.code === 'ERR_META_UNREADABLE',
+    );
+  }
+
+  // 4. Existing-mode focusOrOpenRunningChrome receives explicit proxyCfg and requireProxy (race-safe)
+  const fRace = makeFixture(t);
+  const raceArgsFile = path.join(fRace.root, 'race-args.json');
+  const spyBin = path.join(fRace.root, 'spy-race.js');
+  fs.writeFileSync(
+    spyBin,
+    `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(raceArgsFile)}, JSON.stringify(process.argv.slice(2)));\nprocess.exit(0);\n`,
+    { mode: 0o755 },
+  );
+  await launcher.focusOrOpenRunningChrome({
+    chromePath: spyBin,
+    userDataDir: fRace.existingUserDataDir,
+    profileDir: 'Default',
+    mode: 'existing',
+    requireProxy: true,
+    proxyCfg: { cleanUrl: 'http://100.83.107.96:8080' },
+    skipGuardForTest: true,
+  });
+  for (let i = 0; i < 60 && !fs.existsSync(raceArgsFile); i += 1) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const spawned = JSON.parse(fs.readFileSync(raceArgsFile, 'utf8'));
+  assert.ok(spawned.includes('--proxy-server=http://100.83.107.96:8080'));
+  assert.ok(spawned.includes('--force-webrtc-ip-handling-policy=disable_non_proxied_udp'));
+});
+
 

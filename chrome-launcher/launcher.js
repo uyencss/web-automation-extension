@@ -765,13 +765,26 @@ function activateMacPid(targetPid) {
   } catch {}
 }
 
-async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun, skipGuardForTest = false, cookieMode, env, requireProxy = false, inspectPidCmdlineFn }) {
+function readMetaFileStrict(metaPath) {
+  if (!fs.existsSync(metaPath)) return null;
+  try {
+    const p = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('Metadata root must be a JSON object');
+    return p;
+  } catch (err) {
+    const e = new Error(`Corrupt profile metadata at ${metaPath}: ${err.message}`);
+    e.code = 'ERR_META_UNREADABLE';
+    throw e;
+  }
+}
+
+async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun, skipGuardForTest = false, cookieMode, env, requireProxy = false, proxyCfg: explicitProxyCfg = null, extraArgs = [], inspectPidCmdlineFn }) {
   const effectivePdir = profileDir || 'Default';
-  const readMeta = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
-  const meta = readMeta(path.join(userDataDir, '.webmcp-meta.json'))
-    || readMeta(path.join(userDataDir, effectivePdir, '.webmcp-meta.json'))
+  const meta = readMetaFileStrict(path.join(userDataDir, '.webmcp-meta.json'))
+    || readMetaFileStrict(path.join(userDataDir, effectivePdir, '.webmcp-meta.json'))
     || {};
-  const proxyCfg = resolveManagedProxyConfig(meta?.proxy);
+  const proxyCfg = explicitProxyCfg || resolveManagedProxyConfig(meta?.proxy);
+  const proxyPassthrough = (Array.isArray(extraArgs) ? extraArgs : []).filter((a) => /^--(proxy-server|proxy-bypass-list|force-webrtc-ip-handling-policy)=/i.test(String(a)));
   const effectiveRequireProxy = requireProxy === true || meta?.requireProxy === true || Boolean(proxyCfg?.cleanUrl);
   const lockPid = readLockPid(userDataDir);
   const pid = (lockPid && isPidAlive(lockPid)) ? lockPid : await findRunningChromePidAsync({ userDataDir, profileDir: effectivePdir, mode });
@@ -781,7 +794,7 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
     await assertRunningChromeHasProxy({ pid, requireProxy: true, dryRun, userDataDir, meta, proxyCfg, inspectPidCmdlineFn });
   }
   const assertSpawnProxyAllowed = () => {
-    if (!pid && effectiveRequireProxy && !proxyCfg?.cleanUrl) {
+    if (!pid && effectiveRequireProxy && !proxyCfg?.cleanUrl && !hasProxyServerArg(proxyPassthrough)) {
       const err = new Error(`Refusing to launch ${mode || 'managed'} Chrome on direct IP without a bound proxy (${userDataDir}).`);
       err.code = 'ERR_PROXY_UNBOUND_BLOCKED';
       throw err;
@@ -819,11 +832,7 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
       ? [`--disable-features=${MAC_V10_KEYCHAIN_SHIELD_FEATURES.join(',')}`]
       : [];
     const mergedSpawnArgs = mergeChromeLaunchArgs(
-      [
-        `--user-data-dir=${userDataDir}`,
-        `--profile-directory=${effectivePdir}`,
-        '--new-window',
-      ],
+      [`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, '--new-window', ...proxyPassthrough],
       v10ShieldArgs,
     );
     const { extraArgs: proxiedSpawnArgs } = applyProxyLaunchArgs(mergedSpawnArgs, proxyCfg);
@@ -867,7 +876,7 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
 
   assertSpawnProxyAllowed();
   const { extraArgs: nonDarwinArgs } = applyProxyLaunchArgs(
-    [`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, ...(initialUrl ? [initialUrl] : [])],
+    [`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, ...proxyPassthrough, ...(initialUrl ? [initialUrl] : [])],
     proxyCfg,
   );
   assertRequireProxy({ mode: mode || 'managed', requireProxy: effectiveRequireProxy, meta, proxyCfg, extraArgs: nonDarwinArgs, userDataDir });
@@ -971,7 +980,7 @@ async function launchChrome(options = {}) {
       if (!options.relaunch) {
         if (options.focusIfRunning) {
           await proxyState.assertAttached(() => resolveAttachedChromePid({ userDataDir, profileDir, mode: 'existing' }));
-          return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode: 'existing', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: options.env }));
+          return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode: 'existing', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: options.env, requireProxy: Boolean(proxyState.proxyCfg?.cleanUrl) || options.requireProxy === true, proxyCfg: proxyState.proxyCfg, extraArgs: existingExtraArgs, inspectPidCmdlineFn: options.inspectPidCmdlineFn }));
         }
         const hasProxyArg = hasProxyServerArg(existingExtraArgs);
         return {
@@ -1052,10 +1061,7 @@ async function launchChrome(options = {}) {
     throw err;
   }
 
-  let meta = {};
-  try {
-    meta = JSON.parse(fs.readFileSync(path.join(userDataDir, '.webmcp-meta.json'), 'utf8'));
-  } catch {}
+  const meta = readMetaFileStrict(path.join(userDataDir, '.webmcp-meta.json')) || {};
 
   if (meta.forkedFrom && !meta.forkedFrom.startsWith('managed:') && !meta.forkedFrom.startsWith('Chromium:') && chromeInfo.channel === 'chromium' && !options.allowCrossChannelFork) {
     throw new Error(
@@ -1104,7 +1110,7 @@ async function launchChrome(options = {}) {
 
   if (!options.relaunch && sessionPid) {
     await checkAttachedProxy();
-    const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv });
+    const focusRes = await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv, inspectPidCmdlineFn: options.inspectPidCmdlineFn });
     if (options.dryRun) {
       const dryShield = resolveMacV10Shield({
         userDataDir,
@@ -1131,7 +1137,7 @@ async function launchChrome(options = {}) {
     if (!options.relaunch) {
       if (options.focusIfRunning) {
         await checkAttachedProxy();
-        return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv }));
+        return annotate(await focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir: effectiveProfileDir, mode: 'managed', initialUrl: focusUrl, dryRun: options.dryRun, skipGuardForTest: options.skipGuardForTest, cookieMode: options.cookieMode, env: spawnEnv, inspectPidCmdlineFn: options.inspectPidCmdlineFn }));
       }
       return annotate({
         ok: false,

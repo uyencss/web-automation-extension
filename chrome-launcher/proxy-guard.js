@@ -89,6 +89,8 @@ function isProxySwitchToken(tok) {
 function isNonDirectProxyValue(val) {
   const clean = stripMatchingQuotes(val);
   if (!clean) return false;
+  let hasPerScheme = false;
+  const schemes = new Set();
   for (const rawEntry of clean.split(/[,;]/)) {
     let entry = stripMatchingQuotes(rawEntry);
     if (!entry || entry.startsWith('=')) {
@@ -99,6 +101,8 @@ function isNonDirectProxyValue(val) {
       if (!m) {
         return false;
       }
+      hasPerScheme = true;
+      schemes.add(m[1].toLowerCase());
       entry = stripMatchingQuotes(m[2]);
     }
     if (
@@ -109,6 +113,9 @@ function isNonDirectProxyValue(val) {
     ) {
       return false;
     }
+  }
+  if (hasPerScheme && !schemes.has('socks') && !schemes.has('socks4') && !schemes.has('socks5') && !(schemes.has('http') && schemes.has('https'))) {
+    return false;
   }
   return true;
 }
@@ -289,12 +296,12 @@ function applyProxyLaunchArgs(extraArgs, proxyCfg) {
   let proxyAuthWarning = null;
   if (proxyCfg?.cleanUrl && !hasExplicitProxyServerFlag(out)) {
     out.push(`--proxy-server=${proxyCfg.cleanUrl}`);
-    if (!out.some((a) => String(a).startsWith('--force-webrtc-ip-handling-policy='))) {
-      out.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
-    }
     if (proxyCfg.warning) {
       proxyAuthWarning = proxyCfg.warning;
     }
+  }
+  if (hasProxyServerArg(out) && !out.some((a) => String(a).startsWith('--force-webrtc-ip-handling-policy='))) {
+    out.push('--force-webrtc-ip-handling-policy=disable_non_proxied_udp');
   }
   return { extraArgs: out, proxyAuthWarning };
 }
@@ -464,10 +471,17 @@ async function assertRunningChromeHasProxy(options = {}) {
 }
 
 function readJsonSafe(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return {};
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Metadata root must be a plain JSON object');
+    }
+    return parsed;
+  } catch (err) {
+    const e = new Error(`Corrupt profile metadata at ${filePath}: ${err.message}`);
+    e.code = 'ERR_META_UNREADABLE';
+    throw e;
   }
 }
 
