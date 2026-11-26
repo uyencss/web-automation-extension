@@ -30,6 +30,7 @@ const {
 const {
   resolveManagedProxyConfig,
   hasProxyServerArg,
+  applyProxyLaunchArgs,
   assertRequireProxy,
   inspectRunningChromeHasProxy,
   assertRunningChromeHasProxy,
@@ -766,13 +767,26 @@ function activateMacPid(targetPid) {
 
 async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, mode, initialUrl, dryRun, skipGuardForTest = false, cookieMode, env, requireProxy = false, inspectPidCmdlineFn }) {
   const effectivePdir = profileDir || 'Default';
+  const readMeta = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
+  const meta = readMeta(path.join(userDataDir, '.webmcp-meta.json'))
+    || readMeta(path.join(userDataDir, effectivePdir, '.webmcp-meta.json'))
+    || {};
+  const proxyCfg = resolveManagedProxyConfig(meta?.proxy);
+  const effectiveRequireProxy = requireProxy === true || meta?.requireProxy === true || Boolean(proxyCfg?.cleanUrl);
   const lockPid = readLockPid(userDataDir);
   const pid = (lockPid && isPidAlive(lockPid)) ? lockPid : await findRunningChromePidAsync({ userDataDir, profileDir: effectivePdir, mode });
   const base = { ok: true, pid: pid || null, chromePath, userDataDir, profileDir: effectivePdir, mode: mode || 'managed', attached: true, focused: true };
   if (dryRun) return { ...base, dryRun: true };
-  if (requireProxy === true) {
-    await assertRunningChromeHasProxy({ pid, requireProxy: true, dryRun, userDataDir, inspectPidCmdlineFn });
+  if (effectiveRequireProxy && pid) {
+    await assertRunningChromeHasProxy({ pid, requireProxy: true, dryRun, userDataDir, meta, proxyCfg, inspectPidCmdlineFn });
   }
+  const assertSpawnProxyAllowed = () => {
+    if (!pid && effectiveRequireProxy && !proxyCfg?.cleanUrl) {
+      const err = new Error(`Refusing to launch ${mode || 'managed'} Chrome on direct IP without a bound proxy (${userDataDir}).`);
+      err.code = 'ERR_PROXY_UNBOUND_BLOCKED';
+      throw err;
+    }
+  };
 
   const spawnDetached = (args) => {
     const child = spawn(chromePath, args, { detached: true, stdio: 'ignore', env: process.env });
@@ -795,6 +809,7 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
       } catch {}
       return { ...base, openedNewWindow: false };
     }
+    assertSpawnProxyAllowed();
     const mergedEnv = env ? { ...process.env, ...env } : { ...process.env };
     assertMacosAquaKeychainSession({ dryRun, skipGuardForTest, env: mergedEnv });
     const shield = (!pid && !skipGuardForTest)
@@ -803,15 +818,18 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
     const v10ShieldArgs = shield.preserveMacV10Keychain
       ? [`--disable-features=${MAC_V10_KEYCHAIN_SHIELD_FEATURES.join(',')}`]
       : [];
+    const mergedSpawnArgs = mergeChromeLaunchArgs(
+      [
+        `--user-data-dir=${userDataDir}`,
+        `--profile-directory=${effectivePdir}`,
+        '--new-window',
+      ],
+      v10ShieldArgs,
+    );
+    const { extraArgs: proxiedSpawnArgs } = applyProxyLaunchArgs(mergedSpawnArgs, proxyCfg);
+    assertRequireProxy({ mode: mode || 'managed', requireProxy: effectiveRequireProxy, meta, proxyCfg, extraArgs: proxiedSpawnArgs, userDataDir });
     const spawnArgs = [
-      ...mergeChromeLaunchArgs(
-        [
-          `--user-data-dir=${userDataDir}`,
-          `--profile-directory=${effectivePdir}`,
-          '--new-window',
-        ],
-        v10ShieldArgs,
-      ),
+      ...proxiedSpawnArgs,
       initialUrl || 'chrome://newtab',
     ];
     const appBundle = resolveMacAppBundle(chromePath, spawnArgs);
@@ -847,7 +865,13 @@ async function focusOrOpenRunningChrome({ chromePath, userDataDir, profileDir, m
     } catch {}
   }
 
-  spawnDetached([`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, ...(initialUrl ? [initialUrl] : [])]);
+  assertSpawnProxyAllowed();
+  const { extraArgs: nonDarwinArgs } = applyProxyLaunchArgs(
+    [`--user-data-dir=${userDataDir}`, `--profile-directory=${effectivePdir}`, ...(initialUrl ? [initialUrl] : [])],
+    proxyCfg,
+  );
+  assertRequireProxy({ mode: mode || 'managed', requireProxy: effectiveRequireProxy, meta, proxyCfg, extraArgs: nonDarwinArgs, userDataDir });
+  spawnDetached(nonDarwinArgs);
   return base;
 }
 

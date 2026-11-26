@@ -619,4 +619,35 @@ test('B2: copySqliteStable copies -wal/-journal before main DB, detects uncheckp
     assert.equal(unstableMode, 'unknown', 'Unstable snapshot must fail closed to unknown');
     writer.close();
   }
+
+  // 3. P1-4/P2-2: -shm mutation triggers retry & cleanup of tmp -shm, and retry pauses >=20ms unless retryDelayMs=0
+  const shmSrc = path.join(srcDir, 'Cookies-shm-test');
+  const shmDst = path.join(dstDir, 'Cookies-shm-dst');
+  fs.writeFileSync(shmSrc, 'db-main');
+  fs.writeFileSync(`${shmSrc}-shm`, 'shm-v1');
+  fs.writeFileSync(`${shmDst}-shm`, 'stale-tmp-shm');
+  let shmHookCalls = 0;
+  const t0 = Date.now();
+  guard.copySqliteStable(shmSrc, shmDst, 3, {
+    afterSidecarHook: (attempt) => {
+      shmHookCalls += 1;
+      if (attempt === 0) fs.writeFileSync(`${shmSrc}-shm`, 'shm-v2');
+    },
+  });
+  const elapsedMs = Date.now() - t0;
+  assert.equal(shmHookCalls, 2);
+  assert.equal(fs.existsSync(`${shmDst}-shm`), false, 'stale tmp -shm must be cleaned up');
+  assert.ok(elapsedMs >= 15, `expected >=20ms retry backoff, got ${elapsedMs}ms`);
+
+  let zeroDelayCalls = 0;
+  const t1 = Date.now();
+  guard.copySqliteStable(shmSrc, shmDst, 2, {
+    retryDelayMs: 0,
+    afterSidecarHook: (attempt) => {
+      zeroDelayCalls += 1;
+      if (attempt === 0) fs.writeFileSync(`${shmSrc}-shm`, 'shm-v3');
+    },
+  });
+  assert.equal(zeroDelayCalls, 2);
+  assert.ok(Date.now() - t1 < 50);
 });

@@ -1120,3 +1120,25 @@ test('D1 permit vector digest matches LF+JCS and tamper changes digest', () => {
     assert.notEqual(nulDigest, computed, 'NUL digest must not equal D1 LF digest');
   }
 });
+
+test('N-7: PermitStore.gc bounds budget entries lacking expiresAt by TTL and max entry cap', () => {
+  const store = new PermitStore();
+  const baseNow = 1_700_000_000_000;
+  assert.equal(store.reserveBudget({ permitId: 'no-exp-1', budget: { maxCalls: 5 } }, 1), true);
+  assert.ok(store.getBudgetUsage('no-exp-1'));
+
+  // First gc stamps createdAt if absent
+  store.gc(baseNow);
+  assert.ok(store.getBudgetUsage('no-exp-1'));
+
+  // After > 24h TTL, gc evicts entry lacking expiresAt
+  store.gc(baseNow + (25 * 60 * 60 * 1000));
+  assert.equal(store.getBudgetUsage('no-exp-1'), null);
+
+  // Max entry cap (10000) trims oldest entries during gc
+  for (let i = 0; i < 10050; i += 1) {
+    store.reserveBudget({ permitId: `cap-${i}`, budget: { maxCalls: 2 } }, 1);
+  }
+  store.gc(baseNow);
+  assert.equal(store.budget.size, 10000);
+});

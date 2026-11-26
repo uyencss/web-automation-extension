@@ -15,6 +15,10 @@ const {
 
 const ALLOWED_LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const SAFE_BROKER_ENV_KEYS = new Set(['TZ', 'WEBMCP_COOKIE_MODE', 'LANG']);
+const AQUA_STATUS_CACHE_TTL_MS = 5000;
+let cachedAquaStatus = null;
+let cachedAquaStatusAt = 0;
+let cachedAquaProbeFn = null;
 
 const APP_BUNDLE_MAP = {
   'webmcp-desktop': ['/Applications/WebMCP Desktop.app', path.join(os.homedir(), 'Applications', 'WebMCP Desktop.app')],
@@ -155,6 +159,7 @@ export async function handleAquaBrokerRequest(req, res, {
   token,
   connectedProfileIds,
   port,
+  probeAquaSession = probeMacosAquaKeychainSession,
 } = {}) {
   if (!isLoopbackAddress(req.socket?.remoteAddress)) {
     return writeAquaJson(res, 403, {
@@ -181,10 +186,21 @@ export async function handleAquaBrokerRequest(req, res, {
     });
   }
 
-  const pathname = (req.url || '').split('?')[0];
+  const [pathname, queryStr = ''] = (req.url || '').split('?');
 
   if (req.method === 'GET' && pathname === '/api/aqua/status') {
-    const status = probeMacosAquaKeychainSession();
+    const fresh = new URLSearchParams(queryStr).get('fresh') === '1';
+    const now = Date.now();
+    const useCache = cachedAquaProbeFn === probeAquaSession
+      && !fresh
+      && cachedAquaStatus
+      && (now - cachedAquaStatusAt) < AQUA_STATUS_CACHE_TTL_MS;
+    const status = useCache ? cachedAquaStatus : probeAquaSession();
+    if (!useCache) {
+      cachedAquaStatus = status;
+      cachedAquaStatusAt = now;
+      cachedAquaProbeFn = probeAquaSession;
+    }
     return writeAquaJson(res, 200, { viaAquaService: true, ...status });
   }
 

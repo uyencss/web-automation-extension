@@ -27,9 +27,14 @@ function statSig(p) {
  */
 function copySqliteStable(dbPath, tmpDb, maxAttempts = 3, opts = {}) {
   const attempts = Math.max(1, Number(maxAttempts) || 3);
-  const paths = [dbPath, `${dbPath}-wal`, `${dbPath}-journal`];
-  const tmpPaths = [tmpDb, `${tmpDb}-wal`, `${tmpDb}-journal`];
+  const paths = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, `${dbPath}-journal`];
+  const tmpPaths = [tmpDb, `${tmpDb}-wal`, `${tmpDb}-shm`, `${tmpDb}-journal`];
+  const retryDelayMs = opts?.retryDelayMs === undefined ? 20 : Math.max(0, Number(opts.retryDelayMs) || 0);
+  const sleepBuf = retryDelayMs > 0 ? new Int32Array(new SharedArrayBuffer(4)) : null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0 && sleepBuf) {
+      Atomics.wait(sleepBuf, 0, 0, retryDelayMs);
+    }
     const sigBefore = paths.map((p) => statSig(p));
     for (const tp of tmpPaths) {
       try { fs.rmSync(tp, { force: true }); } catch {}

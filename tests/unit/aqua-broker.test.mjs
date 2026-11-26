@@ -162,3 +162,26 @@ test('webmcp-browser launch refuses launch loudly when WEBMCP_NO_LAUNCH=1', () =
   assert.equal(out.ok, false);
   assert.equal(out.code, 'ERR_WEBMCP_NO_LAUNCH_BLOCKED');
 });
+
+test('N-4: GET /api/aqua/status caches probe result for 5000ms and bypasses cache when ?fresh=1', async () => {
+  let probeCalls = 0;
+  const mockProbe = () => {
+    probeCalls += 1;
+    return { ok: true, platform: 'darwin', managerName: 'Aqua', probeSeq: probeCalls };
+  };
+
+  const res1 = makeMockRes();
+  await handleAquaBrokerRequest(makeMockReq({ method: 'GET', url: '/api/aqua/status' }), res1, { probeAquaSession: mockProbe });
+  assert.equal(res1.result.statusCode, 200);
+  assert.equal(res1.result.json.probeSeq, 1);
+
+  const res2 = makeMockRes();
+  await handleAquaBrokerRequest(makeMockReq({ method: 'GET', url: '/api/aqua/status' }), res2, { probeAquaSession: mockProbe });
+  assert.equal(res2.result.json.probeSeq, 1);
+  assert.equal(probeCalls, 1, 'second status call within 5000ms must hit cache');
+
+  const resFresh = makeMockRes();
+  await handleAquaBrokerRequest(makeMockReq({ method: 'GET', url: '/api/aqua/status?fresh=1' }), resFresh, { probeAquaSession: mockProbe });
+  assert.equal(resFresh.result.json.probeSeq, 2);
+  assert.equal(probeCalls, 2, '?fresh=1 must bypass status cache');
+});

@@ -5,6 +5,8 @@
  * Expiry is checked before GC to prevent post-expiry replay reopening.
  */
 const MAX_REVOKED_ENTRIES = 10000;
+const MAX_BUDGET_ENTRIES = 10000;
+const DEFAULT_BUDGET_TTL_MS = 24 * 60 * 60 * 1000;
 const MARK_SEEN_GC_SKEW_MS = 1000;
 
 export class PermitStore {
@@ -34,9 +36,19 @@ export class PermitStore {
       if (exp < cutoff) this.seenNonce.delete(nonce);
     }
     for (const [permitId, entry] of this.budget) {
-      if (Number.isFinite(entry?.expiresAt) && entry.expiresAt < cutoff) {
-        this.budget.delete(permitId);
+      if (Number.isFinite(entry?.expiresAt)) {
+        if (entry.expiresAt < cutoff) this.budget.delete(permitId);
+      } else {
+        if (entry && typeof entry === 'object' && !Number.isFinite(entry.createdAt)) {
+          entry.createdAt = nowMs;
+        }
+        if ((entry?.createdAt ?? 0) + DEFAULT_BUDGET_TTL_MS < cutoff) {
+          this.budget.delete(permitId);
+        }
       }
+    }
+    while (this.budget.size > MAX_BUDGET_ENTRIES) {
+      this.budget.delete(this.budget.keys().next().value);
     }
   }
 

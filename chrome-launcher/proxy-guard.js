@@ -311,9 +311,9 @@ function assertRequireProxy({
   extraArgs = [],
   userDataDir = '',
 } = {}) {
-  const mustRequire = requireProxy === true || meta?.requireProxy === true;
-  if (!mustRequire) return;
   const hasBoundUrl = Boolean(proxyCfg?.cleanUrl);
+  const mustRequire = requireProxy === true || meta?.requireProxy === true || hasBoundUrl;
+  if (!mustRequire) return;
   const satisfied = mode === 'existing'
     ? hasProxyServerArg(extraArgs)
     : (hasBoundUrl && hasProxyServerArg(extraArgs));

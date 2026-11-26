@@ -623,4 +623,91 @@ test('proxy-guard enforces Chromium CommandLine semantics, negative bypass switc
   assert.equal(proxyGuard.cmdlineHasProxyServer('chrome\u00a0--proxy-server=http://127.0.0.1:8080'), true);
 });
 
+test('N-IP1 + P0-6: assertRequireProxy & focusOrOpenRunningChrome enforce bound proxy fail-closed even when requireProxy=false', async (t) => {
+  // 1. assertRequireProxy rejects bypass flags whenever proxyCfg.cleanUrl is bound even if requireProxy & meta.requireProxy are false
+  for (const badArgs of [
+    ['--no-proxy-server', '--proxy-server=socks5://10.0.0.2:1080'],
+    ['--proxy-server=direct://'],
+    ['--proxy-bypass-list=*', '--proxy-server=socks5://10.0.0.2:1080'],
+  ]) {
+    assert.throws(
+      () => proxyGuard.assertRequireProxy({
+        mode: 'managed',
+        requireProxy: false,
+        meta: {},
+        proxyCfg: { cleanUrl: 'socks5://10.0.0.2:1080' },
+        extraArgs: badArgs,
+        userDataDir: '/tmp/bound-prof',
+      }),
+      (err) => err.code === 'ERR_PROXY_UNBOUND_BLOCKED',
+    );
+  }
+
+  const f = makeFixture(t, { name: 'bound-focus', proxy: { url: 'socks5://10.0.0.2:1080' } });
+  const child = spawnDummyAlivePid(t);
+  fs.symlinkSync(`${os.hostname()}-${child.pid}`, path.join(f.userDataDir, 'SingletonLock'));
+
+  // 2. focusOrOpenRunningChrome fails closed on running unproxied PID when meta has bound proxy (even if requireProxy=false)
+  await assert.rejects(
+    () => launcher.focusOrOpenRunningChrome({
+      chromePath: f.fakeChromeBin,
+      userDataDir: f.userDataDir,
+      profileDir: 'Default',
+      mode: 'managed',
+      requireProxy: false,
+      skipGuardForTest: true,
+      inspectPidCmdlineFn: () => '/usr/bin/google-chrome --user-data-dir=/tmp/x',
+    }),
+    (err) => err.code === 'ERR_RUNNING_CHROME_MISSING_PROXY',
+  );
+
+  // 3. focusOrOpenRunningChrome fails closed with ERR_PROXY_UNBOUND_BLOCKED before spawn when !pid && meta.requireProxy && no bound proxy
+  const fReqNoProxy = makeFixture(t, { name: 'req-no-proxy', requireProxy: true });
+  await assert.rejects(
+    () => launcher.focusOrOpenRunningChrome({
+      chromePath: fReqNoProxy.fakeChromeBin,
+      userDataDir: fReqNoProxy.userDataDir,
+      profileDir: 'Default',
+      mode: 'managed',
+      skipGuardForTest: true,
+    }),
+    (err) => err.code === 'ERR_PROXY_UNBOUND_BLOCKED',
+  );
+
+  // 4. focusOrOpenRunningChrome injects --proxy-server= on new-window spawn when !pid && proxyCfg.cleanUrl
+  const fSpawn = makeFixture(t, { name: 'bound-spawn', proxy: { url: 'socks5://10.0.0.2:1080' } });
+  const seenArgsFile = path.join(fSpawn.root, 'focus-spawn-args.json');
+  const spyBin = path.join(fSpawn.root, 'spy-chrome.js');
+  fs.writeFileSync(
+    spyBin,
+    `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(seenArgsFile)}, JSON.stringify(process.argv.slice(2)));\nprocess.exit(0);\n`,
+    { mode: 0o755 },
+  );
+  await launcher.focusOrOpenRunningChrome({
+    chromePath: spyBin,
+    userDataDir: fSpawn.userDataDir,
+    profileDir: 'Default',
+    mode: 'managed',
+    skipGuardForTest: true,
+  });
+  for (let i = 0; i < 60 && !fs.existsSync(seenArgsFile); i += 1) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  const spawnedArgs = JSON.parse(fs.readFileSync(seenArgsFile, 'utf8'));
+  assert.ok(spawnedArgs.includes('--proxy-server=socks5://10.0.0.2:1080'), `expected proxy flag in ${JSON.stringify(spawnedArgs)}`);
+
+  // 5. Opus4.6 N3: focusOrOpenRunningChrome fails closed for mode=existing + requireProxy=true without bound proxy
+  await assert.rejects(
+    () => launcher.focusOrOpenRunningChrome({
+      chromePath: f.fakeChromeBin,
+      userDataDir: f.existingUserDataDir,
+      profileDir: 'Default',
+      mode: 'existing',
+      requireProxy: true,
+      skipGuardForTest: true,
+    }),
+    (err) => err.code === 'ERR_PROXY_UNBOUND_BLOCKED',
+  );
+});
+
 
